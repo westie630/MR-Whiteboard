@@ -169,6 +169,9 @@ func _build_menu() -> void:
 	panel.setup(menu, MenuPanel.DESIGN_SIZE, 1450.0, true)
 	panel.scale = Vector3.ONE * float(App.val("ui_scale"))
 	panel.visible = false
+	menu.hide_requested.connect(func():
+		panel.visible = false
+		board.toast.emit("Menu hidden. Open your palm facing up to bring it back."))
 
 
 func _place_panel_front() -> void:

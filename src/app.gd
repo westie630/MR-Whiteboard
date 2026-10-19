@@ -35,6 +35,7 @@ const DEFAULTS := {
 }
 
 var settings_path := SETTINGS_PATH
+var docs_dir := DOCS_DIR              # dev runs and tests point this at a scratch folder
 var _s: Dictionary = {}
 var _cfg := ConfigFile.new()
 var xr_active := false               # set by the XR rig when an OpenXR session is running

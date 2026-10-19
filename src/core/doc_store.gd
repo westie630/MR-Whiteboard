@@ -3,7 +3,7 @@ extends RefCounted
 ## The documents folder: list, open, create, duplicate, rename, delete, import and export of whole documents (.mrw).
 
 static func dir() -> String:
-	return App.DOCS_DIR
+	return App.docs_dir
 
 
 static func path_for(id: String) -> String:

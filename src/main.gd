@@ -10,7 +10,10 @@ var rig: Node
 func _ready() -> void:
 	var args := _args()
 	if args.has("docs-dir"):
-		pass
+		App.docs_dir = str(args["docs-dir"])
+	if args.has("settings"):
+		App.settings_path = str(args["settings"])
+		App.reload()
 	var headset := _headset_active()
 	App.xr_active = headset
 	board = Board.new()
@@ -53,7 +56,10 @@ func _open_document(args: Dictionary) -> void:
 	var doc: Document = null
 	if args.has("demo"):
 		doc = DemoDoc.build()
+		doc.id = "demo-document"
 		doc.save()
+	elif args.has("new"):
+		doc = DocStore.create_new("Sketch")
 	else:
 		var last := str(App.val("last_doc"))
 		if last != "":

@@ -8,6 +8,8 @@ const TOOLS := [["draw", "draw", "Draw"], ["shape", "shapes", "Shapes"], ["write
 const SIZES := [["Small", Vector2(0.6, 0.4)], ["Medium", Vector2(1.2, 0.8)], ["Large", Vector2(2.4, 1.6)]]
 const DESIGN_SIZE := Vector2(560, 800)
 
+signal hide_requested()                   # the close button: the host hides the menu (palm up / Tab brings it back)
+
 var board: Board
 var design_size := DESIGN_SIZE
 var canvas_size_idx := 1
@@ -15,7 +17,9 @@ var canvas_size_idx := 1
 var _tab := "draw"
 var _tab_btns: Dictionary = {}
 var _pages: Dictionary = {}
-var _syncers: Array = []
+var _syncers: Array = []                  # state refreshers of the permanent widgets
+var _dyn_syncers: Array = []              # ... of widgets that are rebuilt with their list (dropped on every rebuild)
+var _target: Array = []                   # where _segmented() / _toggle() / _slider_row() register their refresher
 var _sel_bar: Control
 var _sel_label: Label
 var _sel_text_btn: Btn
@@ -41,6 +45,7 @@ var _export_label: Label
 
 func setup(b: Board) -> void:
 	board = b
+	_target = _syncers
 	theme = UITheme.theme()
 	add_theme_stylebox_override("panel", UITheme.box(UITheme.BG, 26))
 	custom_minimum_size = design_size
@@ -82,6 +87,11 @@ func _build() -> void:
 	_status.add_theme_font_size_override("font_size", UITheme.FONT_SMALL)
 	_status.add_theme_color_override("font_color", UITheme.TEXT_DIM)
 	head.add_child(_status)
+	var close := Btn.new("close", "")
+	close.small = true
+	close.custom_minimum_size = Vector2(48, 44)
+	close.pressed.connect(func(): hide_requested.emit())
+	head.add_child(close)
 
 	var tabs := HBoxContainer.new()
 	root.add_child(tabs)
@@ -220,10 +230,11 @@ func _segmented(parent: Control, options: Array, getter: Callable, setter: Calla
 			_sync())
 		row.add_child(b)
 		btns.append([o[0], b])
-	_syncers.append(func():
+	_target.append(func():
 		var cur: Variant = getter.call()
 		for pair in btns:
-			(pair[1] as Btn).on = pair[0] == cur)
+			if is_instance_valid(pair[1]):
+				(pair[1] as Btn).on = pair[0] == cur)
 
 
 func _toggle(parent: Control, icon: String, text: String, key: String) -> Btn:
@@ -232,7 +243,7 @@ func _toggle(parent: Control, icon: String, text: String, key: String) -> Btn:
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.toggled.connect(func(v: bool): App.put(key, v))
 	parent.add_child(b)
-	_syncers.append(func(): b.on = bool(App.val(key)))
+	_target.append(func(): b.on = bool(App.val(key)))
 	return b
 
 
@@ -245,7 +256,7 @@ func _slider_row(parent: Control, text: String, lo: float, hi: float, key: Strin
 	var s := FlatSlider.new(lo, hi, float(App.val(key)), step)
 	box.add_child(s)
 	s.value_changed.connect(func(v: float): App.put(key, v))
-	_syncers.append(func():
+	_target.append(func():
 		l.text = "%s   %s" % [text, fmt.call(float(App.val(key)))]
 		if absf(s.value - float(App.val(key))) > 0.0001:
 			s.value = float(App.val(key)))
@@ -412,6 +423,13 @@ func _build_canvas(p: VBoxContainer) -> void:
 
 
 func _refresh_canvas_tab() -> void:
+	_dyn_syncers.clear()
+	_target = _dyn_syncers
+	_refresh_canvas_tab_body()
+	_target = _syncers
+
+
+func _refresh_canvas_tab_body() -> void:
 	_clear(_canvas_list)
 	var frames := board.doc.frames_in(board.current_room) if board.doc != null else []
 	if frames.is_empty():
@@ -796,6 +814,8 @@ func _sync() -> void:
 	for k in _tab_btns.keys():
 		(_tab_btns[k] as Btn).on = k == _tab
 	for s in _syncers:
+		s.call()
+	for s in _dyn_syncers:
 		s.call()
 	var n := board.selection.size()
 	_sel_bar.visible = n > 0

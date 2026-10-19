@@ -295,7 +295,7 @@ func save(file_path: String = "") -> Error:
 	if file_path != "":
 		path = file_path
 	if path == "":
-		path = "%s/%s.%s" % [App.DOCS_DIR, id, EXT]
+		path = "%s/%s.%s" % [App.docs_dir, id, EXT]
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	var tmp := path + ".tmp"
 	var f := FileAccess.open(tmp, FileAccess.WRITE)

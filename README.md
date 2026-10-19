@@ -4,6 +4,13 @@ An infinite whiteboard for the **Meta Quest 3** and the **Logitech MX Ink** styl
 
 <img src="assets/icons/icon_512.png" width="120" alt="MR Whiteboard logo">
 
+<p>
+<img src="docs/pc-demo.png" width="49%" alt="The PC test app with the demo document: a flow diagram, every brush, and a 3D sketch">
+<img src="docs/pc-drawing.png" width="49%" alt="Shapes snapped from freehand strokes, a glued arrow, and handwriting converted to text">
+</p>
+
+*The PC test app (screenshots): the demo document, and strokes snapped to clean shapes with handwriting read as text.*
+
 ## What it does
 
 | | |
@@ -30,7 +37,7 @@ pwsh tools/pc.ps1 -Demo                          # opens a demo document
 pwsh tools/pc.ps1 -Export                        # builds build/pc/MRWhiteboard.exe
 ```
 
-Controls: **left mouse** draws (hover a canvas to draw on it, otherwise it draws in the air), **Ctrl+left** forces air drawing, **Shift+left** is the stylus front button (grab and move), **middle mouse** pinches (carry a canvas, wheel scales it, Q/E turn it), **right mouse** looks around, **WASD** walks, **Ctrl+Z / Ctrl+Y** undo / redo, **C** places a canvas, **1-5** switch tools, **Delete**, **Ctrl+D**, **Ctrl+S**. A graphics tablet gives pressure.
+Controls (the menu is on the left; **Tab** hides it): **left mouse** draws (hover a canvas to draw on it, otherwise it draws in the air), **Ctrl+left** forces air drawing, **Shift+left** is the stylus front button (grab and move), **middle mouse** pinches (carry a canvas, wheel scales it, Q/E turn it), **right mouse** looks around, **WASD** walks, **Ctrl+Z / Ctrl+Y** undo / redo, **C** places a canvas, **1-5** switch tools, **Delete**, **Ctrl+D**, **Ctrl+S**. A graphics tablet gives pressure.
 
 ### On the Quest 3
 
@@ -67,7 +74,7 @@ Handwriting is read by Google's handwriting input service (the one behind Google
 
 ## Storage
 
-Documents are JSON (`.mrw`) in the app's data folder (`user://docs`): plain text, with stroke points packed as base64 float arrays so they load fast. Spatial anchors live in the headset's own storage; documents only keep their UUIDs. Duplicating a document shares its anchors; deleting one only erases anchors no other document uses. Exports go to `Documents/MR Whiteboard` on the PC and to the app's `exports` folder on the headset (`adb pull /sdcard/Android/data/com.westie630.mrwhiteboard/files/exports`).
+Documents are JSON (`.mrw`) in the app's data folder (`user://docs`): plain text, with stroke points packed as base64 float arrays so they load fast. Spatial anchors live in the headset's own storage; documents only keep their UUIDs. Duplicating a document shares its anchors; deleting one only erases anchors no other document uses. Exports go to `Documents/MR Whiteboard` on the PC and to the app's own `exports` folder on the headset; the full path is shown in the app after an export (the Docs tab) and can be fetched with `adb pull`.
 
 ## How it is built
 

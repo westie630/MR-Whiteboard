@@ -350,6 +350,10 @@ func _step_draw(pen: PenState, dt: float) -> void:
 		_try_snap(pen)
 	if not _snap.is_empty() and cur.distance_to(_snap_anchor) * s > UNSNAP_MOVE * 2.0:
 		_unsnap()
+	if not _live_volume:
+		cursor_frame = fn.data.id
+		cursor_pos = Vector2(cur.x, cur.y)
+		cursor_dist = 0.0
 
 
 func _try_snap(pen: PenState) -> void:
@@ -1042,6 +1046,16 @@ func _draw_cursor(od: OverlayDraw, fn: FrameNode) -> void:
 	var near := 1.0 - clampf(cursor_dist / HOVER_REACH, 0.0, 1.0)
 	var a := 0.25 + 0.7 * near
 	od.z = 0.003
+	if state == S.DRAWING and not _live_volume and not _write_mode and _snap.is_empty() and str(App.val("recognize")) == "hold":
+		# hold still and this ring fills: when it closes the stroke snaps to a clean shape
+		var frac := clampf(_hold_t / float(App.val("hold_seconds")), 0.0, 1.0)
+		if _hold_t > 0.12 and frac < 1.0:
+			var arc := PackedVector2Array()
+			var steps := 28
+			for i in range(0, int(steps * frac) + 1):
+				var ang := -PI * 0.5 + TAU * frac * float(i) / float(maxi(int(steps * frac), 1))
+				arc.append(cursor_pos + Vector2(cos(ang), sin(ang)) * (0.016 / s))
+			od.line(arc, 0.003 / s, Color(0.4, 1.0, 0.8, 0.95), false)
 	match tool:
 		"erase":
 			od.ring(cursor_pos, ERASE_R / s, 0.002 / s, Color(1.0, 0.45, 0.4, a), 24)

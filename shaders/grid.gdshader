@@ -53,8 +53,8 @@ void fragment() {
 		grid = max(dots * 0.6, dots_m);
 	}
 	float ga = grid * a_edge * a_focus * view_alpha * line_color.a;
-	float border = (1.0 - smoothstep(0.0015, 0.0045, d)) * hover;
-	float ba = border * 0.9;
+	float border = (1.0 - smoothstep(0.0008, 0.0026, d)) * hover;
+	float ba = border * 0.55;
 	float back_a = backing.a * a_hard * clamp(view_alpha * 1.4, 0.0, 1.0);
 	// composite grid over backing, border over both
 	float a1 = ga + back_a * (1.0 - ga);

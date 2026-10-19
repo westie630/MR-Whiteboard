@@ -12,7 +12,7 @@ Get-ChildItem "$root\tests\test_*.gd" | ForEach-Object {
     if ($summary -and $summary -match ", 0 failed" -and -not $fails) {
         Write-Host $summary
     } else {
-        Write-Host "$name: FAILED  ($summary)"
+        Write-Host "${name}: FAILED  ($summary)"
         $bad++
     }
 }
