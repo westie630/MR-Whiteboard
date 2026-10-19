@@ -19,13 +19,13 @@ boot_splash/stretch_mode=0
 boot_splash/image="res://assets/icons/vr_splash.png"
 config/icon="res://icon.svg"
 
-[autoload]
-
-App="*res://src/app.gd"
-
 [audio]
 
 driver/enable_input=true
+
+[autoload]
+
+App="*res://src/app.gd"
 
 [display]
 
@@ -61,7 +61,6 @@ openxr/view_configuration=1
 openxr/reference_space=2
 openxr/environment_blend_mode=2
 openxr/foveation_level=0
-openxr/foveation_dynamic=false
 openxr/submit_depth_buffer=true
 openxr/startup_alert=false
 openxr/extensions/hand_tracking=true
