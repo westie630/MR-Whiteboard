@@ -1,7 +1,7 @@
-extends SceneTree
+extends Node
 ## Shape recogniser on noisy synthetic strokes.
 
-func _init() -> void:
+func _ready() -> void:
 	var t := TestCase.new("recognizer")
 	Synth.rng.seed = 7
 	var trials := 12
@@ -74,7 +74,7 @@ func _init() -> void:
 	if ar.has("b"):
 		t.near((ar.b as Vector2).x, 0.3, 0.02, "arrow tip position")
 
-	quit(t.done())
+	get_tree().quit(t.done())
 
 
 func _tally(counts: Dictionary, key: String, got: String) -> void:
