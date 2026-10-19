@@ -32,6 +32,7 @@ var _scroll_sc: ScrollContainer
 var _scroll_start := 0
 var _boost := 0.0
 var _accum := 0.0
+var _ui_scale := 1.0
 
 
 func setup(w: Control, design_px: Vector2, pixels_per_metre: float, want_layer: bool) -> void:
@@ -81,6 +82,18 @@ func setup(w: Control, design_px: Vector2, pixels_per_metre: float, want_layer: 
 			layer = null
 	_build_handle()
 	print("[panel] %s, texture %dx%d" % ["compositor layer" if using_layer else "textured quad", viewport.size.x, viewport.size.y])
+
+
+## Resize the panel (the user's menu size setting). The node itself is never scaled: compositor layers ignore node scale.
+func set_ui_scale(s: float) -> void:
+	_ui_scale = clampf(s, 0.4, 3.0)
+	size_m = design / ppm * _ui_scale
+	(quad.mesh as QuadMesh).size = size_m
+	if layer != null:
+		layer.set("quad_size", size_m)
+	if handle != null:
+		handle.position.y = handle_local_y()
+		(handle.mesh as CapsuleMesh).height = 0.2 * _ui_scale
 
 
 func _build_handle() -> void:

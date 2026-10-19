@@ -114,7 +114,7 @@ func _on_setting(key: String) -> void:
 	if key == "xr_quality":
 		_apply_quality()
 	elif key == "ui_scale" and panel != null:
-		panel.scale = Vector3.ONE * float(App.val("ui_scale"))
+		panel.set_ui_scale(float(App.val("ui_scale")))
 
 
 func _on_session(which: String) -> void:
@@ -167,7 +167,7 @@ func _build_menu() -> void:
 	panel = XrPanel.new()
 	add_child(panel)
 	panel.setup(menu, MenuPanel.DESIGN_SIZE, 1450.0, true)
-	panel.scale = Vector3.ONE * float(App.val("ui_scale"))
+	panel.set_ui_scale(float(App.val("ui_scale")))
 	panel.visible = false
 	menu.hide_requested.connect(func():
 		panel.visible = false

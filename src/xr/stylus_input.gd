@@ -15,19 +15,32 @@ var pen := PenState.new()
 var active := ""                           # "left" | "right" | "" (no stylus)
 var tracked_ever := false
 
-var _ctrls: Dictionary = {}
+var _ctrls: Dictionary = {}                # side -> [XRController3D for "tip_pose", XRController3D for "tip"]
 var _down := false
 var _prev_active := ""
+var _pose_name := ""
 
 
 func _ready() -> void:
+	# Godot names the pose of a pose action after the action; depending on the version the "_pose" suffix is kept or dropped, so
+	# listen on both names and use whichever one reports tracking data. Buttons and forces are read from the tracker either way.
 	for side in ["left", "right"]:
-		var c := XRController3D.new()
-		c.name = "Stylus_" + side
-		c.tracker = StringName(side + "_hand")
-		c.pose = &"tip_pose"
-		add_child(c)
-		_ctrls[side] = c
+		var pair: Array = []
+		for pose_name in [&"tip_pose", &"tip"]:
+			var c := XRController3D.new()
+			c.name = "Stylus_%s_%s" % [side, pose_name]
+			c.tracker = StringName(side + "_hand")
+			c.pose = pose_name
+			add_child(c)
+			pair.append(c)
+		_ctrls[side] = pair
+
+
+func _tracked_controller(side: String) -> XRController3D:
+	for c in _ctrls[side]:
+		if (c as XRController3D).get_has_tracking_data():
+			return c
+	return null
 
 
 func update() -> void:
@@ -39,8 +52,7 @@ func update() -> void:
 			order = ["right"]
 	var choice := ""
 	for side in order:
-		var c: XRController3D = _ctrls[side]
-		if c.get_has_tracking_data():
+		if _tracked_controller(side) != null:
 			choice = side
 			break
 	if choice == "":
@@ -52,10 +64,11 @@ func update() -> void:
 		pen.back = false
 		_down = false
 		return
-	var c2: XRController3D = _ctrls[choice]
+	var c2: XRController3D = _tracked_controller(choice)
 	active = choice
-	if active != _prev_active:
-		print("[stylus] connected on the %s hand" % choice)
+	if active != _prev_active or str(c2.pose) != _pose_name:
+		_pose_name = str(c2.pose)
+		print("[stylus] connected on the %s hand (pose '%s')" % [choice, _pose_name])
 	_prev_active = active
 	tracked_ever = true
 	pen.source = "stylus"

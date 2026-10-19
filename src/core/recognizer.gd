@@ -51,7 +51,7 @@ static func _try_line(rs: PackedVector2Array, length: float, diag: float, snap_a
 	var m: Vector2 = fit.mean
 	var u: Vector2 = fit.axis
 	var chord := rs[0].distance_to(rs[rs.size() - 1])
-	if chord / length < 0.88:
+	if chord / length < 0.86:
 		return {}
 	var sum_sq := 0.0
 	var worst := 0.0
@@ -60,7 +60,7 @@ static func _try_line(rs: PackedVector2Array, length: float, diag: float, snap_a
 		sum_sq += d * d
 		worst = maxf(worst, d)
 	var rms := sqrt(sum_sq / rs.size())
-	if rms > 0.03 * length or worst > 0.075 * length:
+	if rms > 0.036 * length or worst > 0.09 * length:
 		return {}
 	var a := m + u * (rs[0] - m).dot(u)
 	var b := m + u * (rs[rs.size() - 1] - m).dot(u)
@@ -266,14 +266,40 @@ static func _finish_rect(ring: PackedVector2Array, diag: float, center: Vector2,
 
 
 static func _fit_diamond(ring: PackedVector2Array, diag: float) -> Dictionary:
+	var best := {}
 	var bb := Geom2D.bbox(ring)
 	if bb.size.x < 0.012 or bb.size.y < 0.012:
-		return {}
+		return best
 	var c := bb.get_center()
 	var outline := PackedVector2Array()
 	for p in Shapes.fill_poly("diamond", bb.size):
 		outline.append(c + p)
-	return {"shape": "diamond", "center": c, "size": bb.size, "rot": 0.0, "err": _err(ring, outline, diag)}
+	best = {"shape": "diamond", "center": c, "size": bb.size, "rot": 0.0, "err": _err(ring, outline, diag)}
+	# from the four corners: the diagonals are the diamond's width and height, so a slightly turned diamond is fitted too
+	var v := _simplify_to(ring, 4, diag)
+	if v.size() == 4:
+		var d1 := v[2] - v[0]
+		var d2 := v[3] - v[1]
+		if d1.length() > 0.012 and d2.length() > 0.012 and absf(d1.normalized().dot(d2.normalized())) < 0.4:
+			var h := d1
+			var vt := d2
+			if absf(Geom2D.fold_half_pi(d2.angle())) < absf(Geom2D.fold_half_pi(d1.angle())):
+				h = d2
+				vt = d1
+			var rot := Geom2D.fold_half_pi(h.angle())
+			if absf(rot) > deg_to_rad(28.0):
+				return best                             # a diamond turned by half a right angle is a square: the rectangle fit answers for it
+			if absf(rot) < AXIS_SNAP:
+				rot = 0.0
+			var size := Vector2(h.length(), vt.length())
+			var center := (v[0] + v[1] + v[2] + v[3]) * 0.25
+			var out2 := PackedVector2Array()
+			for p in Shapes.fill_poly("diamond", size):
+				out2.append(center + Geom2D.rot(p, rot))
+			var e := _err(ring, out2, diag)
+			if e < float(best.err):
+				best = {"shape": "diamond", "center": center, "size": size, "rot": rot, "err": e}
+	return best
 
 
 ## Simplify a closed loop to exactly n corners (or fail with an empty array): Douglas-Peucker at a small tolerance to drop the
@@ -438,8 +464,22 @@ static func _fit_poly(ring: PackedVector2Array, diag: float) -> Dictionary:
 				ok = false
 		if not ok:
 			continue
+		if n == 4 and _rect_like(v):
+			return {}                                   # the rectangle candidate (or nothing) answers for this one
 		return {"shape": "poly", "poly": v, "err": _err(ring, v, diag)}
 	return {}
+
+
+## Four corners with angles near 90 degrees and opposite sides of similar length.
+static func _rect_like(v: PackedVector2Array) -> bool:
+	for i in 4:
+		if absf(Geom2D.angle_at(v[(i + 3) % 4], v[i], v[(i + 1) % 4]) - PI * 0.5) > deg_to_rad(24.0):
+			return false
+	var s0 := v[0].distance_to(v[1])
+	var s1 := v[1].distance_to(v[2])
+	var s2 := v[2].distance_to(v[3])
+	var s3 := v[3].distance_to(v[0])
+	return minf(s0, s2) / maxf(maxf(s0, s2), 1e-6) > 0.7 and minf(s1, s3) / maxf(maxf(s1, s3), 1e-6) > 0.7
 
 
 static func _dedupe(points: PackedVector2Array) -> PackedVector2Array:
