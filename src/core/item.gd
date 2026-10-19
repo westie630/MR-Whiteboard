@@ -42,6 +42,7 @@ var label := ""
 var text := ""
 var font_size := 0.05                     # em height in metres
 var alternatives: PackedStringArray = []  # other readings of the handwriting, for correcting a text item
+var ink: Array = []                       # the handwriting strokes (item dictionaries) this text was converted from: "back to ink"
 
 
 static func make_stroke(frame_id: String, points: PackedFloat32Array, col: Color, w: float, brush_id: String) -> Item:
@@ -254,6 +255,8 @@ func to_dict() -> Dictionary:
 			d["rot"] = snappedf(rot, 1e-5)
 			if not alternatives.is_empty():
 				d["alt"] = Array(alternatives)
+			if not ink.is_empty():
+				d["ink"] = ink
 	return d
 
 
@@ -296,6 +299,7 @@ static func from_dict(d: Dictionary) -> Item:
 			it.center = U.v2_from(d.get("center"))
 			it.rot = float(d.get("rot", 0.0))
 			it.alternatives = PackedStringArray(d.get("alt", []))
+			it.ink = (d.get("ink", []) as Array).duplicate(true)
 			it.refit_text()
 	return it
 

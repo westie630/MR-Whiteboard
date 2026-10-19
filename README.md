@@ -70,7 +70,7 @@ Without a stylus, a **pinch of the right hand draws** (left hand moves canvases)
 
 ## Handwriting recognition
 
-Handwriting is read by Google's handwriting input service (the one behind Google Input Tools), which understands real pen strokes with timing: print, cursive, digits, symbols, many languages. It needs an internet connection; only the pen strokes are sent. It is an unofficial endpoint, so if it changes, the app says so and leaves your ink untouched. `InkRecognizer` is a small interface (`src/ink/`) for plugging in another recogniser, for example an on-device model.
+Handwriting is read by Google's handwriting input service (the one behind Google Input Tools), which understands real pen strokes with timing: print, cursive, digits, symbols, many languages. It needs an internet connection; only the pen strokes are sent. **Bad handwriting:** the service returns several candidate readings; select the converted text and tap another reading, choose **Retype / rewrite** (type on the PC, write a name in the pad in the headset), or **Back to handwriting**, which restores your original strokes (they are kept inside the text, also after saving). Converting happens after a pause you can lengthen, or only when you press **To text**; ink that cannot be read is simply left as ink. Writing a little larger and slower than usual gives the recogniser the most to work with. It is an unofficial endpoint, so if it changes, the app says so and leaves your ink untouched. `InkRecognizer` is a small interface (`src/ink/`) for plugging in another recogniser, for example an on-device model.
 
 ## Storage
 

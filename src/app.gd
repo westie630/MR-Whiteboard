@@ -24,6 +24,8 @@ const DEFAULTS := {
 	"grid_focus": 0.55,              # radius (m) of the lit grid around the pen / hand
 	"ink_provider": "google",        # google | none
 	"ink_language": "en",
+	"ink_auto": true,                # convert handwriting by itself after a pause (off: only when To text is pressed)
+	"ink_pause": 2.0,                # seconds of rest before the automatic conversion
 	"haptics": true,
 	"stylus_hand": "auto",           # auto | left | right
 	"finger_draw": true,             # draw with a pinch when there is no stylus (so the app can be tried without one)

@@ -103,6 +103,28 @@ func _ready() -> void:
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	img.save_png(path)
 	print("[sim] saved ", path, "  items: ", _kinds())
+
+	# 5. select the box with the Select tool (a tap) and look at its handles
+	App.put("tool", "select")
+	var first_box: Item
+	for it in board.doc.items.values():
+		if (it as Item).kind == Item.SHAPE and (it as Item).shape == "rect":
+			first_box = it
+	if first_box != null:
+		var c := first_box.center
+		var tap := canvas_px(c.x, c.y)
+		move_mouse(tap)
+		await frames(3)
+		button(tap, true)
+		await frames(2)
+		button(tap, false)
+		await frames(4)
+		var near_handle := canvas_px(c.x + first_box.size.x * 0.5, c.y + first_box.size.y * 0.5)
+		move_mouse(near_handle)
+		await frames(20)
+		print("[sim] selection: ", board.selection.size(), " item(s)")
+		var img2 := get_viewport().get_texture().get_image()
+		img2.save_png(path.replace(".png", "_select.png"))
 	board.flush_save()
 	get_tree().quit()
 

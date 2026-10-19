@@ -22,6 +22,8 @@ var _dyn_syncers: Array = []              # ... of widgets that are rebuilt with
 var _target: Array = []                   # where _segmented() / _toggle() / _slider_row() register their refresher
 var _sel_bar: Control
 var _sel_label: Label
+var _alt_box: HFlowContainer
+var _alt_sig := ""
 var _sel_text_btn: Btn
 var _sel_convert_btn: Btn
 var _toast_label: Label
@@ -139,8 +141,16 @@ func _build() -> void:
 
 	_sel_bar = PanelContainer.new()
 	(_sel_bar as PanelContainer).add_theme_stylebox_override("panel", UITheme.box(UITheme.PANEL, 14))
+	var sel_col := VBoxContainer.new()
+	sel_col.add_theme_constant_override("separation", 8)
+	_sel_bar.add_child(sel_col)
+	_alt_box = HFlowContainer.new()
+	_alt_box.add_theme_constant_override("h_separation", 8)
+	_alt_box.add_theme_constant_override("v_separation", 8)
+	_alt_box.visible = false
+	sel_col.add_child(_alt_box)
 	var sv := HBoxContainer.new()
-	_sel_bar.add_child(sv)
+	sel_col.add_child(sv)
 	_sel_label = Label.new()
 	_sel_label.custom_minimum_size = Vector2(110, 0)
 	_sel_label.add_theme_font_size_override("font_size", UITheme.FONT_SMALL)
@@ -707,7 +717,9 @@ func _build_more(p: VBoxContainer) -> void:
 		for l in InkRecognizer.LANGUAGES:
 			if l[0] == App.val("ink_language"):
 				lang.text = "Language: %s  (tap to change)" % l[1])
-	p.add_child(_label("Use the Write tool: write words with the stylus and pause. They turn into text of the same size, right where you wrote. Needs internet.", true))
+	_toggle(p, "convert", "Convert automatically after a pause", "ink_auto")
+	_slider_row(p, "Pause before converting", 1.0, 5.0, "ink_pause", 0.25, func(v: float): return "%.1f s" % v)
+	p.add_child(_label("Use the Write tool: write words with the stylus and pause. They turn into text of the same size, right where you wrote. Needs internet. Misread? Select the text: pick another reading, retype it, or go back to your handwriting. Writing larger and a little slower helps.", true))
 	_header(p, "Stylus and hands")
 	_segmented(p, [["auto", "Stylus hand: auto"], ["left", "Left"], ["right", "Right"]], func(): return App.val("stylus_hand"), func(v): App.put("stylus_hand", v))
 	_toggle(p, "pin", "Haptic ticks", "haptics")
@@ -827,10 +839,46 @@ func _sync() -> void:
 		if (it as Item).kind == Item.STROKE:
 			any_stroke = true
 	_sel_convert_btn.visible = any_stroke
+	_refresh_readings(single_text)
 	_undo_btn.modulate.a = 1.0 if board.history != null and board.history.can_undo() else 0.45
 	_redo_btn.modulate.a = 1.0 if board.history != null and board.history.can_redo() else 0.45
 	_ink_btn.visible = board.ink.has_pending() or board.ink.failed
 	_ink_btn.text = "To text (%d)" % board.ink.pending.size() if not board.ink.busy else "Reading..."
+
+
+## Selected converted text: the other readings of the handwriting as one-tap choices, plus retype and back to ink.
+func _refresh_readings(single_text: bool) -> void:
+	var it: Item = null
+	if single_text:
+		it = board.doc.items[board.selection[0]]
+	var sig := "" if it == null else "%s|%s|%d" % [it.id, it.text + "/" + ",".join(it.alternatives), it.ink.size()]
+	if sig == _alt_sig:
+		return
+	_alt_sig = sig
+	_clear(_alt_box)
+	_alt_box.visible = it != null
+	if it == null:
+		return
+	var id := it.id
+	for reading in it.alternatives:
+		var r: String = reading
+		var b := Btn.new("", r)
+		b.small = true
+		b.custom_minimum_size = Vector2(0, 46)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.pressed.connect(func(): board.ink.choose_alternative(id, r))
+		_alt_box.add_child(b)
+	var edit := Btn.new("text", "Retype / rewrite")
+	edit.small = true
+	edit.custom_minimum_size = Vector2(0, 46)
+	edit.pressed.connect(func(): _ask_name("Correct the text", it.text, func(t: String): board.ink.set_text(id, t)))
+	_alt_box.add_child(edit)
+	if not it.ink.is_empty():
+		var back := Btn.new("undo", "Back to handwriting")
+		back.small = true
+		back.custom_minimum_size = Vector2(0, 46)
+		back.pressed.connect(func(): board.ink.revert_to_ink(id))
+		_alt_box.add_child(back)
 
 
 func _clear(c: Control) -> void:

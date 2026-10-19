@@ -68,8 +68,23 @@ func _ready() -> void:
 		t.near(tx.color.r, Color("#ff9f43").r, 0.01, "the text keeps the ink colour")
 		board.ink.cycle_alternative(tx.id)
 		t.eq((board.doc.items[tx.id] as Item).text, "Hallo", "cycling picks the next reading")
-	board.undo()                                              # undoes the cycle
-	board.undo()                                              # undoes the conversion
+		# the other readings are one-tap choices; the old text joins them
+		board.ink.choose_alternative(tx.id, "Hell0")
+		var chosen: Item = board.doc.items[tx.id]
+		t.eq(chosen.text, "Hell0", "choosing a reading makes it the text")
+		t.check(chosen.alternatives.has("Hello") or chosen.alternatives.has("Hallo"), "the previous text stays available as a reading")
+		# the original handwriting is kept inside the text and can be brought back, even after a save and reload
+		t.eq(chosen.ink.size(), 5, "the text keeps the five strokes it came from")
+		var reloaded := Item.from_dict(chosen.to_dict())
+		t.eq(reloaded.ink.size(), 5, "the handwriting survives saving")
+		board.ink.revert_to_ink(tx.id)
+		t.eq(_items(board, Item.STROKE).size(), 5, "back to handwriting restores the strokes")
+		t.eq(_items(board, Item.TEXT).size(), 0, "back to handwriting removes the text")
+		board.undo()
+		t.eq(_items(board, Item.TEXT).size(), 1, "undo of back to handwriting puts the text back")
+		board.undo()                                          # the reading choice
+	board.undo()                                              # the cycle
+	board.undo()                                              # the conversion
 	t.eq(_items(board, Item.STROKE).size(), 5, "undo brings the handwriting back")
 	t.eq(_items(board, Item.TEXT).size(), 0, "undo removes the text")
 

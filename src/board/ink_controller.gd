@@ -4,7 +4,6 @@ extends RefCounted
 ## pressed) they are grouped into lines, sent to the recogniser, and each line is replaced by a text item with the same size and
 ## position as the handwriting. Ink written inside a box becomes that box's label. The original ink comes back with Undo.
 
-const IDLE_S := 1.6
 const PX_PER_LINE := 150.0                 # the recogniser sees a line of handwriting about this many units tall
 
 var board: Board
@@ -54,14 +53,14 @@ func has_pending() -> bool:
 
 
 func update(dt: float) -> void:
-	if pending.is_empty() or busy or failed:
+	if pending.is_empty() or busy or failed or not bool(App.val("ink_auto")):
 		_idle = 0.0
 		return
 	if board.pen_ctl.state == PenController.S.DRAWING:
 		_idle = 0.0
 		return
 	_idle += dt
-	if _idle >= IDLE_S:
+	if _idle >= float(App.val("ink_pause")):
 		_idle = 0.0
 		convert_ink()
 
@@ -167,6 +166,8 @@ func _on_line_result(lines: Array, idx: int, res: Dictionary) -> void:
 		var fit := TextLayout.fit_ink(text, bb)
 		var t := Item.make_text(frame_id, text, Color(col.r, col.g, col.b, 1.0), fit.em)
 		t.center = fit.center
+		for src in items:
+			t.ink.append((src as Item).to_dict())
 		var alts := PackedStringArray()
 		for i in range(1, mini(cands.size(), 6)):
 			if cands[i] != text:
@@ -230,6 +231,45 @@ func cycle_alternative(item_id: String) -> void:
 	upd.alternatives = alts
 	upd.refit_text()
 	board.history.do(History.op_modify([it], [upd]))
+
+
+## Pick one of the other readings: it becomes the text and the old text joins the alternatives.
+func choose_alternative(item_id: String, reading: String) -> void:
+	var it: Item = board.doc.items.get(item_id)
+	if it == null or it.kind != Item.TEXT or reading == it.text:
+		return
+	var upd := it.duplicate_item(false)
+	var alts := PackedStringArray()
+	for a in it.alternatives:
+		if a != reading:
+			alts.append(a)
+	alts.append(it.text)
+	upd.text = reading
+	upd.alternatives = alts
+	upd.refit_text()
+	board.history.do(History.op_modify([it], [upd]))
+
+
+## Swap converted text back for the handwriting it came from (works after the document was closed and reopened too).
+func revert_to_ink(item_id: String) -> void:
+	var it: Item = board.doc.items.get(item_id)
+	if it == null or it.kind != Item.TEXT or it.ink.is_empty():
+		board.toast.emit("This text has no handwriting to go back to.")
+		return
+	var strokes: Array = []
+	var ids: Array = []
+	for d in it.ink:
+		var s := Item.from_dict(d)
+		if not board.doc.items.has(s.id):
+			strokes.append(s)
+			ids.append(s.id)
+	board.history.begin_group()
+	board.history.do(History.op_remove([it]))
+	if not strokes.is_empty():
+		board.history.do(History.op_add(strokes))
+	board.history.end_group()
+	board.select_items(ids, it.frame)
+	board.toast.emit("Back to your handwriting. Press To text to read it again.")
 
 
 func set_text(item_id: String, new_text: String) -> void:

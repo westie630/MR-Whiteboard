@@ -57,6 +57,7 @@ var _grab_f: FrameData
 var _grab_tip0 := Vector3.ZERO
 var _grab_origin0 := Vector3.ZERO
 var _lasso_fn: FrameNode
+var _lasso_tap_item: Item                  # the box under the pen when a selection loop started: a plain tap selects it
 
 
 func _init(b: Board) -> void:
@@ -247,6 +248,12 @@ func _begin_select(pen: PenState) -> void:
 			board.select_items([it.id], fn.data.id)
 		_start_drag_items(fn, l, false)
 		return
+	# inside a box (not on its outline): dragging an already selected box moves it; otherwise a tap selects the box and a drag draws a loop
+	var inside := board.doc.shape_containing(fn.data.id, l)
+	if inside != null and board.selection.has(inside.id):
+		_start_drag_items(fn, l, false)
+		return
+	_lasso_tap_item = inside
 	board.clear_selection()
 	lasso = PackedVector2Array([l])
 	_lasso_fn = fn
@@ -522,7 +529,11 @@ func _finish_lasso() -> void:
 	if fn == null or not is_instance_valid(fn):
 		return
 	if poly.size() < 4 or Geom2D.polygon_area(poly) * fn.data.scale * fn.data.scale < 0.0004:
+		if _lasso_tap_item != null and board.doc.items.has(_lasso_tap_item.id):
+			board.select_items([_lasso_tap_item.id], fn.data.id)
+		_lasso_tap_item = null
 		return
+	_lasso_tap_item = null
 	var ids: Array = []
 	for it in board.doc.items_of(fn.data.id):
 		var item: Item = it
