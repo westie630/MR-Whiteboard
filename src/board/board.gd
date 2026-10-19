@@ -308,6 +308,15 @@ func _update_rooms(dt: float) -> void:
 			present.append(r.id)                 # just created here, anchor pending
 		elif str(r.anchor) != "" and anchors.has_pose(str(r.anchor)):
 			present.append(r.id)
+	# a room that has no anchor yet (imported, or made while anchors were unavailable) can only be "here": it adopts this place
+	if present.is_empty() or (present.size() == 1 and str(doc.room(str(present[0])).get("anchor", "x")) == ""):
+		for r in doc.rooms:
+			if str(r.anchor) == "" and not present.has(r.id):
+				present.append(r.id)
+				break
+	if current_room != "" and str(doc.room(current_room).get("anchor", "x")) == "" and not _pending.has("room:" + current_room):
+		_pending["room:" + current_room] = true
+		anchors.create(doc.room(current_room).anchor_xf, "room:" + current_room)
 	var before := current_room
 	var before_state := room_state
 	if present.has(current_room):

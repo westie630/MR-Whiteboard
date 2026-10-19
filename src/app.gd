@@ -31,6 +31,7 @@ const DEFAULTS := {
 	"last_doc": "",
 	"sim_room": "A",                 # PC: which simulated room the anchors belong to
 	"menu_tab": "draw",
+	"xr_quality": "sharp",           # performance | sharp | ultra: render resolution in the headset
 }
 
 var settings_path := SETTINGS_PATH

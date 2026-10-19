@@ -39,6 +39,12 @@ static func create(doc_name: String = "Untitled") -> Document:
 	return d
 
 
+func rename(new_name: String) -> void:
+	if new_name.strip_edges() != "":
+		name = new_name.strip_edges()
+		_touch()
+
+
 # ------------------------------------------------------------------------------------------------ rooms
 
 func add_room(room_name: String, anchor_uuid: String = "", anchor_xf: Transform3D = Transform3D.IDENTITY) -> Dictionary:
