@@ -47,6 +47,8 @@ func _ready() -> void:
 				btn.toggled.emit(not btn.on)
 			pressed += 1
 			await get_tree().process_frame
+			if menu.entry_open():                      # Type, Rename ... open the typing box, which replaces the tabs: close it again
+				menu.close_entry()
 		for s in menu.find_children("*", "FlatSlider", true, false):
 			var sl := s as FlatSlider
 			if is_instance_valid(sl) and sl.is_visible_in_tree():

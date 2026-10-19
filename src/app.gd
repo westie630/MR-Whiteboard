@@ -28,6 +28,7 @@ const DEFAULTS := {
 	"ink_pause": 2.0,                # seconds of rest before the automatic conversion
 	"speech_provider": "wit",        # wit | none
 	"wit_token": "",                 # Wit.ai server access token (or put it in user://wit_token.txt)
+	"vkeyboard": true,               # show the on-screen keyboard while a text field is being edited (a physical keyboard always works)
 	"haptics": true,
 	"stylus_hand": "auto",           # auto | left | right
 	"finger_draw": true,             # draw with a pinch when there is no stylus (so the app can be tried without one)

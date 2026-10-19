@@ -189,6 +189,44 @@ func _face_head(pos: Vector3) -> void:
 	panel.global_transform = Transform3D(Basis(Vector3.UP, yaw), pos)
 
 
+# ------------------------------------------------------------------------------------------------ physical keyboard
+
+## A Bluetooth keyboard: the headset delivers its keys to the app window, but the menu lives in its own viewport, so keys are passed on
+## to the field being edited there. With no field open, editing shortcuts work (Ctrl+Z, Delete ...), Enter edits the selected text or
+## shape, and any character starts a new text.
+func _input(e: InputEvent) -> void:
+	if not (e is InputEventKey) or menu == null or panel == null or board == null or board.doc == null:
+		return
+	var k := e as InputEventKey
+	if menu.is_typing():
+		panel.viewport.push_input(k, false)
+		get_viewport().set_input_as_handled()
+		return
+	if not k.pressed:
+		return
+	if Shortcuts.edit_key(board, k):
+		get_viewport().set_input_as_handled()
+		return
+	var enter := k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER
+	if enter and not (board.texts.selected_text() != null or board.texts.selected_shape() != null):
+		if not k.echo:
+			board.ink.convert_ink()
+		get_viewport().set_input_as_handled()
+		return
+	if enter or Shortcuts.is_printable(k):
+		_show_menu()
+		if menu.open_text_entry() and not enter:
+			panel.viewport.push_input(k, false)            # the character that started the typing is the first one typed
+		get_viewport().set_input_as_handled()
+
+
+func _show_menu() -> void:
+	if panel.visible:
+		return
+	_place_panel_front()
+	panel.request_update()
+
+
 # ------------------------------------------------------------------------------------------------ hands
 
 func _read_hand(side: String) -> Dictionary:

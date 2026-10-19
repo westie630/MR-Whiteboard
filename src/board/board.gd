@@ -35,6 +35,7 @@ var pen_ctl: PenController
 var hand_ctl: HandController
 var ink: InkController
 var speech: SpeechController
+var texts: TextController
 var head := Transform3D(Basis.IDENTITY, Vector3(0, 1.6, 0))
 
 var _held: Dictionary = {}                 # pose smoothing per anchor
@@ -57,6 +58,7 @@ func _init() -> void:
 	hand_ctl = HandController.new(self)
 	ink = InkController.new(self)
 	speech = SpeechController.new(self)
+	texts = TextController.new(self)
 
 
 func setup(anchor_service: AnchorService) -> void:

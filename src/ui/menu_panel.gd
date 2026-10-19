@@ -26,6 +26,7 @@ var _alt_box: HFlowContainer
 var _alt_sig := ""
 var _sel_text_btn: Btn
 var _sel_convert_btn: Btn
+var _sel_edit_btn: Btn
 var _toast_label: Label
 var _toast_t := 0.0
 var _title: Label
@@ -34,13 +35,15 @@ var _undo_btn: Btn
 var _redo_btn: Btn
 var _ink_btn: Btn
 var _mic_btn: Btn
-var _rename_mic: Btn
+var _type_btn: Btn
 var _token_edit: LineEdit
-var _rename_box: Control
-var _rename_edit: LineEdit
-var _rename_ink: InkField
-var _rename_title: Label
-var _rename_cb := Callable()
+var _tabs_row: Control
+var _holder: Control
+var _bottom: Control
+var _entry: TextEntry
+var _entry_cb := Callable()
+var _keyboard: VKeyboard
+var _sel_wanted := false
 var _custom_picker: HsvPicker
 var _lists_dirty := true
 var _confirm_delete := ""
@@ -72,6 +75,7 @@ func _process(delta: float) -> void:
 		_lists_dirty = false
 		_refresh_dynamic()
 		_sync()
+	_update_typing_layout()
 
 
 # ------------------------------------------------------------------------------------------------ building
@@ -99,6 +103,7 @@ func _build() -> void:
 	head.add_child(close)
 
 	var tabs := HBoxContainer.new()
+	_tabs_row = tabs
 	root.add_child(tabs)
 	for t in TABS:
 		var b := Btn.new(t[1], t[2])
@@ -120,10 +125,12 @@ func _build() -> void:
 	var holder := Control.new()
 	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	holder.clip_contents = true
+	_holder = holder
 	root.add_child(holder)
 	for t in TABS:
 		var sc := ScrollContainer.new()
 		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		sc.follow_focus = true
 		sc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		sc.visible = false
 		holder.add_child(sc)
@@ -139,8 +146,8 @@ func _build() -> void:
 	_build_rooms(_pages.rooms.page)
 	_build_more(_pages.more.page)
 
-	_rename_box = _build_rename()
-	root.add_child(_rename_box)
+	_entry = _build_entry()
+	root.add_child(_entry)
 
 	_sel_bar = PanelContainer.new()
 	(_sel_bar as PanelContainer).add_theme_stylebox_override("panel", UITheme.box(UITheme.PANEL, 14))
@@ -175,16 +182,24 @@ func _build() -> void:
 	_sel_text_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_sel_text_btn.pressed.connect(_selection_action.bind("next_reading"))
 	sv.add_child(_sel_text_btn)
+	_sel_edit_btn = Btn.new("keyboard", "")
+	_sel_edit_btn.custom_minimum_size = Vector2(56, 52)
+	_sel_edit_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_sel_edit_btn.pressed.connect(func(): open_text_entry())
+	sv.add_child(_sel_edit_btn)
 	root.add_child(_sel_bar)
 
 	var bottom := HBoxContainer.new()
+	_bottom = bottom
 	root.add_child(bottom)
-	_undo_btn = Btn.new("undo", "Undo")
+	_undo_btn = Btn.new("undo", "")
 	_undo_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_undo_btn.size_flags_stretch_ratio = 0.7
 	_undo_btn.pressed.connect(func(): board.undo())
 	bottom.add_child(_undo_btn)
-	_redo_btn = Btn.new("redo", "Redo")
+	_redo_btn = Btn.new("redo", "")
 	_redo_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_redo_btn.size_flags_stretch_ratio = 0.7
 	_redo_btn.pressed.connect(func(): board.redo())
 	bottom.add_child(_redo_btn)
 	_ink_btn = Btn.new("convert", "To text")
@@ -195,6 +210,14 @@ func _build() -> void:
 	_mic_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_mic_btn.pressed.connect(func(): board.speech.toggle())
 	bottom.add_child(_mic_btn)
+	_type_btn = Btn.new("keyboard", "Type")
+	_type_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_type_btn.pressed.connect(func(): open_text_entry())
+	bottom.add_child(_type_btn)
+
+	_keyboard = VKeyboard.new()
+	_keyboard.visible = false
+	root.add_child(_keyboard)
 	_select_tab(App.val("menu_tab") if _pages.has(str(App.val("menu_tab"))) else "draw")
 
 
@@ -733,12 +756,15 @@ func _build_more(p: VBoxContainer) -> void:
 	_token_edit.custom_minimum_size = Vector2(0, 52)
 	_token_edit.secret = true
 	_token_edit.placeholder_text = "Wit.ai server access token"
+	_token_edit.virtual_keyboard_enabled = false        # the on-screen keyboard below is ours, not the system's
+	_token_edit.context_menu_enabled = false
+	_token_edit.text_submitted.connect(func(_t: String): _token_edit.release_focus())
 	_token_edit.text_changed.connect(func(t: String): App.put("wit_token", t.strip_edges()))
 	p.add_child(_token_edit)
 	_syncers.append(func():
 		if _token_edit.text != str(App.val("wit_token")) and not _token_edit.has_focus():
 			_token_edit.text = str(App.val("wit_token")))
-	p.add_child(_label("Tap Dictate, say something and pause: the words appear as text on the canvas you are looking at (or in the correction box). Needs a free Wit.ai account: create an app at wit.ai, copy its Server Access Token into this box (the headset has no keyboard: put it in a file wit_token.txt in the app's data folder instead, see the README). Speech goes to Wit.ai only while you dictate.", true))
+	p.add_child(_label("Tap Dictate, say something and pause: the words appear as text on the canvas you are looking at (or in the correction box). Needs a free Wit.ai account: create an app at wit.ai, copy its Server Access Token into this box (in the headset tap the box to type it with the on-screen or a Bluetooth keyboard, or put it in a file wit_token.txt, see the README). Speech goes to Wit.ai only while you dictate.", true))
 	_header(p, "Stylus and hands")
 	_segmented(p, [["auto", "Stylus hand: auto"], ["left", "Left"], ["right", "Right"]], func(): return App.val("stylus_hand"), func(v): App.put("stylus_hand", v))
 	_toggle(p, "pin", "Haptic ticks", "haptics")
@@ -755,50 +781,99 @@ func _build_more(p: VBoxContainer) -> void:
 	_slider_row(p, "Menu size", 0.7, 1.6, "ui_scale", 0.05, func(v: float): return "%d %%" % int(v * 100.0))
 
 
-# ------------------------------------------------------------------------------------------------ rename box
+# ------------------------------------------------------------------------------------------------ text entry
 
-func _build_rename() -> Control:
-	var box := PanelContainer.new()
-	box.visible = false
-	box.add_theme_stylebox_override("panel", UITheme.box(UITheme.PANEL, 16, UITheme.ACCENT, 2))
-	var v := VBoxContainer.new()
-	box.add_child(v)
-	_rename_title = _label("Rename", false)
-	v.add_child(_rename_title)
-	_rename_edit = LineEdit.new()
-	_rename_edit.custom_minimum_size = Vector2(0, 52)
-	_rename_edit.placeholder_text = "Type, or write below with the stylus"
-	_rename_edit.text_submitted.connect(func(_t): _rename_ok())
-	v.add_child(_rename_edit)
-	_rename_ink = InkField.new()
-	_rename_ink.custom_minimum_size = Vector2(0, 110)
-	_rename_ink.text_ready.connect(func(t: String): _rename_edit.text = t)
-	v.add_child(_rename_ink)
-	var h := HBoxContainer.new()
-	v.add_child(h)
-	h.add_child(_btn("check", "OK", _rename_ok))
-	_rename_mic = _btn("mic", "Dictate", func(): board.speech.toggle(func(t: String): _rename_edit.text = t))
-	h.add_child(_rename_mic)
-	h.add_child(_btn("close", "Cancel", func(): _rename_box.visible = false))
-	return box
+func _build_entry() -> TextEntry:
+	var e := TextEntry.new()
+	e.accepted.connect(_entry_ok)
+	e.cancelled.connect(close_entry)
+	e.mic_btn.pressed.connect(func(): board.speech.toggle(func(t: String): _entry.insert(t)))
+	e.keyboard_toggled.connect(func():
+		App.put("vkeyboard", not bool(App.val("vkeyboard")))
+		_sync())
+	return e
+
+
+## Open the box for the thing that is selected: a text item is edited, a closed shape gets a label, otherwise new text for the
+## canvas in front of you. False when there is nowhere to put new text.
+func open_text_entry() -> bool:
+	var txt := board.texts.selected_text()
+	if txt != null:
+		var id := txt.id
+		_open_entry("Edit text", txt.text, true, func(t: String): board.texts.edit(id, t))
+		return true
+	var shp := board.texts.selected_shape()
+	if shp != null:
+		var sid := shp.id
+		_open_entry("Label for this shape", shp.label, true, func(t: String): board.texts.set_label(sid, t), true)
+		return true
+	if board.texts.spot().is_empty():
+		board.toast.emit("Place a canvas first (Canvas tab), then type your text.")
+		return false
+	_open_entry("New text on the canvas", "", true, func(t: String): board.texts.place(t))
+	return true
 
 
 func _ask_name(title: String, current: String, cb: Callable) -> void:
-	_rename_title.text = title
-	_rename_edit.text = current
-	_rename_cb = cb
-	_rename_ink.clear()
-	_rename_ink.recognize_fn = board.ink.provider().recognize
-	_rename_ink.language = str(App.val("ink_language"))
-	_rename_box.visible = true
+	_open_entry(title, current, false, cb)
 
 
-func _rename_ok() -> void:
-	var t := _rename_edit.text.strip_edges()
-	_rename_box.visible = false
-	if t != "" and _rename_cb.is_valid():
-		_rename_cb.call(t)
+func _open_entry(title: String, current: String, multiline: bool, cb: Callable, empty_ok: bool = false) -> void:
+	_entry_cb = cb
+	_entry.open(title, current, multiline, board.ink.provider().recognize, str(App.val("ink_language")), empty_ok)
+	_sync()
+
+
+func close_entry() -> void:
+	_entry.close()
+	_entry_cb = Callable()
 	_lists_dirty = true
+	_sync()
+
+
+func _entry_ok(text: String) -> void:
+	var cb := _entry_cb
+	close_entry()
+	if cb.is_valid():
+		cb.call(text)
+
+
+func entry_open() -> bool:
+	return _entry != null and _entry.is_open()
+
+
+## True while a text field of the menu has the keyboard focus: the rig must then pass keys to it instead of using them as shortcuts.
+func is_typing() -> bool:
+	var f := _focused_field()
+	return f != null
+
+
+func _focused_field() -> Control:
+	if not is_inside_tree():
+		return null
+	var f := get_viewport().gui_get_focus_owner()
+	if f != null and (f is LineEdit or f is TextEdit) and is_ancestor_of(f) and f.is_visible_in_tree():
+		return f
+	return null
+
+
+## Keyboard docked at the bottom while a field is being edited. The rest of the menu makes room: while the box is open it replaces
+## the tabs, and the selection strip and bottom bar step aside so the panel never grows past its size.
+func _update_typing_layout() -> void:
+	if _keyboard == null:
+		return
+	var f := _focused_field()
+	var open := entry_open()
+	var kb := bool(App.val("vkeyboard")) and (open or f != null)
+	if kb:
+		_keyboard.target = _entry.field() if open else f
+	if _keyboard.visible != kb:
+		_keyboard.visible = kb
+	_entry.show_pad(not bool(App.val("vkeyboard")))
+	_tabs_row.visible = not open
+	_holder.visible = not open
+	_bottom.visible = not (open or kb)
+	_sel_bar.visible = _sel_wanted and not (open or kb)
 
 
 # ------------------------------------------------------------------------------------------------ selection strip
@@ -851,7 +926,7 @@ func _sync() -> void:
 	for s in _dyn_syncers:
 		s.call()
 	var n := board.selection.size()
-	_sel_bar.visible = n > 0
+	_sel_wanted = n > 0
 	_sel_label.text = "%d selected" % n
 	var single_text := n == 1 and board.doc != null and board.doc.items.has(board.selection[0]) and (board.doc.items[board.selection[0]] as Item).kind == Item.TEXT
 	_sel_text_btn.visible = single_text and not (board.doc.items[board.selection[0]] as Item).alternatives.is_empty()
@@ -860,15 +935,17 @@ func _sync() -> void:
 		if (it as Item).kind == Item.STROKE:
 			any_stroke = true
 	_sel_convert_btn.visible = any_stroke
+	_sel_edit_btn.visible = board.texts.selected_text() != null or board.texts.selected_shape() != null
 	_refresh_readings(single_text)
 	_undo_btn.modulate.a = 1.0 if board.history != null and board.history.can_undo() else 0.45
 	_redo_btn.modulate.a = 1.0 if board.history != null and board.history.can_redo() else 0.45
 	_ink_btn.visible = board.ink.has_pending() or board.ink.failed
 	_ink_btn.text = "To text (%d)" % board.ink.pending.size() if not board.ink.busy else "Reading..."
 	var sp := board.speech
-	for mb in [_mic_btn, _rename_mic]:
+	for mb in [_mic_btn, _entry.mic_btn]:
 		(mb as Btn).on = sp.listening()
 		(mb as Btn).text = "Listening..." if sp.listening() else ("Reading..." if sp.busy() else "Dictate")
+	_update_typing_layout()
 
 
 ## Selected converted text: the other readings of the handwriting as one-tap choices, plus retype and back to ink.
@@ -893,10 +970,10 @@ func _refresh_readings(single_text: bool) -> void:
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.pressed.connect(func(): board.ink.choose_alternative(id, r))
 		_alt_box.add_child(b)
-	var edit := Btn.new("text", "Retype / rewrite")
+	var edit := Btn.new("keyboard", "Edit text")
 	edit.small = true
 	edit.custom_minimum_size = Vector2(0, 46)
-	edit.pressed.connect(func(): _ask_name("Correct the text", it.text, func(t: String): board.ink.set_text(id, t)))
+	edit.pressed.connect(func(): open_text_entry())
 	_alt_box.add_child(edit)
 	if not it.ink.is_empty():
 		var back := Btn.new("undo", "Back to handwriting")

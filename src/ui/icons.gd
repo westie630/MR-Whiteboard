@@ -141,6 +141,26 @@ static func draw(ci: CanvasItem, id: String, r: Rect2, col: Color) -> void:
 		"text":
 			ci.draw_line(P.call(0.22, 0.24), P.call(0.78, 0.24), col, w * 1.1, true)
 			ci.draw_line(P.call(0.5, 0.24), P.call(0.5, 0.82), col, w * 1.1, true)
+		"keyboard":
+			ci.draw_rect(Rect2(P.call(0.1, 0.26), Vector2(0.8, 0.48) * s), col, false, w)
+			for k in 4:
+				ci.draw_circle(P.call(0.24 + float(k) * 0.173, 0.4), s * 0.035, col)
+			for k in 3:
+				ci.draw_circle(P.call(0.33 + float(k) * 0.173, 0.52), s * 0.035, col)
+			ci.draw_line(P.call(0.3, 0.64), P.call(0.7, 0.64), col, w * 0.9, true)
+		"backspace":
+			ci.draw_polyline(PackedVector2Array([P.call(0.08, 0.5), P.call(0.3, 0.22), P.call(0.9, 0.22), P.call(0.9, 0.78), P.call(0.3, 0.78), P.call(0.08, 0.5)]), col, w, true)
+			ci.draw_line(P.call(0.42, 0.38), P.call(0.68, 0.62), col, w, true)
+			ci.draw_line(P.call(0.68, 0.38), P.call(0.42, 0.62), col, w, true)
+		"shift":
+			ci.draw_polyline(PackedVector2Array([P.call(0.5, 0.12), P.call(0.88, 0.5), P.call(0.68, 0.5), P.call(0.68, 0.86), P.call(0.32, 0.86), P.call(0.32, 0.5), P.call(0.12, 0.5), P.call(0.5, 0.12)]), col, w, true)
+		"enter":
+			ci.draw_polyline(PackedVector2Array([P.call(0.86, 0.2), P.call(0.86, 0.58), P.call(0.2, 0.58)]), col, w * 1.2, true)
+			ci.draw_polyline(PackedVector2Array([P.call(0.36, 0.4), P.call(0.18, 0.58), P.call(0.36, 0.76)]), col, w * 1.2, true)
+		"left":
+			ci.draw_polyline(PackedVector2Array([P.call(0.62, 0.2), P.call(0.3, 0.5), P.call(0.62, 0.8)]), col, w * 1.3, true)
+		"right":
+			ci.draw_polyline(PackedVector2Array([P.call(0.38, 0.2), P.call(0.7, 0.5), P.call(0.38, 0.8)]), col, w * 1.3, true)
 		"convert":
 			ci.draw_polyline(PackedVector2Array([P.call(0.1, 0.7), P.call(0.18, 0.3), P.call(0.28, 0.6), P.call(0.36, 0.3)]), col, w * 0.9, true)
 			ci.draw_line(P.call(0.46, 0.5), P.call(0.62, 0.5), col, w, true)

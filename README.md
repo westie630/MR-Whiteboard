@@ -25,6 +25,7 @@ An infinite whiteboard for the **Meta Quest 3** and the **Logitech MX Ink** styl
 | **Flow diagrams** | Stencils (process, decision, start/end, data, document, database ...), arrows and elbow connectors that **stick to the shapes and follow them** when you move them. |
 | **Handwriting to text** | Write words with the stylus (Write tool) and pause: they become typed text with the **same size and position** as your handwriting. Written inside a box, the text becomes the box's label. Wrong reading? Tap "next reading". |
 | **Speech to text** | Tap **Dictate**, speak, pause: the words become a text item on the canvas you are looking at (below earlier text, selected so you can move or correct it). The correction box has a Dictate button too. |
+| **Typing** | Tap **Type** (or press any key on a Bluetooth keyboard, **T** on the PC): type text onto the canvas you are looking at. With text selected it edits it, with a box selected it becomes the box's label. Works with a **Bluetooth keyboard** and an **on-screen keyboard** at the same time. |
 | **Export** | **SVG** (one file per canvas, for Inkscape / Illustrator / Figma), **glTF .glb** (3D sketches and canvas ink) and the document file **.mrw**. |
 | **PC test app** | Mouse as the stylus, a fly camera as your head, a simulated room and simulated anchors (switch rooms from the Rooms tab). |
 
@@ -73,12 +74,19 @@ Without a stylus, a **pinch of the right hand draws** (left hand moves canvases)
 
 Handwriting is read by Google's handwriting input service (the one behind Google Input Tools), which understands real pen strokes with timing: print, cursive, digits, symbols, many languages. It needs an internet connection; only the pen strokes are sent. **Bad handwriting:** the service returns several candidate readings; select the converted text and tap another reading, choose **Retype / rewrite** (type on the PC, write a name in the pad in the headset), or **Back to handwriting**, which restores your original strokes (they are kept inside the text, also after saving). Converting happens after a pause you can lengthen, or only when you press **To text**; ink that cannot be read is simply left as ink. Writing a little larger and slower than usual gives the recogniser the most to work with. It is an unofficial endpoint, so if it changes, the app says so and leaves your ink untouched. `InkRecognizer` is a small interface (`src/ink/`) for plugging in another recogniser, for example an on-device model.
 
+## Typing
+
+**Type** opens a box (it replaces the tabs while it is open, so the canvas stays in view): new text goes on the canvas you are looking at, below earlier text and selected so you can move it. With a text item selected the box edits it (one undo step); with a box or other closed shape selected, what you type becomes its **label**. Names of documents, canvases and rooms use the same box on one line. Enter accepts a one-line name; in the text box Enter is a new line and **Ctrl+Enter** or **OK** accepts. **Dictate** works inside the box too, and the keyboard button swaps the on-screen keyboard for the handwriting pad.
+
+* **On-screen keyboard** (`VKeyboard`, vector-drawn): letters, digits, symbols, shift (double tap: caps lock), caret arrows, backspace that repeats. It appears whenever a text field of the menu is edited (also the Wit.ai token box in More) and sends real key events, exactly like a physical keyboard. Keys fire on press, so poke or point-and-pinch like on a real keyboard.
+* **Bluetooth keyboard**: pair it in the Quest settings; its keys arrive in the app window and are passed on to the field being edited in the menu. With no field open: any character starts a new text, **Enter** edits the selected text or shape, **Ctrl+Z / Ctrl+Y** undo and redo, **Ctrl+S** save, **Ctrl+D** duplicate, **Delete** removes the selection.
+
 ## Speech to text
 
 Dictation records the microphone (the headset's, or the PC's default input), cuts the recording when you stop speaking (or after 19 s), and sends the audio to **Wit.ai**, Meta's free speech service. It needs an internet connection and a Wit.ai token, and only the audio of a dictation is sent.
 
 1. Make a free account at [wit.ai](https://wit.ai), create an app (its language is the language that is recognised) and copy its **Server Access Token** (Settings).
-2. PC: **More > Speech to text**, paste the token. Headset (no keyboard): `pwsh tools/quest.ps1 -WitToken <token>` bundles the token into your own build (the file `wit_token.txt` is git-ignored and removed again after the export; anyone who has your APK can read it, so keep it personal).
+2. **More > Speech to text**, type or paste the token (in the headset with the on-screen or a Bluetooth keyboard). Or bundle it into your own build: `pwsh tools/quest.ps1 -WitToken <token>` bundles the token into your own build (the file `wit_token.txt` is git-ignored and removed again after the export; anyone who has your APK can read it, so keep it personal).
 3. Quest: the first start asks for microphone access. Tap **Dictate** (it shows *Listening...*), say something, pause. Tap it again to finish early.
 
 If the PC records silence, Windows is using another input as its default: change it in Windows Sound settings. `SpeechRecognizer` (`src/speech/`) is the small interface for plugging in another service or an on-device model.
@@ -92,11 +100,11 @@ Documents are JSON (`.mrw`) in the app's data folder (`user://docs`): plain text
 ```
 src/core/      document model (Document, FrameData, Item), History (undo/redo), DocStore, shape library (Shapes),
                ShapeRecognizer, StrokeMesher, Brushes, SvgExport, Exporter, TextLayout
-src/board/     Board (the world: rooms, anchors, frames, selection), PenController, HandController, InkController,
+src/board/     Board (the world: rooms, anchors, frames, selection), PenController, HandController, InkController, TextController, Shortcuts,
                FrameNode / ItemView (3D views), LiveStroke, AnchorService (+ SimAnchors for the PC)
 src/xr/        XrRig, StylusInput, MetaAnchors, MetaScene, XrPanel (compositor-layer menu), hand tracking helpers
 src/desktop/   DesktopRig (the PC build)
-src/ui/        MenuPanel and the vector-drawn controls (Btn, FlatSlider, HsvPicker, InkField, Icons, UITheme)
+src/ui/        MenuPanel and the vector-drawn controls (Btn, FlatSlider, HsvPicker, InkField, VKeyboard, TextEntry, Icons, UITheme)
 src/ink/       InkRecognizer interface and GoogleInk
 src/speech/    MicRecorder (microphone, speech detection, 16 kHz conversion), SpeechRecognizer interface and WitSpeech
 shaders/       ink (canvas ribbons, 3D tubes, neon), the fading grid
@@ -117,7 +125,7 @@ Ideas worth knowing:
 pwsh tests/run_all.ps1
 ```
 
-Covers the shape recogniser (noisy synthetic strokes), the document model, save / load, undo, SVG export, a simulated pen driving the whole board (draw, snap, erase, select, glued connectors, rooms, anchors, hands), the menu pointer mapping at 2x scale, the handwriting service, and speech to text (recorder, Wit.ai answer parser, text placement). `tools/dev/render_demo.tscn` and `--screenshot` render real frames for checking by eye.
+Covers the shape recogniser (noisy synthetic strokes), the document model, save / load, undo, SVG export, a simulated pen driving the whole board (draw, snap, erase, select, glued connectors, rooms, anchors, hands), the menu pointer mapping at 2x scale, the handwriting service, speech to text (recorder, Wit.ai answer parser, text placement), and typing (on-screen and physical keys, new / edited / labelled text, names). `tools/dev/render_demo.tscn` and `--screenshot` render real frames for checking by eye.
 
 ## Status: what is verified and what needs your headset
 
@@ -128,6 +136,8 @@ Everything above runs and is tested on the PC. The headset-specific parts are wr
 3. **Menu**: `[panel] compositor layer` (sharpest) or `textured quad`.
 4. Handwriting needs internet on the headset.
 5. **Dictation**: the microphone permission prompt appears, `Listening...` shows while you speak, and the text arrives. The recording code is verified on the PC with a real microphone and with synthetic audio; the Quest side (the RECORD_AUDIO permission, the headset's audio input) has not been run on a headset, nor has a real Wit.ai request been made (no token here: the request format follows Wit.ai's `/dictation` documentation, and the answer parser is tested against its streamed JSON).
+
+6. **Typing**: the on-screen keyboard pokes work (keys fire on press) and a paired Bluetooth keyboard types into the box. The key routing is tested on the PC with synthetic key and pointer events only; whether Horizon OS hands a paired keyboard's keys to an immersive app, and the text field's own system keyboard staying off (`virtual_keyboard_enabled = false`), have not been seen on a headset.
 
 ## Credits
 

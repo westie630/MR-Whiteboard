@@ -1,6 +1,6 @@
 extends Node3D
 ## Entry point. In the headset (OpenXR started by the engine on Android) the XR rig runs; on the PC the desktop rig does.
-## Development switches (after `--`): --demo  open the demo document;  --screenshot=PATH [--tab=NAME] [--frames=N] [--cam=x,y,z,yaw,pitch]
+## Development switches (after `--`): --demo  open the demo document;  --screenshot=PATH [--tab=NAME] [--type] [--frames=N] [--cam=x,y,z,yaw,pitch]
 ## saves a picture after N frames and quits.
 
 var board: Board
@@ -89,6 +89,8 @@ func _screenshot_later(args: Dictionary) -> void:
 	var frames := int(args.get("frames", "90"))
 	for i in frames:
 		await get_tree().process_frame
+		if i == frames / 2 and args.has("type") and rig is DesktopRig:
+			(rig as DesktopRig).menu.open_text_entry()
 	var img := get_viewport().get_texture().get_image()
 	var path := String(args.screenshot)
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())

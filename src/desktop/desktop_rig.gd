@@ -234,37 +234,19 @@ func _wheel(dir: float, mb: InputEventMouseButton) -> void:
 
 
 func _key(k: InputEventKey) -> void:
-	if get_viewport().gui_get_focus_owner() is LineEdit:
+	if menu.is_typing():
+		return
+	if Shortcuts.edit_key(board, k):
 		return
 	match k.keycode:
 		KEY_TAB:
 			menu.visible = not menu.visible
 			_layout()
 			get_viewport().set_input_as_handled()
-		KEY_Z:
-			if k.ctrl_pressed:
-				if k.shift_pressed:
-					board.redo()
-				else:
-					board.undo()
-		KEY_Y:
-			if k.ctrl_pressed:
-				board.redo()
-		KEY_S:
-			if k.ctrl_pressed and board.doc != null:
-				board.flush_save()
-				board.doc.save()
-				board.toast.emit("Saved")
-		KEY_D:
-			if k.ctrl_pressed:
-				board.duplicate_selection()
-		KEY_DELETE, KEY_BACKSPACE:
-			board.delete_selection()
-		KEY_ESCAPE:
-			if not board.placing.is_empty():
-				board.cancel_place()
-			else:
-				board.clear_selection()
+		KEY_T:
+			if not k.ctrl_pressed:
+				_type_text()
+				get_viewport().set_input_as_handled()
 		KEY_C:
 			if not k.ctrl_pressed:
 				board.begin_place("wall", Vector2(1.2, 0.8))
@@ -279,13 +261,24 @@ func _key(k: InputEventKey) -> void:
 		KEY_5:
 			App.put("tool", "erase")
 		KEY_ENTER, KEY_KP_ENTER:
-			board.ink.convert_ink()
+			if board.texts.selected_text() != null or board.texts.selected_shape() != null:
+				_type_text()
+			else:
+				board.ink.convert_ink()
 		KEY_Q, KEY_E:
 			for fid in board.grabs.keys():
 				var g: Dictionary = board.grabs[fid]
 				var xf := g.xf as Transform3D
 				xf.basis = Basis(Vector3.UP, deg_to_rad(6.0) * (1.0 if k.keycode == KEY_Q else -1.0)) * xf.basis
 				g.xf = xf
+
+
+## T (or Enter on selected text): the typing box, showing the menu if it was hidden.
+func _type_text() -> void:
+	if not menu.visible:
+		menu.visible = true
+		_layout()
+	menu.open_text_entry()
 
 
 func _apply_look() -> void:
@@ -302,7 +295,7 @@ func _process(delta: float) -> void:
 		_mmb = false
 	var v := Vector3.ZERO
 	var b := camera.global_transform.basis
-	var typing := get_viewport().gui_get_focus_owner() is LineEdit
+	var typing := menu.is_typing()
 	if not typing:
 		if Input.is_key_pressed(KEY_W):
 			v += -b.z
