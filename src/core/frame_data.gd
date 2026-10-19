@@ -15,6 +15,7 @@ var room := ""
 var xf := Transform3D.IDENTITY            # pose in room space
 var scale := 1.0
 var size := Vector2(1.2, 0.8)             # nominal canvas size (m at scale 1); it grows to fit the content
+var offset := Vector2.ZERO                # centre of the nominal rectangle in the frame (it is not always on the origin after a resize)
 var anchor := ""                          # uuid of this frame's own spatial anchor ("" = none yet)
 var anchor_xf := Transform3D.IDENTITY     # the room-space pose the anchor was created at
 var grid := ""                            # "" = app default
@@ -36,7 +37,7 @@ static func make(kind_id: String, room_id: String, pose: Transform3D, frame_name
 
 func to_dict() -> Dictionary:
 	return {"id": id, "name": name, "kind": kind, "room": room, "xf": U.xf_to_array(xf), "scale": snappedf(scale, 1e-5),
-		"size": U.v2_to_array(size), "anchor": anchor, "anchor_xf": U.xf_to_array(anchor_xf), "grid": grid, "backing": backing,
+		"size": U.v2_to_array(size), "offset": U.v2_to_array(offset), "anchor": anchor, "anchor_xf": U.xf_to_array(anchor_xf), "grid": grid, "backing": backing,
 		"locked": locked, "created": created}
 
 
@@ -49,6 +50,7 @@ static func from_dict(d: Dictionary) -> FrameData:
 	f.xf = U.xf_from_array(d.get("xf"))
 	f.scale = float(d.get("scale", 1.0))
 	f.size = U.v2_from(d.get("size"), Vector2(1.2, 0.8))
+	f.offset = U.v2_from(d.get("offset"))
 	f.anchor = str(d.get("anchor", ""))
 	f.anchor_xf = U.xf_from_array(d.get("anchor_xf"))
 	f.grid = str(d.get("grid", ""))

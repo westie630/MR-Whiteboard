@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="ink" x1="70" y1="380" x2="440" y2="140" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3fe0c8"/>
+      <stop offset="0.55" stop-color="#ffd166"/>
+      <stop offset="1" stop-color="#ff7aa2"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e9eef9"/>
+      <stop offset="1" stop-color="#a9b6d3"/>
+    </linearGradient>
+  </defs>
+  <!-- ink glow: the same path, wider and fainter -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M92 372 C 128 150, 252 128, 262 262 S 370 392, 404 176" stroke="url(#ink)" stroke-opacity="0.16" stroke-width="64"/>
+    <path d="M92 372 C 128 150, 252 128, 262 262 S 370 392, 404 176" stroke="url(#ink)" stroke-opacity="0.28" stroke-width="46"/>
+    <path d="M92 372 C 128 150, 252 128, 262 262 S 370 392, 404 176" stroke="url(#ink)" stroke-width="30"/>
+  </g>
+  <!-- stylus: tip on the end of the stroke, body going up and to the right -->
+  <g transform="translate(404 176) rotate(28)">
+    <path d="M0 0 L-17 -46 L17 -46 Z" fill="#12162a"/>
+    <path d="M-17 -46 L-20 -70 L20 -70 L17 -46 Z" fill="#3fe0c8"/>
+    <rect x="-20" y="-172" width="40" height="102" rx="12" fill="url(#body)"/>
+    <rect x="-20" y="-112" width="40" height="9" fill="#7a8bb3" opacity="0.55"/>
+    <circle cx="0" cy="-88" r="6" fill="#ef476f"/>
+  </g>
+</svg>

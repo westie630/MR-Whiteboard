@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1226"/>
+      <stop offset="1" stop-color="#1d3260"/>
+    </linearGradient>
+    <linearGradient id="gridfade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7ff3e2" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#7ff3e2" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#7ff3e2" stop-opacity="0.75"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.62" r="0.55">
+      <stop offset="0" stop-color="#3fe0c8" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#3fe0c8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#sky)"/>
+  <rect width="512" height="512" fill="url(#glow)"/>
+  <!-- canvas plane in perspective: converging verticals, receding horizontals -->
+  <g fill="none" stroke="url(#gridfade)" stroke-width="5" stroke-linecap="round">
+    <path d="M256 150 L256 470"/>
+    <path d="M256 150 L168 470"/>
+    <path d="M256 150 L80 470"/>
+    <path d="M256 150 L-8 470"/>
+    <path d="M256 150 L344 470"/>
+    <path d="M256 150 L432 470"/>
+    <path d="M256 150 L520 470"/>
+    <path d="M0 218 H512"/>
+    <path d="M0 262 H512"/>
+    <path d="M0 322 H512"/>
+    <path d="M0 400 H512"/>
+    <path d="M0 500 H512"/>
+  </g>
+</svg>

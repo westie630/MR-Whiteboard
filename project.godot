@@ -16,6 +16,7 @@ run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 boot_splash/bg_color=Color(0.02, 0.025, 0.04, 1)
 boot_splash/stretch_mode=0
+boot_splash/image="res://assets/icons/vr_splash.png"
 config/icon="res://icon.svg"
 
 [autoload]
@@ -48,6 +49,7 @@ textures/canvas_textures/default_texture_filter=2
 renderer/rendering_method="mobile"
 textures/vram_compression/import_etc2_astc=true
 anti_aliasing/quality/msaa_3d=2
+textures/default_filters/anisotropic_filtering_level=3
 environment/defaults/default_clear_color=Color(0, 0, 0, 1)
 
 [xr]

@@ -3,7 +3,7 @@ extends RefCounted
 ## Builds mesh data for ink: flat ribbons for canvas strokes and shape outlines (anti-aliased by the shader through UV.y),
 ## round tubes for 3D strokes, and filled polygons. Stroke points are packed as x, y, z, pressure.
 
-const CAP_SEGMENTS := 6
+const CAP_SEGMENTS := 12
 const MITER_LIMIT := 2.4
 const MIN_STEP := 0.0003
 

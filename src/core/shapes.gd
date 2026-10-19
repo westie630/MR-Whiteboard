@@ -31,7 +31,7 @@ const DEFAULT_SIZE := {
 	"doc": Vector2(0.24, 0.16), "cyl": Vector2(0.16, 0.2), "ellipse": Vector2(0.18, 0.18), "triangle": Vector2(0.2, 0.18),
 	"hex": Vector2(0.22, 0.18), "pent": Vector2(0.2, 0.2), "star": Vector2(0.22, 0.22), "rarrow": Vector2(0.26, 0.14),
 }
-const ELLIPSE_SEGMENTS := 48
+const SEGMENT_LENGTH := 0.010              # curves are cut into pieces this long at most: no visible facets however big the shape is
 
 
 static func is_line(id: String) -> bool:
@@ -59,7 +59,7 @@ static func fill_poly(id: String, size: Vector2) -> PackedVector2Array:
 		"rrect":
 			return _rounded_rect(w, h, minf(w, h) * 0.9)
 		"ellipse":
-			return Geom2D.ellipse_points(w, h, ELLIPSE_SEGMENTS)
+			return Geom2D.ellipse_points(w, h, _curve_segments(w, h))
 		"diamond":
 			return PackedVector2Array([Vector2(0, h), Vector2(w, 0), Vector2(0, -h), Vector2(-w, 0)])
 		"triangle":
@@ -242,14 +242,21 @@ static func label_box(id: String, size: Vector2) -> Vector2:
 
 # ------------------------------------------------------------------------------------------------ internals
 
+## Number of straight pieces for an ellipse with half axes w, h.
+static func _curve_segments(w: float, h: float) -> int:
+	var perimeter := TAU * sqrt((w * w + h * h) * 0.5)
+	return clampi(int(ceil(perimeter / SEGMENT_LENGTH)), 48, 360)
+
+
 static func _rounded_rect(w: float, h: float, rr: float) -> PackedVector2Array:
 	var r := minf(rr, minf(w, h))
+	var steps := clampi(int(ceil(r * PI * 0.5 / (SEGMENT_LENGTH * 0.7))), 8, 40)
 	var out := PackedVector2Array()
 	var corners := [Vector2(w - r, h - r), Vector2(-w + r, h - r), Vector2(-w + r, -h + r), Vector2(w - r, -h + r)]
 	var start := [0.0, PI * 0.5, PI, PI * 1.5]
 	for k in 4:
-		for i in range(0, 9):
-			var a: float = start[k] + (PI * 0.5) * float(i) / 8.0
+		for i in range(0, steps + 1):
+			var a: float = start[k] + (PI * 0.5) * float(i) / float(steps)
 			out.append(corners[k] + Vector2(cos(a), sin(a)) * r)
 	return out
 

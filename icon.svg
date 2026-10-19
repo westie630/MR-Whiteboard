@@ -1,1 +1,65 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><rect width="128" height="128" rx="24" fill="#10141f"/><g fill="none" stroke="#3fe0c8" stroke-width="3" opacity=".35"><path d="M24 40h80M24 64h80M24 88h80M40 24v80M64 24v80M88 24v80"/></g><path d="M30 92c12-40 22-52 34-30s20 18 36-34" fill="none" stroke="#ffd166" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="100" cy="28" r="7" fill="#ef476f"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<defs>
+<clipPath id="round"><rect width="512" height="512" rx="102"/></clipPath>
+
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1226"/>
+      <stop offset="1" stop-color="#1d3260"/>
+    </linearGradient>
+    <linearGradient id="gridfade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7ff3e2" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#7ff3e2" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#7ff3e2" stop-opacity="0.75"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.62" r="0.55">
+      <stop offset="0" stop-color="#3fe0c8" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#3fe0c8" stop-opacity="0"/>
+    </radialGradient>
+  
+    <linearGradient id="ink" x1="70" y1="380" x2="440" y2="140" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3fe0c8"/>
+      <stop offset="0.55" stop-color="#ffd166"/>
+      <stop offset="1" stop-color="#ff7aa2"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e9eef9"/>
+      <stop offset="1" stop-color="#a9b6d3"/>
+    </linearGradient>
+  
+</defs>
+<g clip-path="url(#round)">
+  <rect width="512" height="512" fill="url(#sky)"/>
+  <rect width="512" height="512" fill="url(#glow)"/>
+  <!-- canvas plane in perspective: converging verticals, receding horizontals -->
+  <g fill="none" stroke="url(#gridfade)" stroke-width="5" stroke-linecap="round">
+    <path d="M256 150 L256 470"/>
+    <path d="M256 150 L168 470"/>
+    <path d="M256 150 L80 470"/>
+    <path d="M256 150 L-8 470"/>
+    <path d="M256 150 L344 470"/>
+    <path d="M256 150 L432 470"/>
+    <path d="M256 150 L520 470"/>
+    <path d="M0 218 H512"/>
+    <path d="M0 262 H512"/>
+    <path d="M0 322 H512"/>
+    <path d="M0 400 H512"/>
+    <path d="M0 500 H512"/>
+  </g>
+</g>
+
+  <!-- ink glow: the same path, wider and fainter -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M92 372 C 128 150, 252 128, 262 262 S 370 392, 404 176" stroke="url(#ink)" stroke-opacity="0.16" stroke-width="64"/>
+    <path d="M92 372 C 128 150, 252 128, 262 262 S 370 392, 404 176" stroke="url(#ink)" stroke-opacity="0.28" stroke-width="46"/>
+    <path d="M92 372 C 128 150, 252 128, 262 262 S 370 392, 404 176" stroke="url(#ink)" stroke-width="30"/>
+  </g>
+  <!-- stylus: tip on the end of the stroke, body going up and to the right -->
+  <g transform="translate(404 176) rotate(28)">
+    <path d="M0 0 L-17 -46 L17 -46 Z" fill="#12162a"/>
+    <path d="M-17 -46 L-20 -70 L20 -70 L17 -46 Z" fill="#3fe0c8"/>
+    <rect x="-20" y="-172" width="40" height="102" rx="12" fill="url(#body)"/>
+    <rect x="-20" y="-112" width="40" height="9" fill="#7a8bb3" opacity="0.55"/>
+    <circle cx="0" cy="-88" r="6" fill="#ef476f"/>
+  </g>
+
+</svg>

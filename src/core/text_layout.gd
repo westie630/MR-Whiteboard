@@ -11,8 +11,26 @@ const TALL := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789bdfhklt!?/|()[]{}%&@#$"
 const DEEP := "gjpqy,;()[]{}|/@$"
 
 
+static var _font: Font
+
+
+## The text font: the engine's built-in font as a multichannel signed distance field, so text stays razor sharp at any size and
+## distance (a normal font is a bitmap and turns blocky when you lean in or scale it up).
 static func font() -> Font:
-	return ThemeDB.fallback_font
+	if _font == null:
+		var base := ThemeDB.fallback_font
+		if base is FontFile:
+			var f := (base as FontFile).duplicate() as FontFile
+			f.multichannel_signed_distance_field = true
+			f.msdf_pixel_range = 16
+			f.msdf_size = 96
+			f.antialiasing = TextServer.FONT_ANTIALIASING_GRAY
+			f.hinting = TextServer.HINTING_NONE
+			f.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
+			_font = f
+		else:
+			_font = base
+	return _font
 
 
 ## Bounding box (m) of the text drawn at the given em height, one or several lines.

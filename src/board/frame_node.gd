@@ -51,6 +51,7 @@ func setup(d: FrameData, document: Document) -> void:
 	_overlay.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_overlay)
 	_title = Label3D.new()
+	_title.font = TextLayout.font()
 	_title.font_size = 64
 	_title.pixel_size = 0.032 / 64.0
 	_title.shaded = false
@@ -123,7 +124,7 @@ func content_bounds() -> Rect2:
 ## The extent of the canvas: the nominal rectangle, grown to hold everything drawn on it.
 func bounds() -> Rect2:
 	if _bounds_dirty:
-		var nominal := Rect2(-data.size * 0.5, data.size)
+		var nominal := Rect2(data.offset - data.size * 0.5, data.size)
 		var cb := content_bounds()
 		_bounds = nominal.merge(cb.grow(MARGIN)) if cb.size != Vector2.ZERO or cb.position != Vector2.ZERO else nominal
 		_bounds_dirty = false
@@ -198,6 +199,10 @@ func refresh_frame() -> void:
 	else:
 		_title.position = Vector3(0.0, 0.12, 0.0)
 		_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_overlay_dirty = true
+
+
+func mark_overlay_dirty() -> void:
 	_overlay_dirty = true
 
 

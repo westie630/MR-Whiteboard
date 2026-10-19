@@ -65,14 +65,14 @@ static func _try_line(rs: PackedVector2Array, length: float, diag: float, snap_a
 	var a := m + u * (rs[0] - m).dot(u)
 	var b := m + u * (rs[rs.size() - 1] - m).dot(u)
 	if snap_axes:
-		var snapped := _snap_line(a, b)
+		var snapped := snap_line(a, b)
 		a = snapped[0]
 		b = snapped[1]
 	return {"shape": "line", "a": a, "b": b, "err": rms / maxf(diag, 1e-6)}
 
 
 ## Rotate the line about its midpoint onto the horizontal, vertical or a 45 degree angle when it is within a few degrees of one.
-static func _snap_line(a: Vector2, b: Vector2) -> Array:
+static func snap_line(a: Vector2, b: Vector2) -> Array:
 	var d := b - a
 	var len := d.length()
 	if len < 1e-6:
@@ -116,7 +116,7 @@ static func _try_arrow(rs: PackedVector2Array, length: float, diag: float, snap_
 	var a := tail
 	var b := tip
 	if snap_axes:
-		var snapped := _snap_line(a, b)
+		var snapped := snap_line(a, b)
 		a = snapped[0]
 		b = snapped[1]
 	return {"shape": "arrow", "a": a, "b": b, "head_b": true, "err": 0.0}

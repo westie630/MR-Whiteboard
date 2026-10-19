@@ -120,6 +120,7 @@ func _add_ribbon(pts: PackedVector2Array, closed: bool, col: Color, mat: Materia
 func _build_text(txt: String, center: Vector2, rot: float, em: float, col: Color, prio: int) -> void:
 	var l := Label3D.new()
 	l.text = txt
+	l.font = TextLayout.font()
 	l.font_size = 64
 	l.pixel_size = em / 64.0
 	l.modulate = col
