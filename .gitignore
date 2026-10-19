@@ -31,3 +31,6 @@ Thumbs.db
 __pycache__/
 *.pyc
 *.testbak
+
+# Personal Wit.ai token bundled into a headset build by tools/quest.ps1 -WitToken (a secret: never commit)
+wit_token.txt

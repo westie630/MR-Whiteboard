@@ -34,6 +34,7 @@ var grabs: Dictionary = {}                 # frame id -> {xf: Transform3D (world
 var pen_ctl: PenController
 var hand_ctl: HandController
 var ink: InkController
+var speech: SpeechController
 var head := Transform3D(Basis.IDENTITY, Vector3(0, 1.6, 0))
 
 var _held: Dictionary = {}                 # pose smoothing per anchor
@@ -55,6 +56,7 @@ func _init() -> void:
 	pen_ctl = PenController.new(self)
 	hand_ctl = HandController.new(self)
 	ink = InkController.new(self)
+	speech = SpeechController.new(self)
 
 
 func setup(anchor_service: AnchorService) -> void:
@@ -525,6 +527,40 @@ func pen_target(tip: Vector3, reach: float = CAPTURE, slack: float = 0.6) -> Dic
 		if dz < bd:
 			bd = dz
 			best = {"fn": n, "local": l, "dist": dz}
+	return best
+
+
+## Where dictated text goes: the point of the canvas the head looks at; failing that the middle of the active canvas, or of the
+## canvas nearest the head. {frame, center} (frame coordinates) or {} when there is no canvas to write on.
+func dictation_spot() -> Dictionary:
+	var best := {}
+	var best_t := INF
+	var nearest: FrameNode = null
+	var nearest_d := INF
+	var gaze := -head.basis.z
+	for fn in visible_frames(FrameData.CANVAS):
+		var n := fn as FrameNode
+		if n.data.locked:
+			continue
+		var d := n.global_position.distance_to(head.origin)
+		if n.data.id == active_frame:
+			d *= 0.25
+		if d < nearest_d:
+			nearest_d = d
+			nearest = n
+		var lh := n.to_local_point(head.origin)
+		var ld := n.global_transform.basis.inverse() * gaze
+		if absf(ld.z) < 0.05:
+			continue
+		var t := -lh.z / ld.z
+		if t <= 0.0 or t >= best_t:
+			continue
+		var g := lh + ld * t
+		if n.bounds().has_point(Vector2(g.x, g.y)):
+			best_t = t
+			best = {"frame": n.data.id, "center": Vector2(g.x, g.y)}
+	if best.is_empty() and nearest != null:
+		best = {"frame": nearest.data.id, "center": nearest.bounds().get_center()}
 	return best
 
 

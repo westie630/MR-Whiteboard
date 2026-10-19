@@ -33,6 +33,9 @@ var _status: Label
 var _undo_btn: Btn
 var _redo_btn: Btn
 var _ink_btn: Btn
+var _mic_btn: Btn
+var _rename_mic: Btn
+var _token_edit: LineEdit
 var _rename_box: Control
 var _rename_edit: LineEdit
 var _rename_ink: InkField
@@ -188,6 +191,10 @@ func _build() -> void:
 	_ink_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_ink_btn.pressed.connect(func(): board.ink.convert_ink())
 	bottom.add_child(_ink_btn)
+	_mic_btn = Btn.new("mic", "Dictate")
+	_mic_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_mic_btn.pressed.connect(func(): board.speech.toggle())
+	bottom.add_child(_mic_btn)
 	_select_tab(App.val("menu_tab") if _pages.has(str(App.val("menu_tab"))) else "draw")
 
 
@@ -720,6 +727,18 @@ func _build_more(p: VBoxContainer) -> void:
 	_toggle(p, "convert", "Convert automatically after a pause", "ink_auto")
 	_slider_row(p, "Pause before converting", 1.0, 5.0, "ink_pause", 0.25, func(v: float): return "%.1f s" % v)
 	p.add_child(_label("Use the Write tool: write words with the stylus and pause. They turn into text of the same size, right where you wrote. Needs internet. Misread? Select the text: pick another reading, retype it, or go back to your handwriting. Writing larger and a little slower helps.", true))
+	_header(p, "Speech to text")
+	_segmented(p, [["wit", "Wit.ai"], ["none", "Off"]], func(): return App.val("speech_provider"), func(v): App.put("speech_provider", v))
+	_token_edit = LineEdit.new()
+	_token_edit.custom_minimum_size = Vector2(0, 52)
+	_token_edit.secret = true
+	_token_edit.placeholder_text = "Wit.ai server access token"
+	_token_edit.text_changed.connect(func(t: String): App.put("wit_token", t.strip_edges()))
+	p.add_child(_token_edit)
+	_syncers.append(func():
+		if _token_edit.text != str(App.val("wit_token")) and not _token_edit.has_focus():
+			_token_edit.text = str(App.val("wit_token")))
+	p.add_child(_label("Tap Dictate, say something and pause: the words appear as text on the canvas you are looking at (or in the correction box). Needs a free Wit.ai account: create an app at wit.ai, copy its Server Access Token into this box (the headset has no keyboard: put it in a file wit_token.txt in the app's data folder instead, see the README). Speech goes to Wit.ai only while you dictate.", true))
 	_header(p, "Stylus and hands")
 	_segmented(p, [["auto", "Stylus hand: auto"], ["left", "Left"], ["right", "Right"]], func(): return App.val("stylus_hand"), func(v): App.put("stylus_hand", v))
 	_toggle(p, "pin", "Haptic ticks", "haptics")
@@ -758,6 +777,8 @@ func _build_rename() -> Control:
 	var h := HBoxContainer.new()
 	v.add_child(h)
 	h.add_child(_btn("check", "OK", _rename_ok))
+	_rename_mic = _btn("mic", "Dictate", func(): board.speech.toggle(func(t: String): _rename_edit.text = t))
+	h.add_child(_rename_mic)
 	h.add_child(_btn("close", "Cancel", func(): _rename_box.visible = false))
 	return box
 
@@ -844,6 +865,10 @@ func _sync() -> void:
 	_redo_btn.modulate.a = 1.0 if board.history != null and board.history.can_redo() else 0.45
 	_ink_btn.visible = board.ink.has_pending() or board.ink.failed
 	_ink_btn.text = "To text (%d)" % board.ink.pending.size() if not board.ink.busy else "Reading..."
+	var sp := board.speech
+	for mb in [_mic_btn, _rename_mic]:
+		(mb as Btn).on = sp.listening()
+		(mb as Btn).text = "Listening..." if sp.listening() else ("Reading..." if sp.busy() else "Dictate")
 
 
 ## Selected converted text: the other readings of the handwriting as one-tap choices, plus retype and back to ink.

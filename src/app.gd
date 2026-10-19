@@ -26,6 +26,8 @@ const DEFAULTS := {
 	"ink_language": "en",
 	"ink_auto": true,                # convert handwriting by itself after a pause (off: only when To text is pressed)
 	"ink_pause": 2.0,                # seconds of rest before the automatic conversion
+	"speech_provider": "wit",        # wit | none
+	"wit_token": "",                 # Wit.ai server access token (or put it in user://wit_token.txt)
 	"haptics": true,
 	"stylus_hand": "auto",           # auto | left | right
 	"finger_draw": true,             # draw with a pinch when there is no stylus (so the app can be tried without one)

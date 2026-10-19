@@ -23,6 +23,10 @@ config/icon="res://icon.svg"
 
 App="*res://src/app.gd"
 
+[audio]
+
+driver/enable_input=true
+
 [display]
 
 window/size/viewport_width=1600

@@ -147,6 +147,13 @@ static func draw(ci: CanvasItem, id: String, r: Rect2, col: Color) -> void:
 			ci.draw_polyline(PackedVector2Array([P.call(0.56, 0.42), P.call(0.64, 0.5), P.call(0.56, 0.58)]), col, w, true)
 			ci.draw_line(P.call(0.72, 0.28), P.call(0.92, 0.28), col, w, true)
 			ci.draw_line(P.call(0.82, 0.28), P.call(0.82, 0.74), col, w, true)
+		"mic":
+			ci.draw_line(P.call(0.5, 0.24), P.call(0.5, 0.44), col, s * 0.26, true)
+			ci.draw_circle(P.call(0.5, 0.24), s * 0.13, col)
+			ci.draw_circle(P.call(0.5, 0.44), s * 0.13, col)
+			ci.draw_arc(P.call(0.5, 0.44), s * 0.25, 0.0, PI, 20, col, w, true)
+			ci.draw_line(P.call(0.5, 0.69), P.call(0.5, 0.86), col, w, true)
+			ci.draw_line(P.call(0.36, 0.86), P.call(0.64, 0.86), col, w, true)
 		"anchor":
 			ci.draw_circle(P.call(0.5, 0.26), s * 0.09, col)
 			ci.draw_line(P.call(0.5, 0.35), P.call(0.5, 0.82), col, w, true)

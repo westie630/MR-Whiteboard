@@ -3,7 +3,8 @@
 #   pwsh tools/quest.ps1 -NoInstall     # only export build/MRWhiteboard-Quest3.apk
 #   pwsh tools/quest.ps1 -NoExport      # install the last build and launch
 #   pwsh tools/quest.ps1 -Logs          # also stream the app's log lines after launching (Ctrl+C to stop)
-param([switch]$NoExport, [switch]$NoInstall, [switch]$Release, [switch]$Logs)
+#   pwsh tools/quest.ps1 -WitToken XYZ  # bundle a Wit.ai token (speech to text) into this build; the file is removed after the export
+param([switch]$NoExport, [switch]$NoInstall, [switch]$Release, [switch]$Logs, [string]$WitToken = "")
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -18,6 +19,8 @@ if (-not $NoExport) {
         throw "The Android build template is missing. Run tools/setup_android.ps1 once."
     }
     New-Item -ItemType Directory -Force (Join-Path $root "build") | Out-Null
+    $tokenFile = Join-Path $root "wit_token.txt"
+    if ($WitToken -ne "") { Set-Content -Path $tokenFile -Value $WitToken.Trim() -NoNewline }
     Remove-Item $log -ErrorAction SilentlyContinue
     $mode = if ($Release) { "--export-release" } else { "--export-debug" }
     # Godot's headless Android export sometimes lingers after it has written the APK (the Gradle daemon keeps it alive),
@@ -37,6 +40,7 @@ if (-not $NoExport) {
     }
     Start-Sleep -Seconds 2
     if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+    if ($WitToken -ne "") { Remove-Item $tokenFile -ErrorAction SilentlyContinue }
     if (-not $done -or -not (Test-Path $apk)) { throw "export failed; see $log" }
     Write-Host "Exported $apk"
 }
