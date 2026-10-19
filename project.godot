@@ -1,0 +1,69 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="MR Whiteboard"
+config/description="Infinite mixed-reality whiteboard for Meta Quest 3 with the Logitech MX Ink stylus: draw in 3D or on canvases you place, with shape recognition, handwriting to text, rooms and spatial anchors. Also runs on a PC for testing."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7", "Mobile")
+boot_splash/bg_color=Color(0.02, 0.025, 0.04, 1)
+boot_splash/stretch_mode=0
+config/icon="res://icon.svg"
+
+[autoload]
+
+App="*res://src/app.gd"
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+window/stretch/mode="disabled"
+
+[editor_plugins]
+
+enabled=PackedStringArray()
+
+[gui]
+
+common/snap_controls_to_pixels=false
+theme/default_font_generate_mipmaps=true
+
+[input_devices]
+
+pointing/emulate_mouse_from_touch=false
+pointing/android/enable_pan_and_scale_gestures=false
+
+[rendering]
+
+textures/canvas_textures/default_texture_filter=2
+renderer/rendering_method="mobile"
+textures/vram_compression/import_etc2_astc=true
+anti_aliasing/quality/msaa_3d=2
+environment/defaults/default_clear_color=Color(0, 0, 0, 1)
+
+[xr]
+
+openxr/form_factor=0
+openxr/view_configuration=1
+openxr/reference_space=2
+openxr/environment_blend_mode=2
+openxr/foveation_level=2
+openxr/foveation_dynamic=true
+openxr/submit_depth_buffer=true
+openxr/startup_alert=false
+openxr/extensions/hand_tracking=true
+openxr/extensions/hand_interaction_profile=false
+shaders/enabled=true
+openxr/enabled.android=true
+openxr/extensions/meta/passthrough=true
+openxr/extensions/meta/scene_api=true
+openxr/extensions/meta/anchor_api=true

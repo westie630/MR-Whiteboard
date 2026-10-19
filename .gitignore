@@ -1,25 +1,33 @@
-# Godot 4.2+ specific ignores
-~*.dll
-
-# Godot 4+ specific ignores
+# Godot
 .godot/
-.nomedia
-
-# Godot-specific ignores
 .import/
 export.cfg
 export_credentials.cfg
-*.tmp
-
-# Imported translations (automatically generated from CSV files)
 *.translation
-
-# Mono-specific ignores
+*.tmp
 .mono/
-data_*/
 mono_crash.*.json
 
-# Export outputs
+# Build outputs (Quest APK, Windows exe, logs, test screenshots)
+build/
+*.apk
+*.aab
+*.idsig
 *.exe
-# Uncomment if your project does not version PCK files as runtime dependencies.
-# *.pck
+*.pck
+
+# Android Gradle template: install once with tools/setup_android.ps1 (or Project > Install Android Build Template)
+android/build/
+android/.gradle/
+android/local.properties
+
+# Vendors plugin: the copy of the DLL that Godot makes while the editor is open
+~*.dll
+.bin/windows/*/*/~*.dll
+
+# Editor / OS leftovers
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+*.testbak
