@@ -4,7 +4,8 @@
 #   pwsh tools/quest.ps1 -NoExport      # install the last build and launch
 #   pwsh tools/quest.ps1 -Logs          # also stream the app's log lines after launching (Ctrl+C to stop)
 #   pwsh tools/quest.ps1 -WitToken XYZ  # bundle a Wit.ai token (speech to text) into this build; the file is removed after the export
-param([switch]$NoExport, [switch]$NoInstall, [switch]$Release, [switch]$Logs, [string]$WitToken = "")
+#   pwsh tools/quest.ps1 -PullLog       # copy the app's own log (user://logs/godot.log, kept by the app itself) to build/headset.log
+param([switch]$NoExport, [switch]$NoInstall, [switch]$Release, [switch]$Logs, [string]$WitToken = "", [switch]$PullLog)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -13,6 +14,15 @@ $adb = Join-Path $env:LOCALAPPDATA "Android\Sdk\platform-tools\adb.exe"
 $apk = Join-Path $root "build\MRWhiteboard-Quest3.apk"
 $log = Join-Path $root "build\export.log"
 $pkg = "com.westie630.mrwhiteboard"
+
+if ($PullLog) {
+    # the Quest's system log rolls over within minutes; the app keeps its own (file logging is on in project.godot)
+    $dst = Join-Path $root "build\headset.log"
+    New-Item -ItemType Directory -Force (Join-Path $root "build") | Out-Null
+    & $adb exec-out run-as $pkg cat files/logs/godot.log > $dst
+    Write-Host "Saved $dst"
+    return
+}
 
 if (-not $NoExport) {
     if (-not (Test-Path (Join-Path $root "android\build\build.gradle"))) {

@@ -31,7 +31,7 @@ const DEFAULTS := {
 	"vkeyboard": true,               # show the on-screen keyboard while a text field is being edited (a physical keyboard always works)
 	"haptics": true,
 	"stylus_hand": "auto",           # auto | left | right
-	"finger_draw": true,             # draw with a pinch when there is no stylus (so the app can be tried without one)
+	"finger_draw": false,            # draw with a pinch of the right hand when there is no stylus (off: both hands point and select)
 	"ui_scale": 1.0,                 # PC panel scale
 	"last_doc": "",
 	"sim_room": "A",                 # PC: which simulated room the anchors belong to

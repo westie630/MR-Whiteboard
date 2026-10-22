@@ -57,11 +57,28 @@ static func canvas(doc: Document, frame_id: String, opts: Dictionary = {}) -> St
 static func export_document(doc: Document, folder: String, opts: Dictionary = {}) -> PackedStringArray:
 	var written := PackedStringArray()
 	DirAccess.make_dir_recursive_absolute(folder)
-	var used := {}
+	var frames: Array = []
 	for f in doc.frames.values():
+		if (f as FrameData).kind == FrameData.CANVAS:
+			frames.append(f)
+	var names := file_names(frames)
+	for f in frames:
 		var fr: FrameData = f
-		if fr.kind != FrameData.CANVAS:
-			continue
+		var p := "%s/%s.svg" % [folder, names[fr.id]]
+		var file := FileAccess.open(p, FileAccess.WRITE)
+		if file != null:
+			file.store_string(canvas(doc, fr.id, opts))
+			file.close()
+			written.append(p)
+	return written
+
+
+## File names (without extension) for a list of frames: the frame's name made safe, "Name 2" when two share one. frame id -> name.
+static func file_names(frames: Array) -> Dictionary:
+	var out := {}
+	var used := {}
+	for f in frames:
+		var fr: FrameData = f
 		var base := DocStore.safe_name(fr.name)
 		var k := 2
 		var fname := base
@@ -69,13 +86,8 @@ static func export_document(doc: Document, folder: String, opts: Dictionary = {}
 			fname = "%s %d" % [base, k]
 			k += 1
 		used[fname] = true
-		var p := "%s/%s.svg" % [folder, fname]
-		var file := FileAccess.open(p, FileAccess.WRITE)
-		if file != null:
-			file.store_string(canvas(doc, fr.id, opts))
-			file.close()
-			written.append(p)
-	return written
+		out[fr.id] = fname
+	return out
 
 
 # ------------------------------------------------------------------------------------------------ elements

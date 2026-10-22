@@ -11,6 +11,7 @@ const LIMIT := 200
 var doc: Document
 var undo_stack: Array = []
 var redo_stack: Array = []
+var serial := 0                            # counts new operations (not undo / redo): tells "nothing has been done since" apart
 var _group: Array = []
 var _grouping := 0
 
@@ -50,6 +51,7 @@ func _record(op: Dictionary) -> void:
 	if _grouping > 0:
 		_group.append(op)
 		return
+	serial += 1
 	undo_stack.append(op)
 	if undo_stack.size() > LIMIT:
 		undo_stack.pop_front()
@@ -87,6 +89,77 @@ func redo() -> bool:
 	undo_stack.append(op)
 	changed.emit()
 	return true
+
+
+# ------------------------------------------------------------------------------------------------ undo / redo of some items only
+
+## Undo the latest operation that touches only `ids` (and connector lines, which follow their shapes); operations on other items are
+## left alone. Returns the operation, or {} when there is none. An operation that touches `ids` together with other items blocks
+## the search (undoing something older on those items could overwrite it).
+func undo_local(ids: Array) -> Dictionary:
+	var i := _find_local(undo_stack, ids)
+	if i < 0:
+		return {}
+	var op: Dictionary = undo_stack.pop_at(i)
+	_apply(op, true)
+	redo_stack.append(op)
+	changed.emit()
+	return op
+
+
+## The same for redo: the latest undone operation that touches only `ids`.
+func redo_local(ids: Array) -> Dictionary:
+	var i := _find_local(redo_stack, ids)
+	if i < 0:
+		return {}
+	var op: Dictionary = redo_stack.pop_at(i)
+	_apply(op, false)
+	undo_stack.append(op)
+	changed.emit()
+	return op
+
+
+func can_undo_local(ids: Array) -> bool:
+	return _find_local(undo_stack, ids) >= 0
+
+
+func can_redo_local(ids: Array) -> bool:
+	return _find_local(redo_stack, ids) >= 0
+
+
+func _find_local(stack: Array, ids: Array) -> int:
+	for i in range(stack.size() - 1, -1, -1):
+		var touched: Dictionary = {}
+		_collect(stack[i], touched)
+		var hit := false
+		var foreign := false
+		for id in touched:
+			if ids.has(id):
+				hit = true
+			elif not touched[id]:
+				foreign = true
+		if hit:
+			return -1 if foreign else i
+	return -1
+
+
+## id -> true when the item is a line (a connector), for every item an operation touches.
+func _collect(op: Dictionary, out: Dictionary) -> void:
+	match str(op.type):
+		"add", "remove":
+			for d in op["items"]:
+				out[str(d.id)] = Item.from_dict(d).is_line()
+		"modify":
+			for d in op["after"]:
+				out[str(d.id)] = Item.from_dict(d).is_line()
+		"xform":
+			for id in op["ids"]:
+				out[str(id)] = doc.items.has(id) and (doc.items[id] as Item).is_line()
+		"group":
+			for o in op["ops"]:
+				_collect(o, out)
+		_:
+			out["frame:" + str(op.get("frame", op.get("before", {})).get("id", ""))] = false
 
 
 # ------------------------------------------------------------------------------------------------ operation builders

@@ -8,12 +8,13 @@ signal toast(text: String)
 signal changed()                           # tool, selection, room or document state changed: the UI refreshes
 signal document_opened()
 
-const ROOM_SEARCH_S := 7.0                 # how long to look for a known room before asking what to do
+const ROOM_SEARCH_S := 7.0                 # how long to look for a known room before showing the last one in front of the user
+const REACH_DIST := 0.6                    # metres in front of the eyes where a canvas is put to be drawn on (arm's length)
 const RECONCILE_S := 0.6
 const ANCHOR_LOST_S := 14.0                # a frame anchor without a pose for this long, in a room that is here, is considered lost
 const AUTOSAVE_S := 1.5
-const CAPTURE := 0.12                      # a pen this close (m) to a canvas draws on it
-const HOVER_RANGE := 0.28
+const CAPTURE := InputTuning.CAPTURE       # a pen this close (m) to a canvas draws on it
+const HOVER_RANGE := InputTuning.HOVER_RANGE
 
 var doc: Document
 var history: History
@@ -22,12 +23,15 @@ var head_provider := Callable()            # -> Transform3D, the head in world s
 var surface_hit := Callable()              # (origin, dir) -> {point, normal} for real surfaces (Meta scene walls and tables), optional
 
 var current_room := ""
-var room_state := "none"                   # none | searching | found | needs_room | unanchored
+var room_state := "none"                   # none | searching | found | assumed (anchors not found: shown in front) | unanchored
+var _assumed := {}                         # room id -> world pose it is shown at while its anchors are not found
 var frame_nodes: Dictionary = {}           # frame id -> FrameNode
 var active_frame := ""                     # the canvas last drawn on / selected: the target of the Canvas tab
-var volume_id := ""                        # the 3D sketch new air strokes go into
 var selection: Array = []                  # selected item ids (all on sel_frame)
 var sel_frame := ""
+## Where the selection's undo / redo / delete buttons were when the selection went away through a delete, undo or redo: {frame, rect,
+## serial}. The undo and redo buttons stay there until something new is done, so a delete can be taken back with them.
+var bar_ghost: Dictionary = {}
 var stencil := "rect"
 var placing: Dictionary = {}               # canvas placement in progress: {kind, ghost, size}
 var grabs: Dictionary = {}                 # frame id -> {xf: Transform3D (world), scale: float} while a hand holds it
@@ -36,8 +40,11 @@ var hand_ctl: HandController
 var ink: InkController
 var speech: SpeechController
 var texts: TextController
+var share: ExportServer                   # the web server that lets a PC browser view / download the canvases (off until switched on)
 var head := Transform3D(Basis.IDENTITY, Vector3(0, 1.6, 0))
 
+var _import_time := -100000                # when a canvas was last added from the web page, and where its right edge is (metres along the viewer's right)
+var _import_right := 0.0
 var _held: Dictionary = {}                 # pose smoothing per anchor
 var _pending: Dictionary = {}              # anchor creations in flight (tag -> true)
 var _no_room_t := 0.0
@@ -59,6 +66,15 @@ func _init() -> void:
 	ink = InkController.new(self)
 	speech = SpeechController.new(self)
 	texts = TextController.new(self)
+	share = ExportServer.new()
+	share.name = "Share"
+	share.doc_source = func(): return doc
+	share.room_source = func(): return current_room
+	share.delete_canvas = _web_delete
+	share.rename_canvas = rename_frame
+	share.import_svg = import_svg
+	share.state_changed.connect(func(): changed.emit())
+	add_child(share)
 
 
 func setup(anchor_service: AnchorService) -> void:
@@ -86,15 +102,12 @@ func open(d: Document) -> void:
 		_make_frame_node(f)
 	current_room = ""
 	room_state = "searching" if not doc.rooms.is_empty() else "none"
+	_assumed.clear()
 	_no_room_t = 0.0
 	_room_auto_t = 0.0
 	selection.clear()
 	sel_frame = ""
 	active_frame = ""
-	volume_id = ""
-	for f in doc.frames.values():
-		if (f as FrameData).kind == FrameData.VOLUME:
-			volume_id = (f as FrameData).id
 	if anchors != null:
 		anchors.track(DocStore.anchors_of(doc))
 	App.put("last_doc", doc.id)
@@ -180,8 +193,6 @@ func _make_frame_node(f: FrameData) -> FrameNode:
 func _on_frame_added(f: FrameData) -> void:
 	if not frame_nodes.has(f.id):
 		_make_frame_node(f)
-	if f.kind == FrameData.VOLUME:
-		volume_id = f.id
 	changed.emit()
 
 
@@ -195,11 +206,6 @@ func _on_frame_removed(f: FrameData) -> void:
 		clear_selection()
 	if active_frame == f.id:
 		active_frame = ""
-	if volume_id == f.id:
-		volume_id = ""
-		for g in doc.frames.values():
-			if (g as FrameData).kind == FrameData.VOLUME and (g as FrameData).room == f.room:
-				volume_id = (g as FrameData).id
 	changed.emit()
 
 
@@ -263,6 +269,8 @@ func room_world(room_id: String) -> Variant:
 	var a := str(r.anchor)
 	if a != "" and anchors.has_pose(a):
 		return _smooth("room:" + room_id, anchors.pose(a), 0.016)
+	if _assumed.has(room_id):
+		return _assumed[room_id]               # its anchors are not found: shown where the board put it (see _assume_room)
 	if a == "":
 		return r.anchor_xf                    # made this session, its anchor is still being created
 	return null
@@ -326,12 +334,16 @@ func _update_rooms(dt: float) -> void:
 	if present.has(current_room):
 		room_state = "found"
 		_no_room_t = 0.0
+		_assumed.erase(current_room)
 	elif not present.is_empty():
 		current_room = doc.last_room if present.has(doc.last_room) else str(present[0])
 		room_state = "found"
 		_no_room_t = 0.0
+		_assumed.clear()
 		doc.set_room_field(current_room, "used", int(Time.get_unix_time_from_system()))
 		doc.last_room = current_room
+	elif room_state == "assumed" and not doc.room(current_room).is_empty():
+		pass                                     # keep showing the assumed room until its anchors (or another room's) turn up
 	else:
 		current_room = ""
 		if doc.rooms.is_empty():
@@ -341,7 +353,11 @@ func _update_rooms(dt: float) -> void:
 				create_room_here("", true)          # a new document: the first room is made where you stand
 		else:
 			_no_room_t += dt
-			room_state = "searching" if _no_room_t < ROOM_SEARCH_S else "needs_room"
+			room_state = "searching"
+			if _no_room_t >= ROOM_SEARCH_S:
+				# nothing anchored is found (the headset lost its map, or this is another room): never leave the user with an empty
+				# board, show the last room in front of them
+				_assume_room(doc.last_room if not doc.room(doc.last_room).is_empty() else str(doc.rooms[0].id))
 	if before != current_room or before_state != room_state:
 		changed.emit()
 
@@ -363,6 +379,46 @@ func create_room_here(room_name: String = "", announce: bool = true) -> void:
 	changed.emit()
 
 
+## Show a room whose anchors are not found in front of the user: its main canvas within reach (REACH_DIST), facing them, the room's
+## other frames around it as they were. Nothing is changed in the document; if the real anchors turn up, everything moves back to its
+## anchored place. Re-anchor room keeps it where it is shown.
+func _assume_room(room_id: String) -> void:
+	if doc == null or doc.room(room_id).is_empty():
+		return
+	var yaw := _head_yaw()
+	var fwd := Vector3(-head.basis.z.x, 0.0, -head.basis.z.z)
+	fwd = fwd.normalized() if fwd.length() > 0.05 else Vector3.FORWARD
+	var pose := Transform3D(Basis(Vector3.UP, yaw), Vector3(head.origin.x, 0.0, head.origin.z))
+	var main := _main_canvas(room_id)
+	if main != null:
+		var want := Transform3D(Basis(Vector3.UP, yaw), head.origin + fwd * REACH_DIST + Vector3(0.0, -0.2, 0.0))
+		pose = want * main.xf.affine_inverse()
+	_assumed[room_id] = pose
+	_held.clear()
+	current_room = room_id
+	room_state = "assumed"
+	doc.last_room = room_id
+	toast.emit("The anchors of \"%s\" were not found, so it is shown in front of you. Rooms tab > Re-anchor room keeps it here." % str(doc.room(room_id).get("name", "the room")))
+	changed.emit()
+
+
+## The canvas a room is shown by when it has to be placed by hand: the active one, else the one with the most on it.
+func _main_canvas(room_id: String) -> FrameData:
+	var best: FrameData = null
+	var most := -1
+	for f in doc.frames_in(room_id):
+		var fd: FrameData = f
+		if fd.kind != FrameData.CANVAS:
+			continue
+		if fd.id == active_frame:
+			return fd
+		var n := doc.items_of(fd.id).size()
+		if n > most:
+			most = n
+			best = fd
+	return best
+
+
 func _head_yaw() -> float:
 	var f := -head.basis.z
 	return atan2(-f.x, -f.z)
@@ -371,6 +427,10 @@ func _head_yaw() -> float:
 func select_room(room_id: String) -> void:
 	## Manually declare which room this is (when the anchors cannot be found): the room's frames are then placed by its remembered pose.
 	if doc == null or doc.room(room_id).is_empty():
+		return
+	var a := str(doc.room(room_id).anchor)
+	if anchors != null and anchors.is_supported() and a != "" and not anchors.has_pose(a):
+		_assume_room(room_id)                  # its anchor is not here: show it in front of the user
 		return
 	current_room = room_id
 	room_state = "found"
@@ -403,6 +463,9 @@ func reanchor_room() -> void:
 	var old := str(doc.room(current_room).anchor)
 	var yaw := _head_yaw()
 	var pose := Transform3D(Basis(Vector3.UP, yaw), Vector3(head.origin.x, 0.0, head.origin.z))
+	var shown: bool = _assumed.has(current_room)
+	if shown:
+		pose = _assumed[current_room]            # keep the room where it is shown now
 	doc.set_room_field(current_room, "anchor", "")
 	doc.set_room_field(current_room, "anchor_xf", pose)
 	if old != "":
@@ -411,7 +474,11 @@ func reanchor_room() -> void:
 	if anchors.is_supported():
 		_pending["room:" + current_room] = true
 		anchors.create(pose, "room:" + current_room)
-	toast.emit("Room anchor re-created here. Frames keep their place relative to the old room origin.")
+	if shown:
+		room_state = "found"
+		toast.emit("Room anchored here: its canvases stay where they are now.")
+	else:
+		toast.emit("Room anchor re-created here. Frames keep their place relative to the old room origin.")
 
 
 func _on_anchor_created(tag: String, uuid: String) -> void:
@@ -493,7 +560,8 @@ func _place_frames(dt: float) -> void:
 	for fid in frame_nodes.keys():
 		var fn: FrameNode = frame_nodes[fid]
 		var f := fn.data
-		var show := (f.room == current_room or room_state == "unanchored") and room_state != "searching" and room_state != "needs_room"
+		# canvases only: 3D sketches in older documents stay in the file but are not shown (drawing in 3D is switched off)
+		var show := f.kind == FrameData.CANVAS and (f.room == current_room or room_state == "unanchored") and room_state != "searching"
 		var w: Variant = frame_world(f, dt) if show else null
 		fn.visible = show and w != null
 		if fn.visible:
@@ -511,9 +579,23 @@ func visible_frames(kind: String = "") -> Array:
 	return out
 
 
+## Who is dragging the selection right now (the stylus's controller, or one of the hands'), for drawing the selection as it moves.
+func drag_driver() -> PenController:
+	for c in [pen_ctl] + hand_ctl.controllers():
+		var ctl := c as PenController
+		if ctl.state == PenController.S.DRAG_ITEMS or ctl.state == PenController.S.DRAG_HANDLE:
+			return ctl
+	return pen_ctl
+
+
+## How the selection is shown on a frame: see PenController.selection_view().
+func selection_view(fn: FrameNode) -> Dictionary:
+	return drag_driver().selection_view(fn)
+
+
 ## The canvas the pen is working on: the nearest canvas within `reach` metres of the tip (in front of or behind it) whose extent
 ## (grown by `slack` so drawing past the edge extends it) contains the tip. {fn, local, dist} or {}.
-func pen_target(tip: Vector3, reach: float = CAPTURE, slack: float = 0.6) -> Dictionary:
+func pen_target(tip: Vector3, reach: float = CAPTURE, slack: float = InputTuning.SLACK) -> Dictionary:
 	var best := {}
 	var bd := INF
 	for fn in visible_frames(FrameData.CANVAS):
@@ -566,42 +648,6 @@ func dictation_spot() -> Dictionary:
 	return best
 
 
-## The frame a hand's pinch grabs: a canvas whose plane is within reach and whose extent contains the point, or a 3D sketch
-## whose box is near. {fn, local, corner (index or -1)} or {}.
-func pick_frame(p: Vector3) -> Dictionary:
-	var best := {}
-	var bd := INF
-	for fn in visible_frames():
-		var n := fn as FrameNode
-		var l := n.to_local_point(p)
-		var s := n.data.scale
-		var d := INF
-		var corner := -1
-		if n.is_canvas:
-			var dz := absf(l.z) * s
-			var b := n.bounds()
-			if dz > 0.09 or not b.grow(0.05 / s).has_point(Vector2(l.x, l.y)):
-				continue
-			d = dz
-			var cs: Array = [b.position, Vector2(b.end.x, b.position.y), b.end, Vector2(b.position.x, b.end.y)]
-			for i in 4:
-				if (cs[i] as Vector2).distance_to(Vector2(l.x, l.y)) * s < 0.07:
-					corner = i
-		else:
-			var cb := n.content_bounds()
-			if cb.size == Vector2.ZERO:
-				cb = Rect2(Vector2(-0.06, -0.06), Vector2(0.12, 0.12))
-			var box := cb.grow(0.07 / s)
-			var dz2 := absf(l.z) * s
-			if dz2 > 0.35 or not box.has_point(Vector2(l.x, l.y)):
-				continue
-			d = 0.0 if dz2 < 0.12 else dz2
-		if d < bd:
-			bd = d
-			best = {"fn": n, "local": l, "corner": corner}
-	return best
-
-
 func begin_grab(f: FrameData) -> void:
 	if grabs.has(f.id) or f.locked:
 		return
@@ -626,6 +672,32 @@ func end_grab(f: FrameData) -> void:
 	var before: FrameData = g.before
 	history.do(History.op_frame(before, after))     # applies `after`: the anchor is then re-created at the new place by _reconcile()
 	_dirty_overlay(f.id)
+
+
+## Bring the canvas you are looking at (else the active one, else the nearest) within reach of the stylus: its middle 0.6 m in front
+## of you, a little below the eyes, facing you. Done as a grab, so it is undoable and gets a new anchor like any move.
+func bring_canvas_here() -> void:
+	var spot := dictation_spot()
+	var fn: FrameNode = frame_nodes.get(str(spot.get("frame", "")))
+	if fn == null:
+		toast.emit("There is no canvas here yet: place one with On a wall or On a table.")
+		return
+	var f := fn.data
+	if f.locked:
+		toast.emit("That canvas is locked.")
+		return
+	begin_grab(f)
+	if not grabs.has(f.id):
+		return
+	var fwd := Vector3(-head.basis.z.x, 0.0, -head.basis.z.z)
+	fwd = fwd.normalized() if fwd.length() > 0.05 else Vector3.FORWARD
+	var basis := Basis(Vector3.UP, _head_yaw())
+	var middle := fn.bounds().get_center()
+	var want := head.origin + fwd * REACH_DIST + Vector3(0.0, -0.2, 0.0)
+	(grabs[f.id] as Dictionary).xf = Transform3D(basis, want - basis * (Vector3(middle.x, middle.y, 0.0) * f.scale))
+	end_grab(f)
+	active_frame = f.id
+	toast.emit("Canvas brought within reach.")
 
 
 func add_frame(kind: String, world_xf: Transform3D, size: Vector2 = Vector2(1.2, 0.8)) -> FrameData:
@@ -665,6 +737,73 @@ func rename_frame(frame_id: String, new_name: String) -> void:
 		history.do(History.op_frame(f, upd))
 
 
+## The web page deleted a canvas: the same undoable step as the bin in the menu.
+func _web_delete(frame_id: String) -> void:
+	var f: FrameData = doc.frames.get(frame_id) if doc != null else null
+	if f == null:
+		return
+	if sel_frame == frame_id:
+		selection.clear()
+		sel_frame = ""
+	if active_frame == frame_id:
+		active_frame = ""
+	delete_frame(frame_id)
+	toast.emit("\"%s\" was deleted from the web page (undo brings it back)." % f.name)
+
+
+## Adds an SVG as a new canvas in front of the viewer: its shapes, strokes and text become ordinary items that can be selected and
+## edited. One undo step removes it all. Returns {ok, message, id, name, count}.
+func import_svg(svg: String, canvas_name: String = "") -> Dictionary:
+	if doc == null:
+		return {"ok": false, "message": "No document is open in the headset."}
+	var res := SvgImport.parse(svg)
+	if not res.ok:
+		return {"ok": false, "message": str(res.message)}
+	var size: Vector2 = res.size
+	var base := canvas_name.strip_edges()
+	if base == "":
+		base = str(res.title) if str(res.title) != "" else "Imported"
+	var taken := {}
+	for f in doc.frames.values():
+		taken[(f as FrameData).name] = true
+	var final_name := base
+	var k := 2
+	while taken.has(final_name):
+		final_name = "%s (%d)" % [base, k]
+		k += 1
+	# in front of the viewer, facing them; several files added one after another stand side by side
+	var basis := Basis(Vector3.UP, _head_yaw())
+	var fwd := Vector3(-head.basis.z.x, 0.0, -head.basis.z.z)
+	fwd = fwd.normalized() if fwd.length() > 0.05 else Vector3.FORWARD
+	var now := Time.get_ticks_msec()
+	var shift := 0.0
+	if now - _import_time < 90000:
+		shift = _import_right + 0.12 + size.x * 0.5
+	_import_time = now
+	_import_right = shift + size.x * 0.5
+	var dist := clampf(0.9 + size.x * 0.35, 0.9, 1.7)
+	var pos := Vector3(head.origin.x, clampf(head.origin.y - 0.1, 0.8, 1.9), head.origin.z) + fwd * dist + basis.x * shift
+	history.begin_group()
+	var frame := add_frame(FrameData.CANVAS, Transform3D(basis, pos), size)
+	if frame == null:
+		history.end_group()
+		return {"ok": false, "message": "The canvas could not be created."}
+	rename_frame(frame.id, final_name)
+	if str(res.backing) != "":
+		set_frame_prop(frame.id, "backing", str(res.backing))
+	for it in res.items:
+		(it as Item).frame = frame.id
+	history.do(History.op_add(res.items))
+	history.end_group()
+	var msg := "%s added: %d items" % [final_name, int(res.count)]
+	var left := SvgImport.skipped_text(res.skipped)
+	if left != "":
+		msg += " (left out: %s)" % left
+	toast.emit("\"%s\" was added from the web page: it is in front of you." % final_name)
+	changed.emit()
+	return {"ok": true, "message": msg, "id": frame.id, "name": final_name, "count": int(res.count)}
+
+
 func set_frame_prop(frame_id: String, key: String, value: Variant) -> void:
 	var f: FrameData = doc.frames.get(frame_id)
 	if f == null:
@@ -680,26 +819,6 @@ func clear_frame(frame_id: String) -> void:
 		return
 	history.do(History.op_remove(items))
 	toast.emit("Canvas cleared (undo brings it back)")
-
-
-func active_volume() -> FrameNode:
-	if volume_id != "" and frame_nodes.has(volume_id) and (frame_nodes[volume_id] as FrameNode).data.room == current_room:
-		return frame_nodes[volume_id]
-	for fn in frame_nodes.values():
-		var n := fn as FrameNode
-		if n.data.kind == FrameData.VOLUME and n.data.room == current_room:
-			volume_id = n.data.id
-			return n
-	return null
-
-
-## A new 3D sketch at a world position (air strokes then go into it).
-func new_volume_at(world_pos: Vector3) -> FrameNode:
-	var f := add_frame(FrameData.VOLUME, Transform3D(Basis(Vector3.UP, _head_yaw()), world_pos))
-	if f == null:
-		return null
-	volume_id = f.id
-	return frame_nodes.get(f.id)
 
 
 # ------------------------------------------------------------------------------------------------ canvas placement
@@ -813,6 +932,8 @@ func select_items(ids: Array, frame_id: String) -> void:
 	var old := sel_frame
 	selection = ids.duplicate()
 	sel_frame = frame_id if not ids.is_empty() else ""
+	if not ids.is_empty():
+		bar_ghost = {}
 	if old != "":
 		_dirty_overlay(old)
 	if sel_frame != "":
@@ -837,11 +958,70 @@ func delete_selection() -> void:
 	var items := selected_items()
 	if items.is_empty():
 		return
+	var gh := _bar_snapshot()
 	history.begin_group()
 	_release_glue_to(items)
 	history.do(History.op_remove(items))
 	history.end_group()
 	clear_selection()
+	gh.serial = history.serial
+	bar_ghost = gh
+
+
+## The selection's button column as it is now (for bar_ghost), or {} with nothing selected.
+func _bar_snapshot() -> Dictionary:
+	var items := selected_items()
+	if items.is_empty() or sel_frame == "":
+		return {}
+	return {"frame": sel_frame, "rect": pen_ctl.group_bounds(items), "serial": history.serial, "ids": selection.duplicate()}
+
+
+## The items the buttons beside the selection act on: the selection, or what it was just before it went away.
+func bar_ids() -> Array:
+	if not selection.is_empty():
+		return selection
+	return bar_ghost.get("ids", [])
+
+
+## Undo (or redo) the latest operation on the buttons' items only.
+func _bar_history(redo_it: bool) -> bool:
+	var ids := bar_ids()
+	var gh := _bar_snapshot()
+	if gh.is_empty() and not bar_ghost.is_empty():
+		gh = bar_ghost
+	var op := history.redo_local(ids) if redo_it else history.undo_local(ids)
+	if op.is_empty():
+		return false
+	# taking back a delete selects what came back, so the buttons stay for redo
+	var back: Array = []
+	if not redo_it:
+		for id in _removed_ids(op):
+			if doc.items.has(id):
+				back.append(id)
+	if not back.is_empty():
+		select_items(back, (doc.items[back[0]] as Item).frame)
+	else:
+		_after_history(gh)
+	return true
+
+
+## The undo / redo buttons that stay behind on `frame_id` after the selection went away, or {}.
+func ghost_bar(frame_id: String) -> Dictionary:
+	if bar_ghost.is_empty() or not selection.is_empty() or bar_ghost.frame != frame_id or int(bar_ghost.serial) != history.serial:
+		return {}
+	return bar_ghost
+
+
+## A button beside the selection was pressed ("undo", "redo" or "delete").
+func bar_action(id: String) -> void:
+	match id:
+		"undo":
+			toast.emit("Undo" if _bar_history(false) else "Nothing to undo for this")
+		"redo":
+			toast.emit("Redo" if _bar_history(true) else "Nothing to redo for this")
+		"delete":
+			delete_selection()
+			toast.emit("Deleted: undo brings it back")
 
 
 func duplicate_selection() -> void:
@@ -927,22 +1107,43 @@ func _reorder(front: bool) -> void:
 
 
 func undo() -> void:
-	if history != null and history.undo():
-		_after_history()
+	if history == null:
+		return
+	var gh := _bar_snapshot()
+	if history.undo():
+		_after_history(gh)
 
 
 func redo() -> void:
-	if history != null and history.redo():
-		_after_history()
+	if history == null:
+		return
+	var gh := _bar_snapshot()
+	if history.redo():
+		_after_history(gh)
 
 
-func _after_history() -> void:
+## Ids of the items an operation removes (inside groups too).
+func _removed_ids(op: Dictionary) -> Array:
+	var out: Array = []
+	match str(op.type):
+		"remove":
+			for d in op["items"]:
+				out.append(str(d.id))
+		"group":
+			for o in op["ops"]:
+				out.append_array(_removed_ids(o))
+	return out
+
+
+func _after_history(gh: Dictionary = {}) -> void:
 	var keep: Array = []
 	for id in selection:
 		if doc.items.has(id):
 			keep.append(id)
 	if keep.size() != selection.size():
 		select_items(keep, sel_frame)
+	if selection.is_empty() and not gh.is_empty():
+		bar_ghost = gh
 
 
 # ------------------------------------------------------------------------------------------------ shapes and connectors
@@ -1079,8 +1280,10 @@ func tick(pen: PenState, hands: Array, dt: float) -> void:
 	if not placing.is_empty():
 		_update_placing(pen, hands, dt)
 	else:
+		# the front button grabs with the same rules as a pinch (HandController); while it holds something no stroke may start
+		hand_ctl.update(hands, dt, pen)
+		pen_ctl.blocked = hand_ctl.pen_busy()
 		pen_ctl.update(pen, dt)
-		hand_ctl.update(hands, dt)
 	_update_hover(pen, hands, dt)
 	ink.update(dt)
 	if _save_due >= 0.0:
@@ -1163,6 +1366,11 @@ func refresh_overlays() -> void:
 	var active := {}
 	if sel_frame != "":
 		active[sel_frame] = true
+	if not bar_ghost.is_empty():
+		if ghost_bar(str(bar_ghost.frame)).is_empty():
+			bar_ghost = {}
+		else:
+			active[str(bar_ghost.frame)] = true
 	if pen_ctl.cursor_frame != "":
 		active[pen_ctl.cursor_frame] = true
 	for fid in active.keys():

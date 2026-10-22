@@ -40,8 +40,8 @@ func _ready() -> void:
 			await get_tree().process_frame
 		for b in menu.find_children("*", "Btn", true, false):
 			var btn := b as Btn
-			if not is_instance_valid(btn) or not btn.is_visible_in_tree():
-				continue
+			if not is_instance_valid(btn) or not btn.is_visible_in_tree() or btn == menu._quit_btn:
+				continue                                   # Quit really quits: it is checked below
 			btn.pressed.emit()
 			if btn.toggle_mode:
 				btn.toggled.emit(not btn.on)
@@ -61,6 +61,11 @@ func _ready() -> void:
 			await get_tree().process_frame
 	t.check(pressed > 60, "pressed %d buttons across the tabs" % pressed)
 	t.check(board.doc != null, "the board still has a document after all that")
+	# Quit needs a second press: the first only arms it (and times out again)
+	menu._quit_btn.pressed.emit()
+	t.eq(menu._quit_btn.text, "Sure?", "the first press of Quit asks again")
+	menu._process(3.5)
+	t.eq(menu._quit_btn.text, "Quit", "...and gives up after a few seconds")
 	# the document list can open another document
 	menu._select_tab("docs")
 	await get_tree().process_frame

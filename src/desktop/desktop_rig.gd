@@ -4,11 +4,10 @@ extends Node3D
 ## your head. A simulated room (floor, wall, table) stands in for the real one, and spatial anchors are simulated too (Rooms tab).
 ## The 3D world is shown in its own viewport beside the menu, so the menu never covers the scene.
 ##
-##   Left mouse      draw / use the current tool (hover a canvas to draw on it, otherwise it draws in the air in front of you)
-##   Ctrl + left     draw in the air even over a canvas
-##   Shift + left    the stylus front button: grab and move the thing under the pointer
-##   Middle mouse    pinch: carry a canvas or 3D sketch (mouse wheel scales it, Q / E turn it)
-##   Right mouse     look around;  W A S D  walk,  Shift  faster,  wheel  dolly / air depth with Ctrl
+##   Left mouse      draw / use the current tool on the canvas under the pointer
+##   Shift + left    the stylus front button: grab what is under the pointer (an item, the canvas bar, a corner, empty canvas to carry it)
+##   Middle mouse    pinch: carry a canvas (mouse wheel scales it, Q / E turn it)
+##   Right mouse     look around;  W A S D  walk,  Shift  faster,  wheel  dolly
 ##   Ctrl+Z / Ctrl+Y undo / redo,  Delete,  Ctrl+D duplicate,  Ctrl+S save,  1-5 tools,  C new canvas,  Tab menu on/off,  Esc cancel
 
 const MOVE_SPEED := 1.6
@@ -89,6 +88,7 @@ func setup(b: Board) -> void:
 			_layout())
 	_layout()
 	hands = [_hand]
+	board.hand_ctl.grab_anywhere = true            # the mouse has no bar to point at: the middle button picks a canvas up wherever it is
 
 
 func _layout() -> void:
@@ -96,6 +96,7 @@ func _layout() -> void:
 	var fit := minf((win.y - 24.0) / MenuPanel.DESIGN_SIZE.y, 1.6)
 	var sc := minf(float(App.val("ui_scale")), maxf(fit, 0.55))
 	menu.scale = Vector2(sc, sc)
+	menu.size = Vector2(MenuPanel.DESIGN_SIZE.x, maxf(MenuPanel.DESIGN_SIZE.y, (win.y - 24.0) / sc))   # tall windows: the panel fills the height
 	menu.position = Vector2(12, 12)
 	var left := 0.0
 	if menu.visible:
@@ -227,9 +228,6 @@ func _wheel(dir: float, mb: InputEventMouseButton) -> void:
 			var g: Dictionary = board.grabs[fid]
 			g.scale = clampf(float(g.scale) * pow(1.1, dir), 0.15, 8.0)
 		return
-	if mb.alt_pressed or mb.ctrl_pressed:
-		_air_depth = clampf(_air_depth + dir * 0.08, 0.25, 3.0)
-		return
 	camera.position += -camera.global_transform.basis.z * dir * 0.25
 
 
@@ -311,31 +309,29 @@ func _process(delta: float) -> void:
 	board.tick(pen, hands, delta)
 
 
-## Turn the mouse into the stylus: the pointer ray meets a canvas (then the nib is on its plane) or floats at the air depth.
+## Turn the mouse into the stylus: the pointer ray meets a canvas (then the nib is on its plane) or floats at a fixed depth (nothing to draw on there).
 func _update_pen() -> void:
 	var inside := _in_view(_mouse_window)
 	var m := view_mouse()
 	var o := camera.project_ray_origin(m)
 	var d := camera.project_ray_normal(m)
-	var air := Input.is_key_pressed(KEY_CTRL)
 	pen.source = "mouse"
 	pen.tracked = (inside and not _looking) or _lmb or _mmb
 	var tip := o + d * _air_depth
-	if not air:
-		var best_t := INF
-		for fn in board.visible_frames(FrameData.CANVAS):
-			var n := fn as FrameNode
-			var inv := n.global_transform.affine_inverse()
-			var lo := inv * o
-			var ld := inv.basis * d
-			if absf(ld.z) < 1e-5:
-				continue
-			var t := -lo.z / ld.z
-			if t > 0.05 and t < best_t:
-				var lp := lo + ld * t
-				if n.bounds().grow(0.6 / n.data.scale).has_point(Vector2(lp.x, lp.y)) and not n.data.locked:
-					best_t = t
-					tip = o + d * t
+	var best_t := INF
+	for fn in board.visible_frames(FrameData.CANVAS):
+		var n := fn as FrameNode
+		var inv := n.global_transform.affine_inverse()
+		var lo := inv * o
+		var ld := inv.basis * d
+		if absf(ld.z) < 1e-5:
+			continue
+		var t := -lo.z / ld.z
+		if t > 0.05 and t < best_t:
+			var lp := lo + ld * t
+			if n.bounds().grow(0.6 / n.data.scale).has_point(Vector2(lp.x, lp.y)) and not n.data.locked:
+				best_t = t
+				tip = o + d * t
 	pen.tip = tip
 	pen.dir = d
 	pen.down = _lmb and not Input.is_key_pressed(KEY_SHIFT)
@@ -355,6 +351,8 @@ func _update_pen() -> void:
 			_hand.pinching = true
 			_hand.pinch_down = true
 			_hand_depth = o.distance_to(pick.point)
+			_hand.press_o = o
+			_hand.press_d = d
 	elif _mmb and was:
 		_hand.pinch_point = o + d * _hand_depth
 		_hand.tip = _hand.pinch_point
@@ -363,6 +361,10 @@ func _update_pen() -> void:
 		_hand.pinch_up = true
 	elif not _mmb:
 		_hand.tracked = false
+	# the mouse ray is the hand's ray
+	_hand.aiming = _hand.tracked
+	_hand.aim_o = o
+	_hand.aim_d = d
 
 
 func _pick_for_hand(o: Vector3, d: Vector3) -> Dictionary:

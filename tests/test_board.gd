@@ -46,6 +46,54 @@ func hover(p: Vector3) -> void:
 	await tick(2)
 
 
+## Point a hand at a place on the canvas from 90 cm in front of it; the fingers are at the canvas (so a carried canvas follows the
+## hand 1:1: a far one would move further than the hand, see HandController.MAX_GAIN).
+func aim(hand: HandInput, p: Vector3) -> void:
+	hand.aim_o = p + Vector3(0, 0, 0.9)
+	hand.aim_d = Vector3(0, 0, -1)
+	hand.press_o = hand.aim_o
+	hand.press_d = hand.aim_d
+	hand.pinch_point = p + Vector3(0, 0, 0.05)
+	hand.tip = hand.pinch_point
+
+
+## The same, from a hand held back near the face: its pinch point is far from the canvas, so the ray chooses and the movement is geared up.
+func aim_far(hand: HandInput, p: Vector3) -> void:
+	var o := Vector3(0.0, 1.5, -0.4)
+	hand.pinch_point = o
+	hand.tip = o
+	hand.aim_o = o
+	hand.aim_d = (p - o).normalized()
+	hand.press_o = hand.aim_o
+	hand.press_d = hand.aim_d
+
+
+func on_canvas(fn: FrameNode, p: Vector2) -> Vector3:
+	return fn.to_world_point(Vector3(p.x, p.y, 0.0))
+
+
+func hover_kind(side: String) -> String:
+	return str(board.hand_ctl.hover.get(side, {}).get("kind", ""))
+
+
+func hover_direct(side: String) -> bool:
+	return bool(board.hand_ctl.hover.get(side, {}).get("direct", false))
+
+
+func pinch_down(hand: HandInput) -> void:
+	hand.pinching = true
+	hand.pinch_down = true
+	await tick(1)
+	hand.pinch_down = false
+
+
+func pinch_up(hand: HandInput) -> void:
+	hand.pinching = false
+	hand.pinch_up = true
+	await tick(2)
+	hand.pinch_up = false
+
+
 func draw(points: Array, hold_frames: int = 0, release: bool = true) -> void:
 	await hover(points[0])
 	pen.down = true
@@ -66,6 +114,32 @@ func path_of(poly: PackedVector2Array) -> Array:
 	for p in poly:
 		out.append(world(p.x, p.y))
 	return out
+
+
+## The width and height of the box around some items.
+func _span_of(ids: Array) -> Vector2:
+	var r := Rect2()
+	var first := true
+	for id in ids:
+		var b: Rect2 = (board.doc.items[id] as Item).bounds()
+		r = b if first else r.merge(b)
+		first = false
+	return r.size
+
+
+## Tap one of the buttons beside the selection ("undo", "redo", "delete") with the pen.
+func _press_button(id: String, fn: FrameNode) -> void:
+	var pos := Vector2.ZERO
+	for b in board.pen_ctl.bar_buttons(fn):
+		if b.id == id:
+			pos = b.pos
+	t.check(pos != Vector2.ZERO, "the %s button is there" % id)
+	await hover(world(pos.x, pos.y))
+	pen.down = true
+	pen.pressure = 0.8
+	await tick(2)
+	pen.down = false
+	await tick(3)
 
 
 func items_of_kind(kind: String, shape: String = "") -> Array:
@@ -197,6 +271,149 @@ func run() -> void:
 		var ar3: Item = board.doc.items[ar.id]
 		t.near(ar3.b.distance_to(b_port.pos), 0.0, 1e-4, "undo puts the arrow back with the box")
 
+	# selection handles with the stylus: the outline follows a drag, a corner scales the box, the top handle turns it
+	App.put("tool", "select")
+	var hb: Item = board.doc.items[(boxes[0] as Item).id]
+	var fnode := board.frame_nodes[g.id] as FrameNode
+	var hc := hb.center
+	await hover(world(hc.x, hc.y + 0.01))
+	pen.down = true
+	pen.pressure = 0.8
+	await tick(2)
+	pen.down = false
+	await tick(2)
+	t.check(board.selection.has(hb.id), "a tap with the select tool selects the box")
+	# dragging the box: the outline and its handles move with it
+	var top0: Vector2 = Vector2.ZERO
+	for h in board.pen_ctl.handles(fnode):
+		if h.id == "rot":
+			top0 = h.pos
+	await hover(world(hc.x, hc.y + 0.01))
+	pen.down = true
+	await tick(2)
+	for i in 6:
+		pen.tip = world(hc.x + 0.02 * float(i + 1), hc.y + 0.01)
+		await tick(1)
+	var shown: Dictionary = board.selection_view(fnode)
+	t.near(float(shown.offset.x), 0.12, 0.01, "while dragging, the selection outline is shown moved with the box: %s" % str(shown.offset))
+	t.near((shown.handles[0] as Dictionary).pos.x - (board.pen_ctl.handles(fnode)[0] as Dictionary).pos.x, 0.12, 0.01, "...and so are its handles")
+	pen.down = false
+	await tick(3)
+	hb = board.doc.items[hb.id]
+	hc = hb.center
+	# the corner handle scales
+	var box_size0 := hb.size
+	var corner: Dictionary = {}
+	for h in board.pen_ctl.handles(fnode):
+		if h.id == "corner1":
+			corner = h
+	t.check(not corner.is_empty(), "the selected box has corner handles")
+	await hover(world(corner.pos.x, corner.pos.y))
+	pen.down = true
+	await tick(2)
+	for i in 8:
+		pen.tip = world(corner.pos.x + 0.015 * float(i + 1), corner.pos.y + 0.01 * float(i + 1))
+		await tick(1)
+	var live: Dictionary = board.selection_view(fnode)
+	t.check(not live.handles.is_empty() and float((live.handles[0] as Dictionary).pos.distance_to((board.pen_ctl.handles(fnode)[0] as Dictionary).pos)) > 0.02, "while scaling, the handles are drawn on the box as it is being scaled")
+	pen.down = false
+	await tick(3)
+	var hs: Item = board.doc.items[hb.id]
+	t.check(hs.size.x > box_size0.x + 0.08 and hs.size.y > box_size0.y + 0.04, "dragging a corner handle scaled the box: %s -> %s" % [str(box_size0), str(hs.size)])
+	# the top handle turns it
+	var rot_h: Dictionary = {}
+	for h in board.pen_ctl.handles(fnode):
+		if h.id == "rot":
+			rot_h = h
+	t.check(not rot_h.is_empty(), "the box has a rotation handle")
+	await hover(world(rot_h.pos.x, rot_h.pos.y))
+	pen.down = true
+	await tick(2)
+	for i in 8:
+		var a := deg_to_rad(8.0 * float(i + 1))
+		var rel: Vector2 = (rot_h.pos as Vector2) - hs.center
+		pen.tip = world(hs.center.x + rel.rotated(-a).x, hs.center.y + rel.rotated(-a).y)
+		await tick(1)
+	pen.down = false
+	await tick(3)
+	var hr: Item = board.doc.items[hb.id]
+	t.check(absf(rad_to_deg(hr.rot)) > 30.0, "dragging the rotation handle turned the box: %f deg" % rad_to_deg(hr.rot))
+	# the handles work with any tool: with Draw, a drag from one reshapes the box instead of drawing
+	App.put("tool", "draw")
+	var n_items := board.doc.items.size()
+	var corner2: Dictionary = {}
+	for h in board.pen_ctl.handles(fnode):
+		if h.id == "corner2":
+			corner2 = h
+	var out_dir: Vector2 = ((corner2.pos as Vector2) - hr.center).normalized()
+	var size_draw0 := hr.size
+	await hover(world(corner2.pos.x, corner2.pos.y))
+	pen.down = true
+	await tick(2)
+	for i in 8:
+		pen.tip = world(corner2.pos.x + out_dir.x * 0.012 * float(i + 1), corner2.pos.y + out_dir.y * 0.012 * float(i + 1))
+		await tick(1)
+	pen.down = false
+	await tick(3)
+	t.eq(board.doc.items.size(), n_items, "with the Draw tool, a drag from a handle draws nothing")
+	t.check((board.doc.items[hb.id] as Item).size.x > size_draw0.x + 0.03, "...it reshapes the selected box: %s -> %s" % [str(size_draw0), str((board.doc.items[hb.id] as Item).size)])
+	App.put("tool", "select")
+	board.undo()
+	board.undo()
+	board.undo()
+	board.undo()
+	await tick(3)
+	board.clear_selection()
+	# the same with a hand: pinch the box to select it, pinch a corner handle to scale it, the top handle to turn it
+	var hh := HandInput.new("right")
+	hh.tracked = true
+	hh.aiming = true
+	hands = [hh]
+	pen.tracked = false
+	pen.down = false
+	var hbox: Item = board.doc.items[(boxes[0] as Item).id]
+	aim(hh, world(hbox.center.x, hbox.center.y))
+	await tick(2)
+	await pinch_down(hh)
+	await pinch_up(hh)
+	t.check(board.selection.has(hbox.id), "a pinch on the box selects it")
+	var hsize0 := hbox.size
+	var hcorner: Dictionary = {}
+	for h in board.pen_ctl.handles(fnode):
+		if h.id == "corner1":
+			hcorner = h
+	aim(hh, world(hcorner.pos.x, hcorner.pos.y))
+	await tick(2)
+	t.eq(str(board.hand_ctl.hover.get("right", {}).get("kind", "")), "item", "the ray on a corner handle of the selection says so")
+	await pinch_down(hh)
+	for i in 8:
+		aim(hh, world(hcorner.pos.x + 0.015 * float(i + 1), hcorner.pos.y + 0.01 * float(i + 1)))
+		await tick(1)
+	var hlive: Dictionary = board.selection_view(fnode)
+	t.check(not hlive.handles.is_empty() and ((hlive.handles[0] as Dictionary).pos as Vector2).distance_to((board.pen_ctl.handles(fnode)[0] as Dictionary).pos) > 0.02, "while a hand scales, the handles follow the box")
+	await pinch_up(hh)
+	var hscaled: Item = board.doc.items[hbox.id]
+	t.check(hscaled.size.x > hsize0.x + 0.08, "a pinch on a corner handle scaled the box: %s -> %s" % [str(hsize0), str(hscaled.size)])
+	var hrot: Dictionary = {}
+	for h in board.pen_ctl.handles(fnode):
+		if h.id == "rot":
+			hrot = h
+	aim(hh, world(hrot.pos.x, hrot.pos.y))
+	await tick(2)
+	await pinch_down(hh)
+	for i in 8:
+		var ang := deg_to_rad(8.0 * float(i + 1))
+		var rrel: Vector2 = (hrot.pos as Vector2) - hscaled.center
+		aim(hh, world(hscaled.center.x + rrel.rotated(-ang).x, hscaled.center.y + rrel.rotated(-ang).y))
+		await tick(1)
+	await pinch_up(hh)
+	t.check(absf(rad_to_deg((board.doc.items[hbox.id] as Item).rot)) > 30.0, "a pinch on the top handle turned the box: %f deg" % rad_to_deg((board.doc.items[hbox.id] as Item).rot))
+	board.undo()
+	board.undo()
+	await tick(3)
+	board.clear_selection()
+	hands = []
+
 	# lasso select and delete
 	App.put("tool", "select")
 	await draw(path_of(PackedVector2Array([Vector2(-0.6, -0.15), Vector2(0.8, -0.15), Vector2(0.8, 0.3), Vector2(-0.6, 0.3), Vector2(-0.6, -0.14)])))
@@ -206,32 +423,383 @@ func run() -> void:
 	board.undo()
 	t.check(items_of_kind(Item.SHAPE).size() >= 3, "undo restores the deletion")
 
-	# hands: pinch the canvas and carry it
+	# the undo / redo / delete buttons beside the selection box
+	t.check(History.LIMIT >= 20, "the history keeps at least 20 levels")
+	await draw(path_of(PackedVector2Array([Vector2(-0.6, -0.15), Vector2(0.8, -0.15), Vector2(0.8, 0.3), Vector2(-0.6, 0.3), Vector2(-0.6, -0.14)])))
+	var n_shapes := items_of_kind(Item.SHAPE).size()
+	var sel_box := board.pen_ctl.group_bounds(board.selected_items())
+	var btns: Array = board.pen_ctl.bar_buttons(fnode)
+	t.eq(btns.size(), 3, "a selection has undo, redo and delete buttons")
+	t.check(btns.size() == 3 and (btns[0].pos as Vector2).x > sel_box.end.x, "the buttons sit beside the box")
+	await _press_button("delete", fnode)
+	t.eq(items_of_kind(Item.SHAPE).size(), 0, "the delete button removed the selection")
+	t.check(board.selection.is_empty(), "...and let go of it")
+	t.eq(board.pen_ctl.bar_buttons(fnode).size(), 2, "...leaving undo and redo where the box was")
+	await _press_button("undo", fnode)
+	t.eq(items_of_kind(Item.SHAPE).size(), n_shapes, "the undo button brought the deleted items back")
+	t.eq(board.pen_ctl.bar_buttons(fnode).size(), 3, "...selected again, with all three buttons")
+	await _press_button("redo", fnode)
+	t.eq(items_of_kind(Item.SHAPE).size(), 0, "the redo button deleted them again")
+	await _press_button("undo", fnode)
+	board.clear_selection()
+	t.eq(board.pen_ctl.bar_buttons(fnode).size(), 0, "no buttons without a selection")
+
+	# the buttons undo and redo only what happened to the selected object
+	var two: Array = items_of_kind(Item.SHAPE).filter(func(i): return not (i as Item).is_line())
+	t.check(two.size() >= 2, "two boxes to test with")
+	if two.size() >= 2:
+		var ia: String = (two[0] as Item).id
+		var ib: String = (two[1] as Item).id
+		var ax0: float = (board.doc.items[ia] as Item).center.x
+		var bx0: float = (board.doc.items[ib] as Item).center.x
+		board.history.do(History.op_xform2([ia], Transform2D(0.0, Vector2(0.1, 0))))
+		board.history.do(History.op_xform2([ib], Transform2D(0.0, Vector2(0.2, 0))))     # the latest operation belongs to the other box
+		board.select_items([ia], g.id)
+		await _press_button("undo", fnode)
+		t.near((board.doc.items[ia] as Item).center.x, ax0, 1e-4, "undo on the selected box took back its own move")
+		t.near((board.doc.items[ib] as Item).center.x, bx0 + 0.2, 1e-4, "...and left the other box's later move alone")
+		await _press_button("redo", fnode)
+		t.near((board.doc.items[ia] as Item).center.x, ax0 + 0.1, 1e-4, "redo on the selected box put its move back")
+		t.near((board.doc.items[ib] as Item).center.x, bx0 + 0.2, 1e-4, "...without touching the other box")
+		board.history.undo()
+		board.history.undo()
+		board.clear_selection()
+
+	# several things selected: a corner of the group box scales them all, the top handle turns them all
+	await draw(path_of(PackedVector2Array([Vector2(-0.6, -0.15), Vector2(0.8, -0.15), Vector2(0.8, 0.3), Vector2(-0.6, 0.3), Vector2(-0.6, -0.14)])))
+	t.check(board.selection.size() >= 3, "the lasso selected the group again")
+	var gids: Array = board.selection.duplicate()
+	var span0 := _span_of(gids)
+	var gcorner: Dictionary = {}
+	for h in board.pen_ctl.handles(fnode):
+		if h.id == "gcorner1":
+			gcorner = h
+	t.check(not gcorner.is_empty(), "a group has corner handles")
+	await hover(world(gcorner.pos.x, gcorner.pos.y))
+	pen.down = true
+	await tick(2)
+	for i in 8:
+		pen.tip = world(gcorner.pos.x + 0.02 * float(i + 1), gcorner.pos.y + 0.012 * float(i + 1))
+		await tick(1)
+	var gview: Dictionary = board.selection_view(fnode)
+	t.check(not (gview.xf as Transform2D).is_equal_approx(Transform2D.IDENTITY), "while scaling the group, its box and handles are drawn on the group as it is being scaled")
+	pen.down = false
+	await tick(3)
+	var span1 := _span_of(gids)
+	t.check(span1.x > span0.x * 1.15, "dragging the group corner scaled everything: %f -> %f wide" % [span0.x, span1.x])
+	var grot: Dictionary = {}
+	for h in board.pen_ctl.handles(fnode):
+		if h.id == "grot":
+			grot = h
+	var gc := board.pen_ctl.group_bounds(board.selected_items()).get_center()
+	var first_before: Vector2 = (board.doc.items[gids[0]] as Item).bounds().get_center()
+	await hover(world(grot.pos.x, grot.pos.y))
+	pen.down = true
+	await tick(2)
+	for i in 8:
+		var ga := deg_to_rad(10.0 * float(i + 1))
+		var grel: Vector2 = (grot.pos as Vector2) - gc
+		pen.tip = world(gc.x + grel.rotated(-ga).x, gc.y + grel.rotated(-ga).y)
+		await tick(1)
+	pen.down = false
+	await tick(3)
+	var first_after: Vector2 = (board.doc.items[gids[0]] as Item).bounds().get_center()
+	t.check(first_after.distance_to(first_before) > 0.05, "dragging the group's top handle turned everything around the group")
+	board.undo()
+	board.undo()
+	await tick(3)
+	board.clear_selection()
+
+	# hands point with a ray and pinch: a box is picked and dragged, empty canvas lets go, the bar carries the canvas, a corner resizes it
 	var hand := HandInput.new("right")
 	hand.tracked = true
+	hand.aiming = true
 	hands = [hand]
-	hand.tip = world(0.0, -0.3)
-	hand.pinch_point = world(0.0, -0.3)
-	hand.pinching = true
-	hand.pinch_down = true
 	pen.tracked = false
-	await tick(1)
-	hand.pinch_down = false
+	pen.down = false
+	App.put("tool", "draw")                                  # the hands do not care which tool the stylus has
+	var cv: FrameNode = board.frame_nodes[g.id]
+	var box: Item = board.doc.items[(boxes[0] as Item).id]
+	var c0 := box.center
+	aim(hand, world(c0.x, c0.y))
+	await tick(2)
+	t.eq(str(board.hand_ctl.hover.get("right", {}).get("kind", "")), "item", "the ray on a box says so")
+	await pinch_down(hand)
+	for i in 10:
+		aim(hand, world(c0.x + 0.02 * float(i + 1), c0.y))
+		await tick(1)
+	await pinch_up(hand)
+	t.check(board.selection.has(box.id), "a pinch on a box selects it")
+	t.near((board.doc.items[box.id] as Item).center.x - c0.x, 0.2, 0.03, "dragging the box with the hand moved it 20 cm")
+	t.check(not board.hand_ctl.is_holding() and not board.grabs.has(g.id), "picking a box up does not pick the canvas up")
+	aim(hand, world(0.1, -0.15))
+	await tick(2)
+	t.eq(str(board.hand_ctl.hover.get("right", {}).get("kind", "")), "canvas", "the ray on empty canvas says so")
+	await pinch_down(hand)
+	await pinch_up(hand)
+	t.check(board.selection.is_empty(), "a pinch on empty canvas lets go of the selection")
+	t.check(not board.grabs.has(g.id), "...and does not move the canvas")
+	# the bar under the canvas carries it
+	var bc := HandController.bar_center(cv)
+	var bar_w := cv.global_transform * Vector3(bc.x, bc.y, 0.0)
+	aim(hand, bar_w)
+	await tick(2)
+	t.eq(str(board.hand_ctl.hover.get("right", {}).get("kind", "")), "bar", "the ray on the bar says so")
+	await pinch_down(hand)
+	t.check(board.grabs.has(g.id), "pinching the bar picks the canvas up")
 	var old_anchor := str(board.doc.frames[g.id].anchor)
 	for i in 20:
-		hand.pinch_point = world(0.0, -0.3) + Vector3(0.02 * i, 0.0, -0.01 * i)
+		aim(hand, bar_w + Vector3(0.02 * float(i + 1), 0.0, -0.01 * float(i + 1)))
 		await tick(1)
-	hand.pinching = false
-	hand.pinch_up = true
-	await tick(2)
-	hand.pinch_up = false
+	await pinch_up(hand)
 	var fr: FrameData = board.doc.frames[g.id]
-	t.near(fr.xf.origin.x, 0.38, 0.05, "the pinch carried the canvas 38 cm to the right: %f" % fr.xf.origin.x)
+	t.near(fr.xf.origin.x, 0.4, 0.05, "the pinch carried the canvas 40 cm to the right: %f" % fr.xf.origin.x)
 	await tick(80)
 	var fr2: FrameData = board.doc.frames[g.id]
 	t.check(str(fr2.anchor) != "" and str(fr2.anchor) != old_anchor, "the moved canvas got a new anchor at its new place")
 	t.check(not fr2.anchor_stale(), "the new anchor matches the pose")
+	# a corner changes the extent
+	var corner_w := cv.global_transform * Vector3((HandController.corner_points(cv)[2] as Vector2).x, (HandController.corner_points(cv)[2] as Vector2).y, 0.0)
+	var size0 := cv.bounds().size
+	aim(hand, corner_w)
+	await tick(2)
+	t.eq(str(board.hand_ctl.hover.get("right", {}).get("kind", "")), "corner", "the ray on a corner says so")
+	await pinch_down(hand)
+	for i in 10:
+		aim(hand, corner_w + Vector3(0.03 * float(i + 1), 0.015 * float(i + 1), 0.0))
+		await tick(1)
+	await pinch_up(hand)
+	t.check(cv.bounds().size.x > size0.x + 0.2, "pulling a corner made the canvas wider: %f -> %f" % [size0.x, cv.bounds().size.x])
+	# a pinch on empty canvas that moves carries the canvas
+	await tick(80)
+	var x0: float = (board.doc.frames[g.id] as FrameData).xf.origin.x
+	var empty_w := cv.global_transform * Vector3(cv.bounds().get_center().x + 0.3, cv.bounds().get_center().y - 0.3, 0.0)
+	aim(hand, empty_w)
+	await tick(2)
+	t.eq(str(board.hand_ctl.hover.get("right", {}).get("kind", "")), "canvas", "the ray is on empty canvas")
+	await pinch_down(hand)
+	for i in 10:
+		aim(hand, empty_w + Vector3(0.02 * float(i + 1), 0.0, 0.0))
+		await tick(1)
+	await pinch_up(hand)
+	t.near((board.doc.frames[g.id] as FrameData).xf.origin.x - x0, 0.2, 0.03, "dragging empty canvas moved it 20 cm")
+	# both hands: the right carries by the bar, the left pinches anywhere (its ray on no canvas) and joins; spreading them scales up
+	await tick(80)
+	var left := HandInput.new("left")
+	left.tracked = true
+	left.aiming = true
+	hands = [hand, left]
+	var scale0: float = (board.doc.frames[g.id] as FrameData).scale
+	var bcw := cv.global_transform * Vector3(HandController.bar_center(cv).x, HandController.bar_center(cv).y, 0.0)
+	aim(hand, bcw)
+	await tick(2)
+	await pinch_down(hand)
+	left.aim_o = bcw + Vector3(-0.3, 0.0, 0.6)
+	left.aim_d = Vector3(-1, 0, 0)                     # pointing away from every canvas
+	left.press_o = left.aim_o
+	left.press_d = left.aim_d
+	left.pinch_point = bcw + Vector3(-0.3, 0.0, 0.05)
+	await pinch_down(left)
+	t.check(board.hand_ctl.is_holding() and board.grabs.has(g.id), "the second hand joins the carried canvas")
+	for i in 10:
+		left.pinch_point += Vector3(-0.02, 0.0, 0.0)
+		hand.pinch_point += Vector3(0.02, 0.0, 0.0)
+		await tick(1)
+	t.check(float((board.grabs[g.id] as Dictionary).scale) > scale0 * 1.5, "spreading both hands scales the canvas up: %f" % float((board.grabs[g.id] as Dictionary).scale))
+	await pinch_up(left)
+	await pinch_up(hand)
+	board.undo()
+	await tick(3)
 	hands = []
+	# touching and pointing: a hand held back from the canvas points, the ray chooses and the canvas moves further than the hand
+	await tick(80)
+	var far := HandInput.new("right")
+	far.tracked = true
+	far.aiming = true
+	hands = [far]
+	var fbar := on_canvas(cv, HandController.bar_center(cv))
+	aim_far(far, fbar)
+	await tick(2)
+	t.eq(hover_kind("right"), "bar", "a hand held back, pointing at the bar, says so")
+	t.check(not hover_direct("right"), "...by its ray, not by touching")
+	var fx0: float = (board.doc.frames[g.id] as FrameData).xf.origin.x
+	await pinch_down(far)
+	for i in 10:
+		far.pinch_point += Vector3(0.01, 0.0, 0.0)
+		await tick(1)
+	await pinch_up(far)
+	var fmoved: float = (board.doc.frames[g.id] as FrameData).xf.origin.x - fx0
+	t.check(fmoved > 0.2 and fmoved < 0.1 * InputTuning.MAX_GAIN + 0.01, "pointing from afar: a 10 cm hand movement carried the canvas further: %f" % fmoved)
+	await tick(80)
+	# an item by ray: the ray moves it
+	var fbox := board.doc.items[box.id] as Item
+	var fc0 := fbox.center
+	aim_far(far, on_canvas(cv, fc0))
+	await tick(2)
+	t.eq(hover_kind("right"), "item", "pointing at a box says so")
+	await pinch_down(far)
+	for i in 10:
+		aim_far(far, on_canvas(cv, fc0) + Vector3(0.01 * float(i + 1), 0.0, 0.0))
+		await tick(1)
+	await pinch_up(far)
+	t.near((board.doc.items[box.id] as Item).center.x - fc0.x, 0.1 / cv.data.scale, 0.03, "a box dragged by ray follows the ray")
+	board.undo()
+	board.clear_selection()
+	hands = []
+	await tick(80)
+
+	# the stylus's front button grabs with the same rules as a pinch
+	var items_total_before_stylus := board.doc.items.size()
+	pen.dir = Vector3(0, 0, -1)
+	var sbox := board.doc.items[box.id] as Item
+	var sc0 := sbox.center
+	await hover(on_canvas(cv, sc0))
+	await tick(2)
+	t.eq(hover_kind("pen"), "item", "the stylus on a box says so")
+	t.check(hover_direct("pen"), "...by touching it")
+	pen.front = true
+	await tick(2)
+	for i in 10:
+		pen.tip = on_canvas(cv, sc0) + Vector3(0.02 * float(i + 1), 0.0, 0.0)
+		await tick(1)
+	pen.front = false
+	await tick(3)
+	t.check(board.selection.has(box.id) and not board.grabs.has(g.id), "the front button on a box selects it, not the canvas")
+	t.near((board.doc.items[box.id] as Item).center.x - sc0.x, 0.2 / cv.data.scale, 0.03, "...and drags it with the nib")
+	board.undo()
+	board.clear_selection()
+	await tick(80)
+	# the bar under the canvas
+	var sbar := on_canvas(cv, HandController.bar_center(cv))
+	var sx0: float = (board.doc.frames[g.id] as FrameData).xf.origin.x
+	await hover(sbar)
+	await tick(2)
+	t.eq(hover_kind("pen"), "bar", "the stylus on the bar says so")
+	pen.front = true
+	await tick(2)
+	t.check(board.grabs.has(g.id), "the front button on the bar picks the canvas up")
+	pen.down = true
+	pen.pressure = 0.8
+	var strokes0 := items_of_kind(Item.STROKE).size()
+	await tick(3)
+	pen.down = false
+	t.eq(items_of_kind(Item.STROKE).size(), strokes0, "while the front button holds something the nib draws nothing")
+	for i in 10:
+		pen.tip = sbar + Vector3(0.02 * float(i + 1), 0.0, 0.0)
+		await tick(1)
+	pen.front = false
+	await tick(3)
+	t.near((board.doc.frames[g.id] as FrameData).xf.origin.x - sx0, 0.2, 0.03, "the nib carried the canvas 1:1")
+	await tick(80)
+	# empty canvas: a tap lets go of the selection, a drag carries the canvas
+	board.select_items([box.id], g.id)
+	var sempty := on_canvas(cv, cv.bounds().get_center() + Vector2(0.3, -0.3))
+	await hover(sempty)
+	await tick(2)
+	t.eq(hover_kind("pen"), "canvas", "the stylus on empty canvas says so")
+	pen.front = true
+	await tick(2)
+	pen.front = false
+	await tick(3)
+	t.check(board.selection.is_empty() and not board.grabs.has(g.id), "a front-button tap on empty canvas lets go of the selection")
+	var ey0: float = (board.doc.frames[g.id] as FrameData).xf.origin.y
+	await hover(sempty)
+	pen.front = true
+	await tick(2)
+	for i in 10:
+		pen.tip = sempty + Vector3(0.0, 0.02 * float(i + 1), 0.0)
+		await tick(1)
+	pen.front = false
+	await tick(3)
+	t.near((board.doc.frames[g.id] as FrameData).xf.origin.y - ey0, 0.2, 0.03, "a front-button drag on empty canvas carried it")
+	await tick(80)
+	# a corner: the stylus resizes like a hand
+	var scs := HandController.corner_points(cv)
+	var scorner := on_canvas(cv, scs[2])
+	var ssize0 := cv.bounds().size
+	await hover(scorner)
+	await tick(2)
+	t.eq(hover_kind("pen"), "corner", "the stylus on a corner says so")
+	pen.front = true
+	await tick(2)
+	for i in 10:
+		pen.tip = scorner + Vector3(0.03 * float(i + 1), 0.015 * float(i + 1), 0.0)
+		await tick(1)
+	pen.front = false
+	await tick(3)
+	t.check(cv.bounds().size.x > ssize0.x + 0.2, "the front button on a corner made the canvas wider: %f -> %f" % [ssize0.x, cv.bounds().size.x])
+	await tick(80)
+	# from a distance: the stylus points along its body, the ray chooses, the nib's movement is geared up
+	var abar := on_canvas(cv, HandController.bar_center(cv))
+	pen.tracked = true
+	pen.source = "mouse"
+	pen.tip = Vector3(0.0, 1.5, -0.4)
+	pen.dir = (abar - pen.tip).normalized()
+	await tick(2)
+	t.eq(hover_kind("pen"), "bar", "the stylus pointing at the bar from afar says so")
+	t.check(not hover_direct("pen"), "...by its ray")
+	var ax0: float = (board.doc.frames[g.id] as FrameData).xf.origin.x
+	pen.front = true
+	await tick(2)
+	for i in 10:
+		pen.tip += Vector3(0.01, 0.0, 0.0)
+		await tick(1)
+	pen.front = false
+	await tick(3)
+	var amoved: float = (board.doc.frames[g.id] as FrameData).xf.origin.x - ax0
+	t.check(amoved > 0.2 and amoved < 0.1 * InputTuning.MAX_GAIN + 0.01, "pointing the stylus from afar carried the canvas further than the nib moved: %f" % amoved)
+	await tick(80)
+	# a press that starts on the board belongs to the tool: the front button then does not grab
+	var near_pt := on_canvas(cv, cv.bounds().get_center() + Vector2(0.3, -0.3))
+	await hover(near_pt)
+	App.put("tool", "draw")
+	pen.down = true
+	pen.pressure = 0.8
+	await tick(3)
+	pen.front = true
+	await tick(3)
+	t.check(not board.hand_ctl.is_holding() and board.grabs.is_empty(), "the front button pressed while drawing does not grab")
+	pen.down = false
+	pen.front = false
+	await tick(3)
+	if board.doc.items.size() > items_total_before_stylus:
+		board.undo()
+	# the back button: undo at once; with the front button held: redo
+	pen.tracked = false
+	pen.down = false
+	var n_back := board.doc.items.size()
+	board.history.do(History.op_add([board.make_shape(g.id, {"shape": "rect", "center": Vector2(0, 0), "size": Vector2(0.1, 0.1)})]))
+	t.eq(board.doc.items.size(), n_back + 1, "(a shape to undo)")
+	pen.back = true
+	await tick(1)
+	t.eq(board.doc.items.size(), n_back, "the back button undoes at once")
+	pen.back = false
+	await tick(2)
+	pen.front = true
+	pen.back = true
+	await tick(1)
+	t.eq(board.doc.items.size(), n_back + 1, "the back button with the front button held redoes")
+	pen.front = false
+	pen.back = false
+	await tick(2)
+	board.undo()
+	await tick(2)
+	# Bring canvas here: its middle within reach in front of the eyes
+	board.bring_canvas_here()
+	await tick(3)
+	var mid := cv.bounds().get_center()
+	var mid_w := cv.global_transform * Vector3(mid.x, mid.y, 0.0)
+	t.near(mid_w.distance_to(Vector3(0, 1.4, -Board.REACH_DIST)), 0.0, 0.03, "the canvas is brought within reach: %s" % str(mid_w))
+	board.undo()
+	await tick(3)
+
+	# drawing in the air is switched off: a stroke far from every canvas makes nothing
+	App.put("tool", "draw")
+	var frames_before := board.doc.frames.size()
+	var items_before := board.doc.items.size()
+	await draw([Vector3(3.0, 1.5, 2.0), Vector3(3.1, 1.52, 2.0), Vector3(3.2, 1.6, 2.0), Vector3(3.3, 1.55, 2.0)])
+	t.eq(board.doc.frames.size(), frames_before, "no 3D sketch is started in the air")
+	t.eq(board.doc.items.size(), items_before, "and nothing is drawn there")
 
 	# rooms: walk into another (simulated) room
 	var room_a: String = board.current_room
@@ -240,7 +808,10 @@ func run() -> void:
 	t.eq(board.room_state, "searching", "in an unknown room the app searches")
 	t.check(not board.frame_nodes[g.id].visible, "room A's canvas is hidden in room B")
 	await tick(int(Board.ROOM_SEARCH_S / 0.016) + 20)
-	t.eq(board.room_state, "needs_room", "after a while it offers to create a room")
+	t.eq(board.room_state, "assumed", "after a while the last room is shown anyway, in front of the user")
+	t.check(board.frame_nodes[g.id].visible, "its canvas is visible again")
+	var shown_at := (board.frame_nodes[g.id] as FrameNode).global_position
+	t.near(shown_at.distance_to(Vector3(0, 1.4, -Board.REACH_DIST)), 0.0, 0.05, "within reach in front of the head: %s" % str(shown_at))
 	board.create_room_here("Room B")
 	await tick(5)
 	t.eq(board.room_state, "found", "the new room is current")

@@ -4,8 +4,8 @@ extends Node3D
 ##  - OpenXR start-up, passthrough, render quality (sharp: no foveation, 4x MSAA, supersampled)
 ##  - hand tracking -> HandInput (pinch, pointing ray) for moving canvases and for the menu
 ##  - the stylus -> PenState (see StylusInput); a pinch draws instead when no stylus is present (setting)
-##  - the menu floats in the room: poke it with the stylus tip or a fingertip, point and pinch from a distance, grab its bar to move
-##    it, open your palm facing up to bring it to you
+##  - the menu floats in the room: poke it with the stylus tip or a fingertip, point and pinch (stylus: front button) from a distance,
+##    grab its bar to move it (touching it, or pointing at it), open your palm facing up to bring it to you
 ##  - spatial anchors (MetaAnchors) and the room scan (MetaScene)
 
 const HAND_JOINTS := 26
@@ -16,8 +16,21 @@ const J_INDEX_PROX := 7
 const J_INDEX_TIP := 10
 const J_LITTLE_PROX := 22
 const QUALITY := {"performance": 1.0, "sharp": 1.4, "ultra": 1.8}
-const POKE_PRESS := 0.006
-const POKE_RELEASE := 0.015
+const POKE_PRESS := InputTuning.POKE_PRESS     # a fingertip or nib this close in front of the menu presses (the tracked tip sits inside the finger)...
+const POKE_RELEASE := InputTuning.POKE_RELEASE # ...and lets go this far out
+const GLOVES_OFF_NEAR := InputTuning.GLOVES_OFF_NEAR   # the gloves hide while the stylus nib is this close to a canvas
+## Ghost hands: grey, faint in the middle and denser at the silhouette (fresnel), like the Quest's own hand gloves.
+const GHOST_SHADER := """
+shader_type spatial;
+render_mode unshaded, blend_mix, depth_prepass_alpha, cull_back, shadows_disabled;
+uniform vec3 tint : source_color = vec3(0.2, 0.21, 0.24);
+void fragment() {
+	float rim = 1.0 - clamp(dot(normalize(NORMAL), normalize(VIEW)), 0.0, 1.0);
+	ALBEDO = mix(tint, vec3(0.42, 0.44, 0.48), rim);
+	ALPHA = mix(0.3, 0.6, pow(rim, 1.5));
+}
+"""
+const MENU_MAX_DIST := InputTuning.MENU_MAX_DIST   # a menu further away than this (another room, or placed before the headset was on) comes back
 
 var board: Board
 var xr: XRInterface
@@ -33,11 +46,22 @@ var passthrough_on := false
 
 var _pt_check := 0.0
 var _panel_placed := false
-var _markers := {}
+var cursor: HandCursor
+var feedback: Feedback                     # click sounds for the hands
+var _prev_stylus := ""
+var _front_t := 0.0
+var _pinch_peak := {}                      # side -> the strongest pinch since the last status line (for the log)
+var _gloves := {}                          # side -> the Node3D holding that ghost glove
+var _hand_ctrls := {}                      # side -> {aim, poke}: XRController3D nodes reading the hand interaction profile
+var _profiles := {}                        # side -> the interaction profile last reported (logged when it changes)
+var _menu_hits := {}                       # side -> {point, poke}: where each hand's ray (or fingertip) is on the menu this frame
 var _ui_src := ""                          # which source currently holds the menu pointer: "pen" | "left" | "right" | ""
 var _ui_pressed := false
-var _grab_src := ""
-var _grab_offset := Vector3.ZERO
+var _grab_src := ""                        # which source holds the menu's handle...
+var _grab_origin := Vector3.ZERO           # ...where the menu was, where that source's point was, and how much further the menu moves
+var _grab_p0 := Vector3.ZERO
+var _grab_gain := 1.0
+var _pen_front := false                    # the stylus's front button last frame (for its press edge)
 var _palm_t := {"left": 0.0, "right": 0.0}
 var _board_pen := PenState.new()
 var _no_hands_t := 0.0
@@ -87,7 +111,12 @@ func start(b: Board) -> AnchorService:
 	add_child(scene)
 	scene.setup(origin)
 	_request_permissions()
-	_build_markers()
+	_build_hand_controllers()
+	_build_ghost_hands()
+	cursor = HandCursor.new()
+	origin.add_child(cursor)
+	feedback = Feedback.new()
+	add_child(feedback)
 	_build_menu()
 	board.head_provider = func(): return camera.global_transform
 	board.surface_hit = func(o: Vector3, d: Vector3) -> Dictionary: return scene.hit(o, d)
@@ -117,8 +146,28 @@ func _on_setting(key: String) -> void:
 		panel.set_ui_scale(float(App.val("ui_scale")))
 
 
+## Track hands and the stylus at the same time (XR_META_simultaneous_hands_and_controllers): without it Horizon OS switches hand
+## tracking off while the stylus is held, so the free hand cannot point or pinch. The runtime resets this with every session, and
+## refuses it unless the manifest declares hand tracking optional (export preset: Meta hand tracking = optional).
+func _enable_multimodal() -> void:
+	var ext_name := "OpenXRMetaSimultaneousHandsAndControllersExtension"
+	if not Engine.has_singleton(ext_name):
+		print("[xr] hands + stylus together: the extension is not present")
+		return
+	var ext: Object = Engine.get_singleton(ext_name)
+	if not bool(ext.call("is_simultaneous_hands_and_controllers_supported")):
+		print("[xr] hands + stylus together: not supported by this runtime")
+		return
+	ext.call("resume_simultaneous_hands_and_controllers_tracking")
+	print("[xr] hands + stylus together: requested")
+
+
 func _on_session(which: String) -> void:
 	print("[xr] session ", which)
+	if which == "session_begun" or which == "session_focussed":
+		_enable_multimodal()
+	if which == "session_focussed" and camera != null and panel != null:
+		_panel_placed = false                      # the headset was (re)put on: the menu comes in front again
 	set_passthrough()
 	if which == "session_focussed" or which == "session_begun":
 		anchors.reload()
@@ -166,7 +215,9 @@ func _build_menu() -> void:
 	menu.setup(board)
 	panel = XrPanel.new()
 	add_child(panel)
-	panel.setup(menu, MenuPanel.DESIGN_SIZE, 1450.0, true)
+	# drawn in the 3D scene (not on a compositor layer, which the headset always puts over everything): the gloves and the stylus can
+	# then be in front of the menu
+	panel.setup(menu, MenuPanel.DESIGN_SIZE, 1450.0, false)
 	panel.set_ui_scale(float(App.val("ui_scale")))
 	panel.visible = false
 	menu.hide_requested.connect(func():
@@ -178,7 +229,7 @@ func _place_panel_front() -> void:
 	var h := camera.global_transform
 	var fwd := Vector3(-h.basis.z.x, 0.0, -h.basis.z.z).normalized()
 	var right := fwd.cross(Vector3.UP)
-	var pos := h.origin + fwd * 0.62 - right * 0.14 + Vector3(0, -0.2, 0)
+	var pos := h.origin + fwd * InputTuning.SUMMON_AHEAD + right * InputTuning.SUMMON_RIGHT + Vector3(0, InputTuning.SUMMON_UP, 0)
 	_face_head(pos)
 	panel.visible = true
 
@@ -245,7 +296,7 @@ func _read_hand(side: String) -> Dictionary:
 	var n := (idx - wrist).cross(lit - wrist).normalized()      # out of the palm, from the joint positions
 	if side == "left":
 		n = -n
-	return {
+	var out := {
 		"valid": true,
 		"tip": xf * tr.get_hand_joint_transform(J_INDEX_TIP).origin,
 		"thumb": xf * tr.get_hand_joint_transform(J_THUMB_TIP).origin,
@@ -253,28 +304,98 @@ func _read_hand(side: String) -> Dictionary:
 		"palm": xf * tr.get_hand_joint_transform(J_PALM).origin,
 		"palm_normal": n,
 	}
+	out.merge(_read_actions(side))
+	return out
 
 
-func _build_markers() -> void:
+## The hands drawn as grey "ghost" gloves, like the Quest's own: the runtime's hand mesh (XR_FB_hand_tracking_mesh, from the vendors
+## plugin, since Godot has no hand mesh of its own) posed by Godot's XRHandModifier3D on the hand tracker. Shown only while the hand is
+## tracked; the real hands stay visible through passthrough underneath.
+func _build_ghost_hands() -> void:
+	if not ClassDB.class_exists("OpenXRFbHandTrackingMesh"):
+		print("[xr] ghost hands: the hand mesh extension is not available")
+		return
+	var shader := Shader.new()
+	shader.code = GHOST_SHADER
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
 	for side in ["left", "right"]:
-		var mi := MeshInstance3D.new()
-		var sm := SphereMesh.new()
-		sm.radius = 0.006
-		sm.height = 0.012
-		sm.radial_segments = 12
-		sm.rings = 6
-		mi.mesh = sm
-		var m := StandardMaterial3D.new()
-		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		m.albedo_color = Color(1, 1, 1, 0.85)
-		m.no_depth_test = true
-		m.render_priority = 110
-		mi.material_override = m
-		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		mi.visible = false
-		origin.add_child(mi)
-		_markers[side] = mi
+		var node := XRNode3D.new()
+		node.name = "GhostHand_" + side
+		node.tracker = StringName("/user/hand_tracker/" + side)
+		node.pose = &"default"
+		node.show_when_tracked = true
+		origin.add_child(node)
+		var offset := Node3D.new()                  # moves the glove back when a fingertip would go through the menu, hides it
+		node.add_child(offset)
+		var mesh: Node3D = ClassDB.instantiate("OpenXRFbHandTrackingMesh")
+		mesh.set("hand", 0 if side == "left" else 1)
+		mesh.set("material", mat)
+		offset.add_child(mesh)
+		_gloves[side] = offset
+		var mod := XRHandModifier3D.new()
+		mod.hand_tracker = StringName("/user/hand_tracker/" + side)
+		mesh.add_child(mod)
+	print("[xr] ghost hands ready")
+
+
+## The gloves stop at the menu instead of passing through it when a fingertip pokes it, and hide while the stylus is at a canvas.
+func _update_gloves(pen: PenState, stylus_here: bool) -> void:
+	var drawing := stylus_here and not board.pen_target(pen.tip, GLOVES_OFF_NEAR, 0.3).is_empty()
+	for side in _gloves:
+		var g: Node3D = _gloves[side]
+		g.visible = not drawing
+		var push := Vector3.ZERO
+		var m: Dictionary = _menu_hits.get(side, {})
+		if bool(m.get("poke", false)) and float(m.get("depth", 1.0)) < 0.0:
+			push = panel.global_transform.basis.z.normalized() * -float(m.depth)
+		g.global_position = (g.get_parent() as Node3D).global_position + push
+
+
+## One XRController3D per hand and pose action, on the standard "left_hand" / "right_hand" trackers: this is how the Godot
+## documentation reads the OpenXR hand interaction profile (the same trackers carry the stylus when it is in that hand).
+func _build_hand_controllers() -> void:
+	for side in ["left", "right"]:
+		var pair := {}
+		for key in ["aim", "poke"]:
+			var c := XRController3D.new()
+			c.name = "Hand_%s_%s" % [side, key]
+			c.tracker = StringName(side + "_hand")
+			c.pose = StringName("hand_" + key)
+			origin.add_child(c)
+			pair[key] = c
+		_hand_ctrls[side] = pair
+
+
+## The runtime's pointing ray, pinch strength and fingertip for a hand: {aim_valid, aim_o, aim_d, pinch_value, poke}. {} while the
+## hand's tracker is not on a hand interaction profile (the stylus is in that hand, or the runtime does not offer the profile).
+func _read_actions(side: String) -> Dictionary:
+	var profile := _profile(side)
+	var pair: Dictionary = _hand_ctrls[side]
+	var aim: XRController3D = pair.aim
+	if not profile.contains("hand_interaction") or not aim.get_has_tracking_data():
+		return {}
+	var out := {"aim_valid": true, "aim_o": aim.global_position, "aim_d": -aim.global_transform.basis.z, "pinch_value": aim.get_float(&"hand_pinch")}
+	var poke: XRController3D = pair.poke
+	if poke.get_has_tracking_data():
+		out.poke = poke.global_position
+	return out
+
+
+## The interaction profile a hand's tracker is on (hand interaction, the MX Ink stylus, ...), logged whenever it changes.
+func _profile(side: String) -> String:
+	var tr := XRServer.get_tracker(StringName(side + "_hand")) as XRPositionalTracker
+	var profile := str(tr.profile) if tr != null else ""
+	if profile != str(_profiles.get(side, "")):
+		_profiles[side] = profile
+		print("[xr] %s hand: interaction profile %s" % [side, profile if profile != "" else "(none)"])
+	return profile
+
+
+func _aim_note(h: HandInput) -> String:
+	if not h.tracked:
+		return "-"
+	return "profile" if h.system_aim else "joints"
 
 
 # ------------------------------------------------------------------------------------------------ per frame
@@ -287,13 +408,23 @@ func _process(delta: float) -> void:
 	if not _panel_placed and head.origin.y > 0.3:
 		_panel_placed = true
 		_place_panel_front()
+	elif panel.visible and panel.global_position.distance_to(head.origin) > MENU_MAX_DIST and _grab_src == "":
+		print("[xr] the menu was %.1f m away: brought back in front" % panel.global_position.distance_to(head.origin))
+		_place_panel_front()
 	stylus.update()
+	if stylus.active != _prev_stylus:
+		_prev_stylus = stylus.active
+		if stylus.active != "":
+			_enable_multimodal()                       # picking the stylus up may switch the headset to controllers only: ask again
 	for side in ["left", "right"]:
+		_profile(side)
 		(hands[side] as HandInput).feed(delta, head, _read_hand(side))
 	var pen := stylus.pen
 	var stylus_here := pen.tracked and stylus.active != ""
 	var captured := _update_menu(pen)
 	_summon_gesture(delta, stylus_here)
+	_stylus_summon(delta, pen, stylus_here)
+	_hand_feedback(stylus_here)
 	# what the board sees: the pen (stylus, or a pinch when there is none), and the hands that are free
 	var board_hands: Array = []
 	for side in ["left", "right"]:
@@ -330,73 +461,96 @@ func _process(delta: float) -> void:
 			bp.down = draw_hand.pinching
 			bp.pressure = 0.7 if draw_hand.pinching else 0.0
 			bp.haptic = Callable()
-	_update_markers(board_hands, stylus_here)
 	board.tick(bp, board_hands, delta)
+	cursor.update(hands, _menu_hits, board.hand_ctl.hover, head.origin, stylus.active if stylus_here else "", pen)
+	_update_gloves(pen, stylus_here)
+	for side in ["left", "right"]:
+		_pinch_peak[side] = maxf(float(_pinch_peak.get(side, 0.0)), (hands[side] as HandInput).pinch_strength)
 	_diag_t += delta
 	if _diag_t > 5.0:
 		_diag_t = 0.0
-		print("[xr] stylus=%s pen=%s down=%s hands=%d panel=%s anchors: %s" % [stylus.active, str(pen.tracked), str(pen.down), board_hands.size(), str(panel.visible), anchors.status()])
-
-
-func _update_markers(board_hands: Array, stylus_here: bool) -> void:
-	for side in ["left", "right"]:
-		var mi: MeshInstance3D = _markers[side]
-		var h := hands[side] as HandInput
-		var show: bool = h.tracked and board_hands.has(h) and not (stylus_here and side == stylus.active)
-		mi.visible = show
-		if show:
-			mi.global_position = h.pinch_point
-			(mi.material_override as StandardMaterial3D).albedo_color = Color(0.4, 1.0, 0.7, 0.95) if h.pinching else Color(1, 1, 1, 0.8)
+		var l := hands["left"] as HandInput
+		var r := hands["right"] as HandInput
+		print("[xr] stylus=%s pen=%s down=%s hands=%d panel=%s aim L=%s R=%s pinch peak L=%.2f R=%.2f anchors: %s" % [stylus.active, str(pen.tracked), str(pen.down), board_hands.size(), str(panel.visible), _aim_note(l), _aim_note(r), float(_pinch_peak.get("left", 0.0)), float(_pinch_peak.get("right", 0.0)), anchors.status()])
+		_pinch_peak.clear()
 
 
 # ------------------------------------------------------------------------------------------------ menu interaction
 
+## For the log: the button (or other control) under a point of the menu.
+func _control_at(_uv: Vector2) -> String:
+	var c := panel.viewport.gui_get_hovered_control()
+	if c == null:
+		return "nothing"
+	if c is Btn:
+		return "button \"%s\"" % ((c as Btn).text if (c as Btn).text != "" else (c as Btn).icon)
+	return c.get_class()
+
+
 ## Pokes, rays and the grab bar. Returns which sources are busy with the menu ({pen, left, right}: true) so the board ignores them.
+## One model for hands and stylus: TOUCH a button (fingertip or nib within the poke zone), or POINT at it and press (hand: pinch, stylus:
+## front button). At a canvas the stylus draws and grabs instead, so it is not offered the menu there. A source is busy only while it
+## touches the menu or is pressing it: a ray that merely crosses the menu, or a pinch that began on a canvas, is still the board's.
 func _update_menu(pen: PenState) -> Dictionary:
 	var busy := {}
+	_menu_hits = {}
+	var front_edge := pen.front and not _pen_front
+	_pen_front = pen.front
 	if panel == null or not panel.visible:
 		return busy
 	var sources: Array = []
 	if pen.tracked and stylus.active != "":
-		sources.append({"id": "pen", "tip": pen.tip, "ray_o": pen.tip, "ray_d": pen.dir, "ray_press": pen.front, "pinch": false})
+		var at_canvas := not board.pen_target(pen.tip, Board.CAPTURE).is_empty()
+		sources.append({"id": "pen", "tip": pen.tip, "point": pen.tip, "ray_o": pen.tip, "ray_d": pen.dir, "ray_press": pen.front, "ray_down": front_edge,
+			"holding": pen.front, "touch": not at_canvas, "aiming": not at_canvas})
 	for side in ["left", "right"]:
 		var h := hands[side] as HandInput
 		if h.tracked and not (pen.tracked and side == stylus.active):
-			sources.append({"id": side, "tip": h.tip, "ray_o": h.aim_o, "ray_d": h.aim_d, "ray_press": h.pinching, "pinch": true, "aiming": h.aiming, "hand": h})
+			sources.append({"id": side, "tip": h.tip, "point": h.pinch_point, "ray_o": h.aim_o, "ray_d": h.aim_d, "ray_press": h.pinching, "ray_down": h.pinch_down,
+				"holding": h.pinching, "touch": true, "aiming": h.aiming})
 	# the grab bar below the panel
 	_update_handle(sources, busy)
 	var best_uv := Vector2(-1, -1)
 	var best_src := ""
+	var best_rank := -1
 	var press := false
 	for s in sources:
 		var id: String = s.id
 		if _grab_src == id:
 			busy[id] = true
 			continue
-		var info := panel.touch_info(s.tip)
+		var holds_ui := _ui_src == id and _ui_pressed
+		var info := panel.touch_info(s.tip, InputTuning.POKE_MARGIN)
 		var uv := Vector2(-1, -1)
 		var pressed := false
 		var near := false
-		if info.inside and info.depth > -0.05 and info.depth < 0.08:
+		var engaged := false                       # touching or pressing: the board does not get this source
+		if bool(s.touch) and info.inside and info.depth > -InputTuning.POKE_BEHIND and info.depth < InputTuning.POKE_FRONT:
 			near = true
+			engaged = true
 			uv = info.uv
-			var limit := POKE_RELEASE if (_ui_src == id and _ui_pressed) else POKE_PRESS
+			_menu_hits[id] = {"point": panel.global_transform * Vector3((uv.x - 0.5) * panel.size_m.x, (0.5 - uv.y) * panel.size_m.y, 0.0), "poke": true, "depth": float(info.depth)}
+			var limit := POKE_RELEASE if holds_ui else POKE_PRESS
 			pressed = info.depth < limit
-		elif (not s.pinch or s.get("aiming", false)):
+		elif bool(s.aiming) or holds_ui:
+			# pointing: hovering shows where the ray is (ring and highlight); a press that begins here clicks
 			var rc := panel.raycast(s.ray_o, s.ray_d)
-			if rc.hit and rc.t < 1.4 and (s.ray_press or s.pinch or (not s.pinch and pen.front)):
+			if rc.hit and rc.t < InputTuning.MENU_RAY_REACH and (holds_ui or not _canvas_in_front(s, rc.t)):
 				near = true
 				uv = rc.uv
-				pressed = s.ray_press
-			elif rc.hit and rc.t < 1.4 and s.pinch:
-				near = true
-				uv = rc.uv
-		if near:
+				pressed = bool(s.ray_press) and (bool(s.ray_down) or holds_ui)
+				engaged = pressed or holds_ui
+				_menu_hits[id] = {"point": rc.point, "poke": false}
+		if not near:
+			continue
+		if engaged:
 			busy[id] = true
-			if best_src == "" or id == _ui_src:
-				best_src = id
-				best_uv = uv
-				press = pressed
+		var rank := 3 if holds_ui else 2 if pressed else 1 if id == _ui_src else 0
+		if rank > best_rank:
+			best_rank = rank
+			best_src = id
+			best_uv = uv
+			press = pressed
 	# one pointer drives the panel
 	if best_src != "":
 		_ui_src = best_src
@@ -404,11 +558,13 @@ func _update_menu(pen: PenState) -> Dictionary:
 		if press and not _ui_pressed:
 			panel.pointer_press(best_uv)
 			_ui_pressed = true
+			print("[menu] press by %s at %s on %s" % [best_src, str(best_uv), _control_at(best_uv)])
 			if best_src == "pen":
 				pen.tick(0.25, 0.015)
 		elif not press and _ui_pressed:
 			panel.pointer_release(best_uv)
 			_ui_pressed = false
+			print("[menu] release by %s at %s on %s" % [best_src, str(best_uv), _control_at(best_uv)])
 	elif _ui_src != "":
 		if _ui_pressed:
 			panel.pointer_release(Vector2(-1, -1))
@@ -418,36 +574,70 @@ func _update_menu(pen: PenState) -> Dictionary:
 	return busy
 
 
+## A canvas nearer along this ray than the menu hides it: the pinch belongs to the canvas.
+func _canvas_in_front(s: Dictionary, menu_t: float) -> bool:
+	var t := board.hand_ctl.ray_target(s.ray_o, s.ray_d)
+	return not t.is_empty() and float(t.t) < menu_t - 0.05
+
+
+## How far a ray passes from a point (INF when the point is behind it or out of the menu's reach).
+static func _ray_miss(o: Vector3, d: Vector3, p: Vector3) -> float:
+	var t := (p - o).dot(d)
+	if t < 0.02 or t > InputTuning.MENU_RAY_REACH:
+		return INF
+	return (o + d * t).distance_to(p)
+
+
+## The menu's handle moves it like a canvas bar: within reach of the pinch point (nib) it follows 1:1; pointing at it from a distance, the
+## menu moves further than the hand by the ratio of their distances from the head. Pinch (stylus: front button) starts, letting go drops.
 func _update_handle(sources: Array, busy: Dictionary) -> void:
 	var hp := panel.handle_world()
 	if _grab_src != "":
 		for s in sources:
-			if s.id != _grab_src:
+			if s.id != _grab_src or not bool(s.holding):
 				continue
-			var holding: bool = (s.hand as HandInput).pinching if s.pinch else stylus.pen.front
-			var point: Vector3 = (s.hand as HandInput).pinch_point if s.pinch else s.tip
-			if holding:
-				_face_head(point + _grab_offset)
-				busy[s.id] = true
-				panel.set_handle_state(true, true)
-				return
+			_face_head(_grab_origin + ((s.point as Vector3) - _grab_p0) * _grab_gain)
+			busy[s.id] = true
+			panel.set_handle_state(true, true)
+			return
 		_grab_src = ""
 		panel.set_handle_state(false, false)
 		return
 	var hover := false
 	for s in sources:
-		var point2: Vector3 = (s.hand as HandInput).pinch_point if s.pinch else s.tip
-		if point2.distance_to(hp) < 0.07:
-			hover = true
+		var pt: Vector3 = s.point
+		var touching := pt.distance_to(hp) < InputTuning.HANDLE_NEAR
+		var pointing := not touching and bool(s.aiming) and _ray_miss(s.ray_o, s.ray_d, hp) < InputTuning.HANDLE_RAY_R
+		if not (touching or pointing):
+			continue
+		hover = true
+		if bool(s.ray_down):
 			busy[s.id] = true
-			var start: bool = (s.hand as HandInput).pinch_down if s.pinch else stylus.pen.front
-			if start:
-				_grab_src = s.id
-				_grab_offset = panel.global_position - point2
-	panel.set_handle_state(hover, false)
+			_grab_src = s.id
+			_grab_origin = panel.global_position
+			_grab_p0 = pt
+			_grab_gain = 1.0 if touching else InputTuning.carry_gain(camera.global_position, panel.global_position, pt)
+			break
+	panel.set_handle_state(hover, _grab_src != "")
 
 
-## Open palm facing up for a moment: the menu comes to hover above the hand.
+## Holding the stylus's front button with nothing to grab (the nib away from every canvas, and not pointing at one): the menu comes.
+func _stylus_summon(delta: float, pen: PenState, stylus_here: bool) -> void:
+	if not stylus_here or not pen.front or board.hand_ctl.is_holding() or not board.grabs.is_empty() or _ui_src == "pen" or _grab_src == "pen" \
+			or not board.pen_target(pen.tip, InputTuning.SUMMON_STYLUS_CANVAS, 0.2).is_empty() \
+			or not board.hand_ctl.ray_target(pen.tip, pen.dir).is_empty():
+		_front_t = 0.0
+		return
+	_front_t += delta
+	if _front_t > InputTuning.SUMMON_HOLD_S:
+		_front_t = -10.0                           # once per press
+		_place_panel_front()
+		panel.request_update()
+		pen.tick(0.4, 0.03)
+		print("[xr] menu brought in front by the stylus")
+
+
+## Open palm facing up for a moment: the menu comes in front of you, the same place the stylus brings it to.
 func _summon_gesture(delta: float, stylus_here: bool) -> void:
 	if panel == null:
 		return
@@ -455,12 +645,23 @@ func _summon_gesture(delta: float, stylus_here: bool) -> void:
 		var h := hands[side] as HandInput
 		if stylus_here and side == stylus.active:
 			continue
-		if h.tracked and h.palm_up and not h.pinching and h.palm.distance_to(camera.global_position) < 0.7:
+		if h.tracked and h.palm_up and not h.pinching and h.palm.distance_to(camera.global_position) < InputTuning.PALM_SUMMON_DIST:
 			_palm_t[side] += delta
-			if _palm_t[side] > 0.8:
-				_palm_t[side] = -2.0
-				_face_head(h.palm + Vector3(0, 0.32, 0) + (camera.global_position - h.palm).normalized() * 0.05)
-				panel.visible = true
+			if _palm_t[side] > InputTuning.SUMMON_HOLD_S:
+				_palm_t[side] = -InputTuning.PALM_REARM_S
+				_place_panel_front()
 				panel.request_update()
 		else:
 			_palm_t[side] = minf(_palm_t[side] + delta, 0.0) if _palm_t[side] < 0.0 else 0.0
+
+
+## A tick for each pinch that closes or opens (the hands have no haptics).
+func _hand_feedback(stylus_here: bool) -> void:
+	for side in ["left", "right"]:
+		var h := hands[side] as HandInput
+		if not h.tracked or (stylus_here and side == stylus.active):
+			continue
+		if h.pinch_down:
+			feedback.play("press")
+		elif h.pinch_up:
+			feedback.play("release")

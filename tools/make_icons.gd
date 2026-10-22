@@ -89,12 +89,15 @@ func _corner_alpha(x: int, y: int, s: int, r: int) -> float:
 	return clampf(float(r) - d + 0.5, 0.0, 1.0)
 
 
-func _splash(bg: String, fg: String) -> Image:
+## Just the ink stroke and stylus on the splash background colour: no tile behind them.
+func _splash(_bg: String, fg: String) -> Image:
 	var size := 1024
-	var icon := _full_icon(bg, fg, 512)
+	var icon_size := 640
+	var icon := _render(fg, icon_size, icon_size)
 	var out := Image.create(size, size, false, Image.FORMAT_RGBA8)
 	out.fill(Color(0.02, 0.025, 0.04, 1.0))
-	out.blend_rect(icon, Rect2i(0, 0, 512, 512), Vector2i(256, 256))
+	var at := (size - icon_size) / 2
+	out.blend_rect(icon, Rect2i(0, 0, icon_size, icon_size), Vector2i(at, at))
 	return out
 
 

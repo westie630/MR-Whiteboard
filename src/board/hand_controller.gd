@@ -1,73 +1,428 @@
 class_name HandController
 extends RefCounted
-## What the bare hands do: pinch a canvas or 3D sketch to move it (the hand carries it), pinch it with both hands to turn and
-## resize it, pinch a canvas corner to change its extent. Releasing fixes it in its new place: a new spatial anchor is made there.
-## Drawing is the stylus's job; the hands only arrange.
+## What the pointers do on the board: the bare hands (a pinch) and the stylus (its front button) share one vocabulary, so a task is done
+## the same way with either. A pointer TOUCHES a canvas when its pinch point (the nib, for the stylus) is within DIRECT_NEAR of it, and
+## otherwise POINTS at it with a ray. What it grabs depends only on what it is on, and nothing is picked up by accident:
+##  - on a shape, line, stroke or one of the selection's handles: it selects, drags and reshapes exactly like the Select tool
+##    (each pointer drives a PenController of its own in hand mode),
+##  - on empty canvas: a drag carries the canvas, a tap lets go of the selection,
+##  - on the grab bar under a canvas: it carries the canvas; letting go fixes it with a new anchor,
+##  - on a corner of a canvas: it changes the canvas's extent,
+##  - the second hand pinching the same canvas (bar or empty area) turns and resizes it together with the first.
+## Touching moves things 1:1 with the pinch point; pointing from a distance moves them further than the hand, by the ratio of their
+## distances from the head. HandCursor draws what each pointer is on (`hover`), including the bar and the corners of the canvas under it.
+
+const BAR_DROP := InputTuning.BAR_DROP     # the bar sits this far (world metres) below the canvas's bottom edge
+const BAR_HIT_W := InputTuning.BAR_HIT_W   # half width / half height of the area that counts as the bar
+const BAR_HIT_H := InputTuning.BAR_HIT_H
+const CORNER_HIT := InputTuning.CORNER_HIT
+const PLANE_SLACK := InputTuning.PLANE_SLACK   # a pointer may meet a canvas this far outside its extent (the bar and the corners are out there)
+const REACH := InputTuning.REACH           # item pick radii at a distance are this many times the stylus's: a ray at arm's length is not a nib
+const KINDS_THAT_JOIN := ["canvas", "bar"]
+const MAX_GAIN := InputTuning.MAX_GAIN     # the most a carried canvas moves per metre of hand movement
+const MOVE_START := InputTuning.MOVE_START # a pinch on empty canvas that moves this far (m) carries the canvas; less is a tap
+const POINTERS := ["left", "right", "pen"]
 
 var board: Board
+var grab_anywhere := false                 # the PC's synthetic pinch picks a canvas up wherever it is
+## side -> {fn: FrameNode, point: Vector3, kind: "canvas" | "item" | "bar" | "corner" | "hold", corner: int, direct: bool}; rebuilt every update()
+var hover: Dictionary = {}
 
-var _holds: Dictionary = {}                # side -> {f: FrameData, p0: Vector3, origin0: Vector3, corner: int, opp: Vector2, fn: FrameNode}
+var _holds: Dictionary = {}                # side -> {f: FrameData, fn: FrameNode, p0, origin0, corner, opp, gain, direct}
 var _two: Dictionary = {}                  # two-hand grab: {f, d0, mid0, yaw0, scale0, basis0, origin0}
-var _prev_pinch := {"left": false, "right": false}
+var _pens: Dictionary = {}                 # side -> PenController (hand mode)
+var _states: Dictionary = {}               # side -> PenState fed to it
+var _gate: Dictionary = {}                 # side -> true while the current pinch belongs to the PenController
+var _maybe_move: Dictionary = {}           # side -> {fn, p0, direct}: a pinch on empty canvas, not yet a drag or a tap
+var _press_pt: Dictionary = {}             # side -> where the pinch began on its canvas (the first frame of the drag)
+var _direct: Dictionary = {}               # side -> true while that pointer touches a canvas (with some hysteresis)
+var _told := false                         # the first pick-up explains itself once
+var _last_kind := {}
+var _pen_ptr := HandInput.new("pen")       # the stylus as a pointer: its front button is the pinch, the nib the pinch point
+var _pen_state: PenState                   # the stylus this frame (for haptics)
+var _armed := false                        # the front button was pressed with the nib free: this press may grab
+var _prev_front := false
 
 
 func _init(b: Board) -> void:
 	board = b
 
 
-func update(hands: Array, _dt: float) -> void:
+# ------------------------------------------------------------------------------------------------ geometry shared with HandCursor
+
+## The four corners of a canvas in its own coordinates: bottom left, bottom right, top right, top left.
+static func corner_points(fn: FrameNode) -> Array:
+	var b := fn.bounds()
+	return [b.position, Vector2(b.end.x, b.position.y), b.end, Vector2(b.position.x, b.end.y)]
+
+
+## The middle of the grab bar under a canvas, in its own coordinates.
+static func bar_center(fn: FrameNode) -> Vector2:
+	var b := fn.bounds()
+	return Vector2(b.get_center().x, b.position.y - BAR_DROP / fn.data.scale)
+
+
+# ------------------------------------------------------------------------------------------------ pointing
+
+## The canvas a ray lands on: {fn, local (frame coordinates), point (world), t}, or {}. The ray may land a little outside the extent.
+func ray_target(o: Vector3, d: Vector3, slack: float = PLANE_SLACK) -> Dictionary:
+	var best := {}
+	var bt := INF
+	for fn_any in board.visible_frames(FrameData.CANVAS):
+		var fn := fn_any as FrameNode
+		if fn.data.locked:
+			continue
+		var inv := fn.global_transform.affine_inverse()
+		var lo := inv * o
+		var ld := inv.basis * d
+		if absf(ld.z) < 1e-4:
+			continue
+		var t := -lo.z / ld.z
+		if t < 0.05 or t >= bt:
+			continue
+		var lp := lo + ld * t
+		if fn.bounds().grow(slack / fn.data.scale).has_point(Vector2(lp.x, lp.y)):
+			bt = t
+			best = {"fn": fn, "local": lp, "point": o + d * t, "t": t}
+	return best
+
+
+## What a pointer is on: {fn, local, point (world, on the canvas plane), t, direct}, or {}. Within DIRECT_NEAR of a canvas the pinch point
+## itself touches it (`direct`); further away the ray decides. `at_press`: the ray the pinch clicked at (held while the fingers were
+## closing) rather than the live one.
+func target_of(h: HandInput, at_press: bool = false) -> Dictionary:
+	var near := InputTuning.DIRECT_NEAR * (InputTuning.DIRECT_STAY if bool(_direct.get(h.side, false)) else 1.0)
+	if not h.palm_up:
+		var t := board.pen_target(h.pinch_point, near, PLANE_SLACK)
+		if not t.is_empty():
+			var fn := t.fn as FrameNode
+			var l := t.local as Vector3
+			l.z = 0.0
+			return {"fn": fn, "local": l, "point": fn.to_world_point(l), "t": 0.0, "direct": true}
+	if not h.aiming:
+		return {}
+	var r := ray_target(h.press_o, h.press_d) if at_press else ray_target(h.aim_o, h.aim_d)
+	if not r.is_empty():
+		r.direct = false
+	return r
+
+
+## Where a pointer is on the plane of one canvas (however far outside its extent): its pinch point when touching, else where its ray meets
+## the plane. null when the ray runs parallel to the plane or points away.
+func plane_hit(fn: FrameNode, h: HandInput, direct: bool) -> Variant:
+	if direct:
+		var l := fn.to_local_point(h.pinch_point)
+		return fn.to_world_point(Vector3(l.x, l.y, 0.0))
+	return plane_point(fn, h.aim_o, h.aim_d)
+
+
+## Where a ray meets the plane of one canvas (anywhere on it, however far outside its extent), or null.
+func plane_point(fn: FrameNode, o: Vector3, d: Vector3) -> Variant:
+	var inv := fn.global_transform.affine_inverse()
+	var lo := inv * o
+	var ld := inv.basis * d
+	if absf(ld.z) < 1e-4:
+		return null
+	var t := -lo.z / ld.z
+	if t < 0.05:
+		return null
+	return o + d * t
+
+
+## What is at a point of a canvas: {kind: "item" | "bar" | "corner" | "canvas", corner}. Items win over the bar and the corners. The pick
+## radii follow the pointer's reach (touching or pointing), see _set_reach().
+func classify(fn: FrameNode, l: Vector3, side: String) -> Dictionary:
+	var s := fn.data.scale
+	var p := Vector2(l.x, l.y)
+	var pen := _pen(side)
+	if fn.data.id == board.sel_frame and not board.selection.is_empty() and not pen.hit_handle(fn, p).is_empty():
+		return {"kind": "item", "corner": -1}
+	if pen.hit_button(fn, p) != "":
+		return {"kind": "item", "corner": -1}
+	if board.doc.pick(fn.data.id, p, PenController.PICK_R * pen.reach / s) != null:
+		return {"kind": "item", "corner": -1}
+	if board.doc.shape_containing(fn.data.id, p) != null:
+		return {"kind": "item", "corner": -1}
+	var bc := bar_center(fn)
+	if absf(p.x - bc.x) * s < BAR_HIT_W and absf(p.y - bc.y) * s < BAR_HIT_H:
+		return {"kind": "bar", "corner": -1}
+	var cs := corner_points(fn)
+	for i in 4:
+		if (cs[i] as Vector2).distance_to(p) * s < CORNER_HIT:
+			return {"kind": "corner", "corner": i}
+	return {"kind": "canvas", "corner": -1}
+
+
+func _pen(side: String) -> PenController:
+	if not _pens.has(side):
+		var pc := PenController.new(board)
+		pc.hand_mode = true
+		pc.reach = REACH
+		_pens[side] = pc
+		var ps := PenState.new()
+		ps.source = "hand"
+		_states[side] = ps
+	return _pens[side]
+
+
+## A finger is not as fine as a nib, and a ray at arm's length is not as fine as a finger: the item pick radii grow accordingly.
+func _set_reach(side: String, direct: bool) -> void:
+	_pen(side).reach = InputTuning.DIRECT_REACH if direct else REACH
+
+
+## The pointers' selection controllers (the board draws the selection by whichever of them is dragging).
+func controllers() -> Array:
+	return _pens.values()
+
+
+func _other(side: String) -> String:
+	return "left" if side == "right" else "right" if side == "left" else ""
+
+
+## The stylus's front button is busy with a grab (or a drag of items): a stroke must not start under it.
+func pen_busy() -> bool:
+	if _holds.has("pen") or _maybe_move.has("pen"):
+		return true
+	return _pens.has("pen") and (_pens["pen"] as PenController).state != PenController.S.IDLE
+
+
+# ------------------------------------------------------------------------------------------------ per frame
+
+## hands: the HandInputs that are free to act; pen: the stylus (or the mouse), whose front button grabs like a pinch.
+func update(hands: Array, dt: float, pen: PenState = null) -> void:
 	var seen := {}
 	for h in hands:
-		var hi := h as HandInput
-		seen[hi.side] = hi
-		_update_hand(hi)
-	for side in _holds.keys():
-		if not seen.has(side) or not (seen[side] as HandInput).tracked:
-			_release(side)
+		seen[(h as HandInput).side] = h
+	var sp := _feed_stylus(pen)
+	if sp != null:
+		seen["pen"] = sp
+	hover = {}
+	for side in POINTERS:
+		var h: HandInput = seen.get(side)
+		if h == null or not h.tracked:
+			_lose(side, dt)
+			continue
+		_update_hand(h, dt)
 	_update_two(seen)
+	# one log line whenever what a pointer is on changes (adb logcat -s godot)
+	for side in POINTERS:
+		var kind: String = str((hover.get(side, {}) as Dictionary).get("kind", "-"))
+		if kind != _last_kind.get(side, ""):
+			_last_kind[side] = kind
+			var hd: HandInput = seen.get(side)
+			var how := ""
+			if hd != null and bool((hover.get(side, {}) as Dictionary).get("direct", false)):
+				how = " (touching)"
+			elif hd != null:
+				how = " (profile ray)" if hd.system_aim else " (joint ray)"
+			print("[hand] %s on: %s%s" % [side, kind, how])
 
 
-func _update_hand(h: HandInput) -> void:
+## The stylus as a pointer: the nib is its pinch point and its body the ray; the front button pinches. A press that begins while the nib
+## is on the board (pen down, or a tool in the middle of something) is not a grab: the front button then belongs to the tool.
+func _feed_stylus(pen: PenState) -> HandInput:
+	_pen_state = pen
+	var p := _pen_ptr
+	p.pinch_down = false
+	p.pinch_up = false
+	var live := pen != null and pen.tracked and not pen.docked and (pen.source == "stylus" or pen.source == "mouse")
+	if not live:
+		_armed = false
+		_prev_front = false
+		p.tracked = false
+		p.pinching = false
+		return null
+	p.tracked = true
+	p.palm_up = false
+	p.aiming = true
+	p.system_aim = true
+	p.tip = pen.tip
+	p.pinch_point = pen.tip
+	p.aim_o = pen.tip
+	p.aim_d = pen.dir
+	p.live_o = p.aim_o
+	p.live_d = p.aim_d
+	p.press_o = p.aim_o
+	p.press_d = p.aim_d
+	if pen.front and not _prev_front:
+		_armed = not pen.down and board.pen_ctl.state == PenController.S.IDLE
+	_prev_front = pen.front
+	if not pen.front:
+		_armed = false
+	var now := pen.front and _armed
+	p.pinch_down = now and not p.pinching
+	p.pinch_up = p.pinching and not now
+	p.pinching = now
+	return p
+
+
+func _update_hand(h: HandInput, dt: float) -> void:
 	var side := h.side
-	if h.pinch_down and not _holds.has(side) and h.tracked:
-		var p := board.pick_frame(h.pinch_point)
-		if not p.is_empty():
-			var fn := p.fn as FrameNode
-			if not fn.data.locked:
-				board.begin_grab(fn.data)
-				if board.grabs.has(fn.data.id):
-					var g: Dictionary = board.grabs[fn.data.id]
-					var hold := {"f": fn.data, "fn": fn, "p0": h.pinch_point, "origin0": (g.xf as Transform3D).origin, "corner": int(p.corner), "opp": Vector2.ZERO}
-					if int(p.corner) >= 0 and fn.is_canvas:
-						var b := fn.bounds()
-						var cs: Array = [b.position, Vector2(b.end.x, b.position.y), b.end, Vector2(b.position.x, b.position.y + b.size.y)]
-						hold.opp = cs[(int(p.corner) + 2) % 4]
-					_holds[side] = hold
+	var pen := _pen(side)
+	var ps: PenState = _states[side]
 	if _holds.has(side):
-		(_holds[side] as Dictionary).last = h.pinch_point
-		if h.pinch_up or not h.pinching:
-			_release(side)
+		_step_hold(side, h)
+		ps.tracked = false
+		ps.down = false
+		pen.update(ps, dt)
+		return
+	if _maybe_move.has(side):
+		var mm: Dictionary = _maybe_move[side]
+		if not h.pinching or not is_instance_valid(mm.fn):
+			_maybe_move.erase(side)
+			board.clear_selection()                      # a tap on empty canvas
+		elif h.pinch_point.distance_to(mm.p0) > MOVE_START:
+			_maybe_move.erase(side)
+			_begin_hold(h, mm.fn, -1, bool(mm.direct))
+			if _holds.has(side):
+				(_holds[side] as Dictionary).p0 = mm.p0       # the canvas catches up with the hand from where the pinch began
+		if _holds.has(side):
+			_step_hold(side, h)
+		else:
+			var pp: Variant = plane_hit(mm.fn, h, bool(mm.direct))
+			hover[side] = {"fn": mm.fn, "point": pp if pp != null else h.pinch_point, "kind": "canvas", "corner": -1, "direct": bool(mm.direct)}
+		ps.tracked = false
+		ps.down = false
+		pen.update(ps, dt)
+		return
+	if h.pinch_down and pen.state == PenController.S.IDLE:
+		_gate[side] = false
+		_press(h)
+		if _maybe_move.has(side) or _holds.has(side):
+			if _holds.has(side):
+				_step_hold(side, h)
+			ps.tracked = false
+			ps.down = false
+			pen.update(ps, dt)
 			return
-		if _two.is_empty():
-			_step_single(side, h)
+	var busy := pen.state != PenController.S.IDLE
+	var target := {}
+	if busy:
+		var wf: FrameNode = pen.working_frame()
+		var pp2: Variant = plane_hit(wf, h, bool(_direct.get(side, false))) if wf != null else null
+		if pp2 != null:
+			ps.tip = pp2
+	else:
+		target = target_of(h)
+		_direct[side] = not target.is_empty() and bool(target.direct)
+		if not target.is_empty():
+			_set_reach(side, bool(target.direct))
+			ps.tip = target.point
+			var c := classify(target.fn as FrameNode, target.local as Vector3, side)
+			hover[side] = {"fn": target.fn, "point": target.point, "kind": c.kind, "corner": c.corner, "direct": target.direct}
+	if h.pinch_down and bool(_gate.get(side, false)) and _press_pt.has(side):
+		ps.tip = _press_pt[side]
+		target = {"point": ps.tip}
+	ps.tracked = busy or not target.is_empty()
+	ps.down = h.pinching and bool(_gate.get(side, false))
+	ps.pressure = 0.7
+	if not h.pinching:
+		_gate[side] = false
+	pen.update(ps, dt)
+	if busy and pen.working_frame() != null:
+		hover[side] = {"fn": pen.working_frame(), "point": ps.tip, "kind": "item", "corner": -1, "direct": bool(_direct.get(side, false))}
 
 
-func _step_single(side: String, h: HandInput) -> void:
+## A pointer that is no longer tracked lets go of everything.
+func _lose(side: String, dt: float) -> void:
+	_release(side)
+	_maybe_move.erase(side)
+	_gate[side] = false
+	_direct[side] = false
+	if _pens.has(side):
+		var ps: PenState = _states[side]
+		ps.tracked = false
+		ps.down = false
+		(_pens[side] as PenController).update(ps, dt)
+
+
+## A pinch has just closed: decide who owns it.
+func _press(h: HandInput) -> void:
+	var side := h.side
+	var t := target_of(h, true)
+	if t.is_empty() and not h.aiming:
+		print("[hand] %s pinch: not touching a canvas and not pointing (palm up, or turned away)" % side)
+		return
+	# the other hand is carrying a canvas: this pinch takes hold of it too (turn and resize with both hands), wherever this ray is,
+	# unless it is on another canvas
+	var other_hold: Dictionary = _holds.get(_other(side), {})
+	if not other_hold.is_empty() and int(other_hold.corner) < 0 and (t.is_empty() or t.fn == other_hold.fn):
+		print("[hand] %s pinch: second hand on the carried canvas: turn and resize" % side)
+		_begin_hold(h, other_hold.fn, -1, false)
+		return
+	if t.is_empty():
+		print("[hand] %s pinch: on no canvas (%d visible)" % [side, board.visible_frames(FrameData.CANVAS).size()])
+		return
+	var fn := t.fn as FrameNode
+	var direct := bool(t.direct)
+	_set_reach(side, direct)
+	_direct[side] = direct
+	var c := classify(fn, t.local as Vector3, side)
+	var other := _other(side)
+	var joins: bool = _holds.has(other) and (_holds[other] as Dictionary).fn == fn and KINDS_THAT_JOIN.has(str(c.kind))
+	var how := "touching" if direct else "pointing"
+	if joins or grab_anywhere or c.kind == "bar":
+		print("[hand] %s pinch on %s (%s): carrying the canvas%s" % [side, c.kind, how, " with both hands" if joins else ""])
+		_begin_hold(h, fn, -1, direct)
+	elif c.kind == "corner":
+		print("[hand] %s pinch on corner %d (%s): resizing the canvas" % [side, int(c.corner), how])
+		_begin_hold(h, fn, int(c.corner), direct)
+	elif c.kind == "canvas":
+		# empty canvas: a drag carries the canvas, a tap lets go of the selection (decided by whether the hand moves)
+		print("[hand] %s pinch on empty canvas (%s): drag to move it, or let go to deselect" % [side, how])
+		_maybe_move[side] = {"fn": fn, "p0": h.pinch_point, "direct": direct}
+	else:
+		print("[hand] %s pinch on an item (%s): select / drag" % [side, how])
+		_gate[side] = true
+		_press_pt[side] = t.point
+		_tick(side, 0.3, 0.02)
+
+
+func _begin_hold(h: HandInput, fn: FrameNode, corner: int, direct: bool) -> void:
+	if fn.data.locked:
+		return
+	board.begin_grab(fn.data)
+	if not board.grabs.has(fn.data.id):
+		return
+	var g: Dictionary = board.grabs[fn.data.id]
+	# touching: the canvas follows the pinch point 1:1. Pointing: a canvas further away than the hand moves further than the hand (by
+	# their distances from the head), so a far one can be pulled in with one movement
+	var origin := (g.xf as Transform3D).origin
+	var gain := 1.0 if direct else InputTuning.carry_gain(board.head.origin, origin, h.pinch_point)
+	var hold := {"f": fn.data, "fn": fn, "p0": h.pinch_point, "origin0": origin, "corner": corner, "opp": Vector2.ZERO, "gain": gain, "direct": direct}
+	if corner >= 0:
+		var cs := corner_points(fn)
+		hold.opp = cs[(corner + 2) % 4]
+	_holds[h.side] = hold
+	_tick(h.side, 0.3, 0.02)
+	if not _told:
+		_told = true
+		board.toast.emit("You picked up a canvas: it follows your hand (or the stylus's front button) until you let go, then stays there. Both hands turn and resize it. A corner changes its size.")
+
+
+func _step_hold(side: String, h: HandInput) -> void:
 	var hold: Dictionary = _holds[side]
-	var f: FrameData = hold.f
-	if not board.grabs.has(f.id):
-		_holds.erase(side)
+	var fn: FrameNode = hold.fn
+	if h.pinch_up or not h.pinching or not is_instance_valid(fn) or not board.grabs.has((hold.f as FrameData).id):
+		_release(side)
 		return
-	var g: Dictionary = board.grabs[f.id]
+	hold.last = h.pinch_point
+	var pt := h.pinch_point
 	if int(hold.corner) >= 0:
-		_resize(hold, h.pinch_point)
-		return
-	var xf := g.xf as Transform3D
-	xf.origin = (hold.origin0 as Vector3) + (h.pinch_point - (hold.p0 as Vector3))
-	g.xf = xf
+		var pp: Variant = plane_hit(fn, h, bool(hold.direct)) if (bool(hold.direct) or h.aiming) else null
+		if pp != null:
+			pt = pp
+			_resize(hold, pt)
+	elif _two.is_empty():
+		var g: Dictionary = board.grabs[(hold.f as FrameData).id]
+		var xf := g.xf as Transform3D
+		xf.origin = (hold.origin0 as Vector3) + (h.pinch_point - (hold.p0 as Vector3)) * float(hold.get("gain", 1.0))
+		g.xf = xf
+	var kind := "corner" if int(hold.corner) >= 0 else "bar"
+	hover[side] = {"fn": fn, "point": pt, "kind": "hold", "corner": int(hold.corner), "held": kind, "direct": bool(hold.direct)}
 
 
-## Corner drag: the dragged corner follows the pinch, the opposite corner stays where it is (the nominal rectangle changes; the frame origin does not).
+## Corner drag: the dragged corner follows the pointer, the opposite corner stays where it is (the nominal rectangle changes; the frame origin does not).
 func _resize(hold: Dictionary, world_p: Vector3) -> void:
 	var fn: FrameNode = hold.fn
 	if not is_instance_valid(fn):
@@ -75,7 +430,7 @@ func _resize(hold: Dictionary, world_p: Vector3) -> void:
 	var l := fn.to_local_point(world_p)
 	var opp: Vector2 = hold.opp
 	var p := Vector2(l.x, l.y)
-	var minimum := Vector2(0.25, 0.18) / fn.data.scale
+	var minimum := InputTuning.MIN_CANVAS / fn.data.scale
 	var size := Vector2(maxf(absf(p.x - opp.x), minimum.x), maxf(absf(p.y - opp.y), minimum.y))
 	var sx := signf(p.x - opp.x) if absf(p.x - opp.x) > 1e-4 else 1.0
 	var sy := signf(p.y - opp.y) if absf(p.y - opp.y) > 1e-4 else 1.0
@@ -103,14 +458,23 @@ func _release(side: String) -> void:
 			still_held = true
 	if not still_held:
 		board.end_grab(hold.f)
+		_tick(side, 0.2, 0.015)
 
 
 func _update_two(seen: Dictionary) -> void:
 	var l: Dictionary = _holds.get("left", {})
 	var r: Dictionary = _holds.get("right", {})
-	if l.is_empty() or r.is_empty() or l.f != r.f or not seen.has("left") or not seen.has("right"):
-		if not _two.is_empty() and (l.is_empty() or r.is_empty()):
+	var both: bool = not l.is_empty() and not r.is_empty() and l.f == r.f and int(l.corner) < 0 and int(r.corner) < 0 \
+		and seen.has("left") and seen.has("right")
+	if not both:
+		if not _two.is_empty():
 			_two = {}
+			# one hand let go of the turn / resize: the other carries on from where the frame is now
+			for s in _holds.keys():
+				var hd: Dictionary = _holds[s]
+				if board.grabs.has(hd.f.id):
+					hd.origin0 = ((board.grabs[hd.f.id] as Dictionary).xf as Transform3D).origin
+					hd.p0 = hd.get("last", hd.p0)
 		return
 	var f: FrameData = l.f
 	if not board.grabs.has(f.id):
@@ -120,22 +484,28 @@ func _update_two(seen: Dictionary) -> void:
 	var g: Dictionary = board.grabs[f.id]
 	if _two.is_empty():
 		var d := a.distance_to(b)
-		if d < 0.04:
+		if d < InputTuning.TWO_HAND_MIN:
 			return
 		var v := b - a
 		_two = {"f": f, "d0": d, "mid0": (a + b) * 0.5, "yaw0": atan2(v.x, v.z), "scale0": float(g.scale), "basis0": (g.xf as Transform3D).basis, "origin0": (g.xf as Transform3D).origin}
 		return
 	var mid := (a + b) * 0.5
 	var v2 := b - a
-	var ratio := clampf(a.distance_to(b) / float(_two.d0), 0.2, 6.0)
+	var ratio := clampf(a.distance_to(b) / float(_two.d0), InputTuning.TWO_HAND_RATIO.x, InputTuning.TWO_HAND_RATIO.y)
 	var dyaw := angle_difference(float(_two.yaw0), atan2(v2.x, v2.z))
 	var rot := Basis(Vector3.UP, dyaw)
 	var xf := g.xf as Transform3D
 	xf.basis = rot * (_two.basis0 as Basis)
 	xf.origin = mid + rot * (((_two.origin0 as Vector3) - (_two.mid0 as Vector3)) * ratio)
 	g.xf = xf
-	g.scale = clampf(float(_two.scale0) * ratio, 0.15, 8.0)
+	g.scale = clampf(float(_two.scale0) * ratio, InputTuning.CANVAS_SCALE.x, InputTuning.CANVAS_SCALE.y)
 
 
 func is_holding() -> bool:
 	return not _holds.is_empty()
+
+
+## A haptic tick for the stylus's own grabs (a hand has none: the rig plays a sound for it).
+func _tick(side: String, amplitude: float, seconds: float) -> void:
+	if side == "pen" and _pen_state != null:
+		_pen_state.tick(amplitude, seconds)

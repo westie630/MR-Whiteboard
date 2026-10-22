@@ -1,6 +1,6 @@
 class_name DemoDoc
 extends RefCounted
-## A small demo document (flow diagram, every brush, text, a 3D sketch) used by the render check and for trying the app out.
+## A small demo document (flow diagram, every brush, text, shapes) used by the render check and for trying the app out.
 
 
 static func build() -> Document:
@@ -54,19 +54,6 @@ static func build() -> Document:
 	st.size = Vector2(0.12, 0.12)
 	doc.add_item(st)
 
-	# a 3D sketch next to the canvas
-	var vol := FrameData.make(FrameData.VOLUME, room.id, Transform3D(Basis.IDENTITY, Vector3(1.35, 1.2, -1.0)))
-	doc.add_frame(vol)
-	var sp := PackedFloat32Array()
-	for i in 90:
-		var a := float(i) * 0.22
-		sp.append_array(PackedFloat32Array([cos(a) * (0.05 + float(i) * 0.0012), float(i) * 0.004 - 0.18, sin(a) * (0.05 + float(i) * 0.0012), 0.3 + 0.7 * float(i) / 89.0]))
-	doc.add_item(Item.make_stroke(vol.id, sp, Color("#06d6a0"), 0.008, "pen"))
-	var sp2 := PackedFloat32Array()
-	for i in 60:
-		var a2 := float(i) * 0.2
-		sp2.append_array(PackedFloat32Array([0.18 * sin(a2), 0.1 * cos(a2 * 2.0), 0.18 * cos(a2), 1.0]))
-	doc.add_item(Item.make_stroke(vol.id, sp2, Color("#ff5d8f"), 0.006, "neon"))
 	return doc
 
 

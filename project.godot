@@ -27,6 +27,10 @@ driver/enable_input=true
 
 App="*res://src/app.gd"
 
+[debug]
+
+file_logging/enable_file_logging=true
+
 [display]
 
 window/size/viewport_width=1600
@@ -64,8 +68,11 @@ openxr/foveation_level=0
 openxr/submit_depth_buffer=true
 openxr/startup_alert=false
 openxr/extensions/hand_tracking=true
+openxr/extensions/hand_interaction_profile=true
 shaders/enabled=true
 openxr/enabled.android=true
 openxr/extensions/meta/passthrough=true
 openxr/extensions/meta/scene_api=true
 openxr/extensions/meta/anchor_api=true
+openxr/extensions/meta/hand_tracking_mesh=true
+openxr/extensions/meta/simultaneous_hands_and_controllers=true

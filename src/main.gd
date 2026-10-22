@@ -1,7 +1,7 @@
 extends Node3D
 ## Entry point. In the headset (OpenXR started by the engine on Android) the XR rig runs; on the PC the desktop rig does.
 ## Development switches (after `--`): --demo  open the demo document;  --screenshot=PATH [--tab=NAME] [--type] [--frames=N] [--cam=x,y,z,yaw,pitch]
-## saves a picture after N frames and quits.
+## saves a picture after N frames and quits.  --share  starts the web server for the canvases (as the Docs tab's switch does); --share=nopin leaves out the access code (for scripts).
 
 var board: Board
 var rig: Node
@@ -34,6 +34,10 @@ func _ready() -> void:
 		(rig as DesktopRig).setup(board)
 	board.toast.connect(func(t: String): print("[board] ", t))
 	_open_document(args)
+	if args.has("share"):
+		board.share.require_pin = str(args["share"]) != "nopin"
+		board.share.start()
+		print("[share] code %s  %s" % [board.share.pin, ", ".join(board.share.urls())])
 	if args.has("screenshot"):
 		_screenshot_later(args)
 

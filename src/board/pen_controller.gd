@@ -1,23 +1,34 @@
 class_name PenController
 extends RefCounted
 ## Everything the pen does to the board: draw (with hold-to-snap shape recognition), write (handwriting to text), erase, select
-## (tap, lasso, drag, resize / rotate handles), place stencil shapes, grab with the front button, undo with the back button.
-## Works the same for the MX Ink stylus, the mouse and a pinch.
+## (tap, lasso, drag, resize / rotate handles), place stencil shapes, undo with the back button (with the front button held: redo).
+## Works the same for the MX Ink stylus, the mouse and a pinch. Grabbing (moving and resizing canvases, dragging items with the front
+## button) is the pointer's job, shared with the hands: see HandController.
 
-enum S { IDLE, DRAWING, ERASING, LASSO, DRAG_ITEMS, DRAG_HANDLE, SHAPE_DRAG, GRAB_FRAME }
+enum S { IDLE, DRAWING, ERASING, LASSO, DRAG_ITEMS, DRAG_HANDLE, SHAPE_DRAG }
 
-const MIN_STEP := 0.0009                   # metres between stroke samples
-const HOLD_MOVE := 0.004                   # the pen counts as still while it stays within this
-const UNSNAP_MOVE := 0.012
-const ERASE_R := 0.014
-const PICK_R := 0.013
-const HANDLE_R := 0.011                    # drawn radius of a handle (world metres)
-const HANDLE_HIT := 0.024
-const BACK_DOUBLE_S := 0.32
+const MIN_STEP := InputTuning.MIN_STEP     # metres between stroke samples
+const HOLD_MOVE := InputTuning.HOLD_MOVE   # the pen counts as still while it stays within this
+const UNSNAP_MOVE := InputTuning.UNSNAP_MOVE
+const ERASE_R := InputTuning.ERASE_R
+const PICK_R := InputTuning.PICK_R
+const HANDLE_R := 0.016                    # drawn radius of a handle (world metres)
+const HANDLE_HIT := InputTuning.HANDLE_HIT
+const BTN_R := 0.019                       # drawn radius of an undo / redo / delete button beside the selection
+const BTN_GAP := 0.052                     # distance between button centres
+const BTN_SIDE := 0.075                    # distance of the button column from the selection box (clear of the corner handles)
+const BTN_HIT := InputTuning.BTN_HIT
 const HOVER_REACH := 0.25
 
 var board: Board
 var state := S.IDLE
+## A hand pointing with a ray (HandController) drives its own PenController in this mode: only the Select tool's moves exist (tap,
+## drag, handles; a tap on empty canvas just clears the selection, there is no lasso) and every pick radius is `reach` times larger,
+## because a ray at arm's length is not a nib.
+var hand_mode := false
+var reach := 1.0
+## Set by the board while the front-button pointer is holding something: a new press must not start a stroke under it.
+var blocked := false
 var cursor_frame := ""
 var cursor_pos := Vector2.ZERO
 var cursor_dist := 0.0
@@ -28,12 +39,10 @@ var _live: LiveStroke
 var _live_fn: FrameNode
 var _live_volume := false
 var _write_mode := false
-var _filter := OneEuro3.new(2.2, 45.0)
+var _filter := OneEuro3.new(InputTuning.STYLUS_FILTER.x, InputTuning.STYLUS_FILTER.y)
 var _pressure := 0.5
 var _prev_down := false
-var _prev_front := false
 var _prev_back := false
-var _back_wait := -1.0
 var _hold_t := 0.0
 var _hold_anchor := Vector3.ZERO
 var _snap: Dictionary = {}
@@ -44,7 +53,6 @@ var _erase_set: Dictionary = {}
 var _drag_fn: FrameNode
 var _drag_start := Vector2.ZERO
 var _drag_ids: Array = []
-var _drag_btn_front := false
 var _drag_delta := Vector2.ZERO
 var _drag3_start := Vector3.ZERO
 var _handle: Dictionary = {}
@@ -53,10 +61,10 @@ var _orig: Item
 var _group_before := Rect2()
 var _shape_fn: FrameNode
 var _shape_a := Vector2.ZERO
-var _grab_f: FrameData
-var _grab_tip0 := Vector3.ZERO
-var _grab_origin0 := Vector3.ZERO
 var _lasso_fn: FrameNode
+var _on_key := ""                          # what the undo / redo buttons' enabled state was computed for
+var _on_undo := false
+var _on_redo := false
 var _lasso_tap_item: Item                  # the box under the pen when a selection loop started: a plain tap selects it
 
 
@@ -67,21 +75,17 @@ func _init(b: Board) -> void:
 # ------------------------------------------------------------------------------------------------ per frame
 
 func update(pen: PenState, dt: float) -> void:
-	_handle_back(pen, dt)
+	_handle_back(pen)
 	if not pen.tracked or pen.docked:
 		if state != S.IDLE:
 			_finish(pen)
 		cursor_frame = ""
 		_prev_down = false
-		_prev_front = false
 		return
 	var down_edge := pen.down and not _prev_down
-	var front_edge := pen.front and not _prev_front
 	if state == S.IDLE:
 		_update_cursor(pen)
-		if front_edge:
-			_begin_front(pen)
-		elif down_edge:
+		if down_edge and not blocked:
 			_begin_down(pen)
 	else:
 		match state:
@@ -97,15 +101,16 @@ func update(pen: PenState, dt: float) -> void:
 				_step_handle(pen)
 			S.SHAPE_DRAG:
 				_step_shape(pen)
-			S.GRAB_FRAME:
-				_step_grab(pen)
-		var released := (not pen.down) if state in [S.DRAWING, S.ERASING, S.LASSO, S.SHAPE_DRAG, S.DRAG_HANDLE] else false
-		if state == S.DRAG_ITEMS or state == S.GRAB_FRAME:
-			released = (not pen.front) if _drag_btn_front else (not pen.down)
-		if released:
+		if not pen.down:
 			_finish(pen)
 	_prev_down = pen.down
-	_prev_front = pen.front
+
+
+## The frame an item or handle drag is working on (a hand keeps pointing at its plane while the drag lasts), or null.
+func working_frame() -> FrameNode:
+	if state == S.DRAG_ITEMS or state == S.DRAG_HANDLE:
+		return _drag_fn if is_instance_valid(_drag_fn) else null
+	return null
 
 
 func flush_live() -> void:
@@ -113,22 +118,19 @@ func flush_live() -> void:
 		_live.flush()
 
 
-func _handle_back(pen: PenState, dt: float) -> void:
+## The back button: undo, at once. With the front button held: redo.
+func _handle_back(pen: PenState) -> void:
 	var edge := pen.back and not _prev_back
 	_prev_back = pen.back
-	if edge:
-		if _back_wait > 0.0:
-			_back_wait = -1.0
+	if not edge:
+		return
+	if pen.front:
+		if state == S.IDLE and not blocked:
 			board.redo()
 			board.toast.emit("Redo")
-		else:
-			_back_wait = BACK_DOUBLE_S
-	elif _back_wait > 0.0:
-		_back_wait -= dt
-		if _back_wait <= 0.0:
-			_back_wait = -1.0
-			board.undo()
-			board.toast.emit("Undo")
+	else:
+		board.undo()
+		board.toast.emit("Undo")
 
 
 func _update_cursor(pen: PenState) -> void:
@@ -147,6 +149,15 @@ func _update_cursor(pen: PenState) -> void:
 func _begin_down(pen: PenState) -> void:
 	_filter.reset()
 	_pressure = maxf(pen.pressure, 0.2)
+	if _begin_on_button(pen):
+		return
+	if hand_mode:
+		_begin_select(pen)
+		return
+	# the handles of a selection (corners scale, the top one turns) work with every tool: touching one grabs it
+	if _begin_on_handle(pen):
+		return
+	print("[pen] down with the %s tool (%s)" % [str(App.val("tool")), pen.source])
 	match str(App.val("tool")):
 		"draw":
 			_begin_draw(pen, false)
@@ -160,26 +171,50 @@ func _begin_down(pen: PenState) -> void:
 			_begin_shape(pen)
 
 
+## A press whose nib is on one of the buttons beside the selection (undo, redo, delete) presses it, whatever the tool is.
+func _begin_on_button(pen: PenState) -> bool:
+	if board.selection.is_empty() and board.bar_ghost.is_empty():
+		return false
+	var t := board.pen_target(pen.tip, Board.CAPTURE, 0.3)
+	if t.is_empty():
+		return false
+	var fn := t.fn as FrameNode
+	var id := hit_button(fn, Vector2(t.local.x, t.local.y))
+	if id == "":
+		return false
+	board.bar_action(id)
+	pen.tick(0.4, 0.02)
+	return true
+
+
+## A press whose nib is on a handle of the current selection starts dragging that handle, whatever the tool is.
+func _begin_on_handle(pen: PenState) -> bool:
+	if board.selection.is_empty() or board.sel_frame == "":
+		return false
+	var t := board.pen_target(pen.tip, Board.CAPTURE, 0.3)
+	if t.is_empty() or (t.fn as FrameNode).data.id != board.sel_frame:
+		return false
+	var fn := t.fn as FrameNode
+	var l := Vector2(t.local.x, t.local.y)
+	var h := hit_handle(fn, l)
+	if h.is_empty():
+		return false
+	_start_handle(fn, h, l)
+	return true
+
+
 func _brush_width(fn: FrameNode) -> float:
 	return float(App.val("width")) / fn.data.scale
 
 
 func _begin_draw(pen: PenState, write: bool) -> void:
 	var t := board.pen_target(pen.tip, Board.CAPTURE)
-	var fn: FrameNode
-	var volume := false
-	if not t.is_empty():
-		fn = t.fn
-	else:
-		if write:
-			board.toast.emit("Handwriting goes on a canvas: bring the stylus to a canvas first.")
-			return
-		fn = board.active_volume()
-		if fn == null:
-			fn = board.new_volume_at(pen.tip)
-		volume = true
-	if fn == null:
+	if t.is_empty():
+		# everything is drawn on a canvas (drawing in the air is switched off)
+		board.toast.emit("Draw on a canvas: bring the stylus to one, or place one from the Canvas tab.")
 		return
+	var fn: FrameNode = t.fn
+	var volume := false
 	_live_fn = fn
 	_live_volume = volume
 	_write_mode = write
@@ -231,7 +266,8 @@ func _begin_shape(pen: PenState) -> void:
 func _begin_select(pen: PenState) -> void:
 	var t := board.pen_target(pen.tip, Board.CAPTURE, 0.3)
 	if t.is_empty():
-		_begin_select_volume(pen)
+		if not hand_mode:
+			_begin_select_volume(pen)
 		return
 	var fn := t.fn as FrameNode
 	var s := fn.data.scale
@@ -242,16 +278,24 @@ func _begin_select(pen: PenState) -> void:
 		if not h.is_empty():
 			_start_handle(fn, h, l)
 			return
-	var it := board.doc.pick(fn.data.id, l, PICK_R / s)
+	var it := board.doc.pick(fn.data.id, l, PICK_R * reach / s)
 	if it != null:
 		if not board.selection.has(it.id):
 			board.select_items([it.id], fn.data.id)
-		_start_drag_items(fn, l, false)
+		_start_drag_items(fn, l)
 		return
 	# inside a box (not on its outline): dragging an already selected box moves it; otherwise a tap selects the box and a drag draws a loop
 	var inside := board.doc.shape_containing(fn.data.id, l)
 	if inside != null and board.selection.has(inside.id):
-		_start_drag_items(fn, l, false)
+		_start_drag_items(fn, l)
+		return
+	if hand_mode:
+		# no lasso with a hand: the box under the ray is picked up, empty canvas lets go of the selection
+		if inside != null:
+			board.select_items([inside.id], fn.data.id)
+			_start_drag_items(fn, l)
+		else:
+			board.clear_selection()
 		return
 	_lasso_tap_item = inside
 	board.clear_selection()
@@ -282,42 +326,16 @@ func _begin_select_volume(pen: PenState) -> void:
 		_drag_fn = best_fn
 		_drag_ids = [best.id]
 		_drag3_start = best_fn.to_local_point(pen.tip)
-		_drag_btn_front = false
 		_drag_delta = Vector2.ZERO
 		state = S.DRAG_ITEMS
 	else:
 		board.clear_selection()
 
 
-func _begin_front(pen: PenState) -> void:
-	# front button: grab what is under the tip (an item, or else the whole canvas / 3D sketch)
-	var t := board.pen_target(pen.tip, 0.14, 0.2)
-	if not t.is_empty():
-		var fn := t.fn as FrameNode
-		var l := Vector2(t.local.x, t.local.y)
-		var it := board.doc.pick(fn.data.id, l, PICK_R * 1.6 / fn.data.scale)
-		if it != null:
-			if not board.selection.has(it.id):
-				board.select_items([it.id], fn.data.id)
-			_start_drag_items(fn, l, true)
-			return
-	var p := board.pick_frame(pen.tip)
-	if not p.is_empty() and not (p.fn as FrameNode).data.locked:
-		_grab_f = (p.fn as FrameNode).data
-		board.begin_grab(_grab_f)
-		if board.grabs.has(_grab_f.id):
-			_grab_tip0 = pen.tip
-			_grab_origin0 = ((board.grabs[_grab_f.id] as Dictionary).xf as Transform3D).origin
-			_drag_btn_front = true
-			state = S.GRAB_FRAME
-			pen.tick(0.3, 0.02)
-
-
-func _start_drag_items(fn: FrameNode, l: Vector2, front: bool) -> void:
+func _start_drag_items(fn: FrameNode, l: Vector2) -> void:
 	_drag_fn = fn
 	_drag_start = l
 	_drag_ids = board.selection.duplicate()
-	_drag_btn_front = front
 	_drag_delta = Vector2.ZERO
 	state = S.DRAG_ITEMS
 
@@ -570,7 +588,7 @@ func _mostly_inside(item: Item, poly: PackedVector2Array) -> bool:
 	for p in samples:
 		if Geometry2D.is_point_in_polygon(p, poly):
 			inside += 1
-	return float(inside) / float(samples.size()) >= 0.6
+	return float(inside) / float(samples.size()) >= InputTuning.LASSO_INSIDE
 
 
 func _step_drag_items(pen: PenState) -> void:
@@ -657,15 +675,6 @@ func _after_move(fn: FrameNode, ids: Array) -> void:
 		board.follow_connectors(follow, fn.data.id)
 
 
-func _step_grab(pen: PenState) -> void:
-	if _grab_f == null or not board.grabs.has(_grab_f.id):
-		return
-	var g: Dictionary = board.grabs[_grab_f.id]
-	var xf := g.xf as Transform3D
-	xf.origin = _grab_origin0 + (pen.tip - _grab_tip0)
-	g.xf = xf
-
-
 # ------------------------------------------------------------------------------------------------ shape stencils
 
 func _step_shape(pen: PenState) -> void:
@@ -683,7 +692,7 @@ func _step_shape(pen: PenState) -> void:
 		board.snap_line_ends(_ghost_item)
 	else:
 		var d := b - _shape_a
-		if d.length() * s < 0.025:
+		if d.length() * s < InputTuning.SHAPE_TAP:
 			_ghost_item.center = _shape_a
 			_ghost_item.size = Shapes.default_size(id)
 		else:
@@ -710,7 +719,7 @@ func _finish_shape() -> void:
 		view.queue_free()
 	if item == null:
 		return
-	if item.is_line() and item.a.distance_to(item.b) < 0.02:
+	if item.is_line() and item.a.distance_to(item.b) < InputTuning.MIN_LINE:
 		return
 	board.history.do(History.op_add([item]))
 
@@ -718,14 +727,15 @@ func _finish_shape() -> void:
 # ------------------------------------------------------------------------------------------------ handles
 
 ## The handles of the current selection on a frame node: [{id, pos (frame coords), kind}].
-func handles(fn: FrameNode) -> Array:
+## `override`: the copy of the single selected shape that is being reshaped right now (its handles follow it).
+func handles(fn: FrameNode, override: Item = null) -> Array:
 	var out: Array = []
 	var items := board.selected_items()
 	if items.is_empty() or not fn.is_canvas:
 		return out
 	var s := fn.data.scale
 	if items.size() == 1 and (items[0] as Item).kind == Item.SHAPE and (items[0] as Item).shape != "poly":
-		var it: Item = items[0]
+		var it: Item = override if override != null else items[0]
 		if it.is_line():
 			out.append({"id": "end_a", "pos": it.a, "kind": "end"})
 			out.append({"id": "end_b", "pos": it.b, "kind": "end"})
@@ -747,6 +757,52 @@ func handles(fn: FrameNode) -> Array:
 	return out
 
 
+## The buttons beside the selection box on a frame node: [{id: "undo" | "redo" | "delete", pos (frame coords), on}], a column to the
+## right of the box (top to bottom). With the selection gone after a delete only undo and redo remain, where the box was.
+func bar_buttons(fn: FrameNode) -> Array:
+	var out: Array = []
+	if not fn.is_canvas:
+		return out
+	var items := board.selected_items()
+	var r: Rect2
+	var ids := ["undo", "redo", "delete"]
+	if not items.is_empty() and fn.data.id == board.sel_frame:
+		r = group_bounds(items)
+	else:
+		var gh := board.ghost_bar(fn.data.id)
+		if gh.is_empty():
+			return out
+		r = gh.rect
+		ids = ["undo", "redo"]
+	var s := fn.data.scale
+	var x := r.end.x + BTN_SIDE / s
+	var top := r.get_center().y + BTN_GAP / s * float(ids.size() - 1) * 0.5
+	var h := board.history
+	var key := "%d/%d/%d/%s" % [h.undo_stack.size(), h.redo_stack.size(), h.serial, str(board.bar_ids())]
+	if key != _on_key:                         # scanning the history is not cheap: only when something changed
+		_on_key = key
+		_on_undo = h.can_undo_local(board.bar_ids())
+		_on_redo = h.can_redo_local(board.bar_ids())
+	for i in ids.size():
+		var id: String = ids[i]
+		var on := _on_undo if id == "undo" else _on_redo if id == "redo" else true
+		out.append({"id": id, "pos": Vector2(x, top - BTN_GAP / s * i), "on": on})
+	return out
+
+
+## The id of the button a point of the frame is on (the nearest one), or "".
+func hit_button(fn: FrameNode, l: Vector2) -> String:
+	var s := fn.data.scale
+	var best := ""
+	var bd := BTN_HIT * sqrt(reach) / s
+	for b in bar_buttons(fn):
+		var d := (b.pos as Vector2).distance_to(l)
+		if d < bd:
+			bd = d
+			best = str(b.id)
+	return best
+
+
 func group_bounds(items: Array) -> Rect2:
 	var r := Rect2()
 	var first := true
@@ -760,7 +816,7 @@ func group_bounds(items: Array) -> Rect2:
 func hit_handle(fn: FrameNode, l: Vector2) -> Dictionary:
 	var s := fn.data.scale
 	var best := {}
-	var bd := HANDLE_HIT / s
+	var bd := HANDLE_HIT * reach / s
 	for h in handles(fn):
 		var d := (h.pos as Vector2).distance_to(l)
 		if d < bd:
@@ -962,12 +1018,6 @@ func _finish(_pen: PenState) -> void:
 			_finish_handle()
 		S.SHAPE_DRAG:
 			_finish_shape()
-		S.GRAB_FRAME:
-			if _grab_f != null:
-				board.end_grab(_grab_f)
-				_grab_f = null
-			state = S.IDLE
-	_drag_btn_front = false
 
 
 func _abort() -> void:
@@ -996,6 +1046,8 @@ func draw_overlay(od: OverlayDraw, fn: FrameNode) -> void:
 	od.z = 0.002
 	if fid == board.sel_frame and not board.selection.is_empty() and fn.is_canvas:
 		_draw_selection(od, fn)
+	else:
+		_draw_bar(od, fn, Transform2D.IDENTITY)
 	if state == S.LASSO and _lasso_fn == fn and lasso.size() > 1:
 		if lasso.size() > 2:
 			od.polygon(lasso, Color(0.5, 0.9, 1.0, 0.12))
@@ -1006,39 +1058,101 @@ func draw_overlay(od: OverlayDraw, fn: FrameNode) -> void:
 		_draw_cursor(od, fn)
 
 
+## How the selection is shown on a frame while it is being dragged or reshaped (by this controller): {xf: the transform the stored
+## selection is drawn with, offset: its translation, work: the shape copy being reshaped or null, handles: [{id, kind, pos}] where they
+## are drawn now}. Outside a drag it is the stored selection.
+func selection_view(fn: FrameNode) -> Dictionary:
+	var xf := Transform2D.IDENTITY
+	var work: Item = null
+	if state == S.DRAG_ITEMS and _drag_fn == fn and fn.is_canvas:
+		xf = Transform2D(0.0, _drag_delta)
+	elif state == S.DRAG_HANDLE and _drag_fn == fn:
+		if _work != null:
+			work = _work
+		else:
+			xf = _drag_xf
+	var hs: Array = []
+	for h in handles(fn, work):
+		hs.append({"id": h.id, "kind": h.kind, "pos": xf * (h.pos as Vector2)})
+	return {"xf": xf, "offset": xf.origin, "work": work, "handles": hs}
+
+
+func _box_points(r: Rect2, xf: Transform2D) -> PackedVector2Array:
+	return PackedVector2Array([xf * r.position, xf * Vector2(r.end.x, r.position.y), xf * r.end, xf * Vector2(r.position.x, r.end.y)])
+
+
 func _draw_selection(od: OverlayDraw, fn: FrameNode) -> void:
+	# whoever is dragging (the stylus, or a hand) decides how the selection looks: it follows the drag
+	var d: PenController = board.drag_driver()
+	var v := d.selection_view(fn)
+	var xf: Transform2D = v.xf
+	var work: Item = v.work
 	var s := fn.data.scale
 	var items := board.selected_items()
 	var col := Color(0.45, 0.95, 1.0, 0.9)
 	var w := 0.0022 / s
 	var single_shape := items.size() == 1 and (items[0] as Item).kind == Item.SHAPE and (items[0] as Item).shape != "poly"
 	if single_shape and not (items[0] as Item).is_line():
-		var it: Item = items[0] if _work == null else _work
+		var it: Item = items[0] if work == null else work
 		var hw := it.size * 0.5
 		var pts := PackedVector2Array()
 		for c in [Vector2(-1, 1), Vector2(1, 1), Vector2(1, -1), Vector2(-1, -1)]:
-			pts.append(it.center + Geom2D.rot(c * hw, it.rot))
+			pts.append(xf * (it.center + Geom2D.rot(c * hw, it.rot)))
 		od.line(pts, w, col, true)
-		od.segment(it.center + Geom2D.rot(Vector2(0, hw.y), it.rot), it.center + Geom2D.rot(Vector2(0, hw.y + 0.055 / s), it.rot), w, col)
+		od.segment(xf * (it.center + Geom2D.rot(Vector2(0, hw.y), it.rot)), xf * (it.center + Geom2D.rot(Vector2(0, hw.y + 0.055 / s), it.rot)), w, col)
 	elif single_shape:
-		var ln: Item = items[0] if _work == null else _work
-		od.line(Shapes.line_points(ln), w * 3.0, Color(col.r, col.g, col.b, 0.35), false)
+		var ln: Item = items[0] if work == null else work
+		var lp := Shapes.line_points(ln)
+		var mapped := PackedVector2Array()
+		for p in lp:
+			mapped.append(xf * p)
+		od.line(mapped, w * 3.0, Color(col.r, col.g, col.b, 0.35), false)
 	else:
 		var r := group_bounds(items)
 		for it2 in items:
 			if (it2 as Item).kind != Item.STROKE:
-				od.rect((it2 as Item).bounds().grow(0.004), w * 0.7, Color(col.r, col.g, col.b, 0.4))
-		od.rect(r, w, col)
-		od.segment(Vector2(r.get_center().x, r.end.y), Vector2(r.get_center().x, r.end.y + 0.055 / s), w, col)
-	for h in handles(fn):
+				od.line(_box_points((it2 as Item).bounds().grow(0.004), xf), w * 0.7, Color(col.r, col.g, col.b, 0.4), true)
+		od.line(_box_points(r, xf), w, col, true)
+		od.segment(xf * Vector2(r.get_center().x, r.end.y), xf * Vector2(r.get_center().x, r.end.y + 0.055 / s), w, col)
+	for h in v.handles:
 		var hid := str(h.id)
-		var active := state == S.DRAG_HANDLE and str(_handle.get("id", "")) == hid
+		var active: bool = d.state == S.DRAG_HANDLE and str(d._handle.get("id", "")) == hid
 		var fill := Color(1, 1, 1, 0.95) if active else Color(0.1, 0.16, 0.2, 0.9)
 		var r2 := HANDLE_R / s
 		od.disc(h.pos, r2 * 1.25, Color(col.r, col.g, col.b, 0.95))
 		od.disc(h.pos, r2 * 0.8, fill)
 		if str(h.kind) == "rot":
 			od.ring(h.pos, r2 * 0.45, 0.0012 / s, Color(col.r, col.g, col.b, 1.0), 12)
+	_draw_bar(od, fn, xf)
+
+
+## The undo / redo / delete buttons beside the selection (`xf`: how far the selection has been dragged, they go with it).
+func _draw_bar(od: OverlayDraw, fn: FrameNode, xf: Transform2D) -> void:
+	var s := fn.data.scale
+	var k := BTN_R / s
+	for b in bar_buttons(fn):
+		var id := str(b.id)
+		var a := 1.0 if b.on else 0.35
+		var tint := Color(1.0, 0.45, 0.4) if id == "delete" else Color(0.45, 0.95, 1.0)
+		var c: Vector2 = xf * (b.pos as Vector2)
+		od.disc(c, k * 1.2, Color(tint.r, tint.g, tint.b, 0.9 * a))
+		od.disc(c, k * 0.95, Color(0.08, 0.13, 0.17, 0.95))
+		var white := Color(1, 1, 1, a)
+		var lw := 0.0016 / s
+		if id == "trash" or id == "delete":
+			od.line(PackedVector2Array([c + Vector2(-0.4, 0.3) * k, c + Vector2(-0.3, -0.5) * k, c + Vector2(0.3, -0.5) * k, c + Vector2(0.4, 0.3) * k]), lw, white, false)
+			od.segment(c + Vector2(-0.55, 0.3) * k, c + Vector2(0.55, 0.3) * k, lw, white)
+			od.line(PackedVector2Array([c + Vector2(-0.18, 0.3) * k, c + Vector2(-0.14, 0.55) * k, c + Vector2(0.14, 0.55) * k, c + Vector2(0.18, 0.3) * k]), lw, white, false)
+		else:
+			# an arc over the top with an arrowhead at its end; redo is the mirror image
+			var m := -1.0 if id == "redo" else 1.0
+			var arc := PackedVector2Array()
+			for i in 13:
+				var ang := deg_to_rad(15.0 + 185.0 * float(i) / 12.0)
+				arc.append(c + Vector2(m * cos(ang) * 0.5, sin(ang) * 0.42 - 0.12) * k)
+			od.line(arc, lw, white, false)
+			var tip: Vector2 = arc[arc.size() - 1]
+			od.polygon(PackedVector2Array([tip + Vector2(-0.26, 0.06) * k, tip + Vector2(0.26, 0.06) * k, tip + Vector2(0, -0.3) * k]), white)
 
 
 func _draw_glue_marks(od: OverlayDraw, s: float, line: Item) -> void:

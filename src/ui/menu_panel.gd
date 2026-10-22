@@ -29,6 +29,8 @@ var _sel_convert_btn: Btn
 var _sel_edit_btn: Btn
 var _toast_label: Label
 var _toast_t := 0.0
+var _quit_btn: Btn
+var _quit_armed := 0.0                     # seconds left in which a second press of Quit really quits
 var _title: Label
 var _status: Label
 var _undo_btn: Btn
@@ -49,6 +51,9 @@ var _lists_dirty := true
 var _confirm_delete := ""
 var _last_export := ""
 var _export_label: Label
+var _share_btn: Btn
+var _share_label: Label
+var _share_code: Label
 
 
 func setup(b: Board) -> void:
@@ -71,6 +76,10 @@ func _process(delta: float) -> void:
 		_toast_t -= delta
 		if _toast_t <= 0.0:
 			_toast_label.visible = false
+	if _quit_armed > 0.0:
+		_quit_armed -= delta
+		if _quit_armed <= 0.0:
+			_quit_btn.text = "Quit"
 	if _lists_dirty:
 		_lists_dirty = false
 		_refresh_dynamic()
@@ -96,6 +105,12 @@ func _build() -> void:
 	_status.add_theme_font_size_override("font_size", UITheme.FONT_SMALL)
 	_status.add_theme_color_override("font_color", UITheme.TEXT_DIM)
 	head.add_child(_status)
+	_quit_btn = Btn.new("", "Quit")
+	_quit_btn.small = true
+	_quit_btn.danger = true
+	_quit_btn.custom_minimum_size = Vector2(96, 44)
+	_quit_btn.pressed.connect(_on_quit)
+	head.add_child(_quit_btn)
 	var close := Btn.new("close", "")
 	close.small = true
 	close.custom_minimum_size = Vector2(48, 44)
@@ -433,6 +448,7 @@ func _build_canvas(p: VBoxContainer) -> void:
 	p.add_child(row)
 	row.add_child(_btn("canvas", "On a wall", func(): board.begin_place("wall", SIZES[canvas_size_idx][1]), 72))
 	row.add_child(_btn("canvas", "On a table", func(): board.begin_place("table", SIZES[canvas_size_idx][1]), 72))
+	p.add_child(_btn("canvas", "Bring canvas here (within reach)", func(): board.bring_canvas_here(), 64))
 	var szs := HBoxContainer.new()
 	p.add_child(szs)
 	var size_btns: Array = []
@@ -450,10 +466,6 @@ func _build_canvas(p: VBoxContainer) -> void:
 		for pair in size_btns:
 			(pair[1] as Btn).on = canvas_size_idx == pair[0])
 	p.add_child(_label("The grid fades in around the stylus and fades out as you step away. Draw past the edge and the canvas grows: it is infinite.", true))
-	p.add_child(_btn("volume", "New 3D sketch here", func():
-		var pos := board.head.origin + (-board.head.basis.z) * 0.6
-		board.new_volume_at(pos)
-		board.toast.emit("3D sketch started. Draw in the air with the stylus."), 60))
 	_header(p, "In this room")
 	_canvas_list = VBoxContainer.new()
 	p.add_child(_canvas_list)
@@ -586,6 +598,18 @@ func _build_docs(p: VBoxContainer) -> void:
 	ex.add_child(_btn("doc", "File (.mrw)", func(): _do_export("mrw"), 64))
 	_export_label = _label("SVG: one vector file per canvas, opens in Inkscape, Illustrator, Figma. 3D: the air drawings as a glTF model.", true)
 	p.add_child(_export_label)
+	_header(p, "Manage on your PC")
+	_share_btn = Btn.new("export", "Web page on Wi-Fi", true)
+	_share_btn.custom_minimum_size = Vector2(0, 64)
+	_share_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_share_btn.toggled.connect(_set_sharing)
+	p.add_child(_share_btn)
+	_share_code = _label("", false, UITheme.FONT_BIG)
+	_share_code.add_theme_color_override("font_color", UITheme.GOOD)
+	p.add_child(_share_code)
+	_share_label = _label("", true)
+	p.add_child(_share_label)
+	_syncers.append(_sync_share)
 	_header(p, "All documents")
 	_docs_list = VBoxContainer.new()
 	p.add_child(_docs_list)
@@ -606,6 +630,34 @@ func _do_export(kind: String) -> void:
 	_last_export = str(res.message)
 	_export_label.text = _last_export
 	board.toast.emit(_last_export)
+
+
+func _set_sharing(on: bool) -> void:
+	if on == board.share.is_running():
+		return
+	if on:
+		if not board.share.start():
+			board.toast.emit("Could not start the web server (no free port).")
+	else:
+		board.share.stop()
+	_sync_share()
+
+
+func _sync_share() -> void:
+	if _share_btn == null or board == null:
+		return
+	var on := board.share.is_running()
+	_share_btn.on = on
+	_share_code.visible = on
+	if not on:
+		_share_label.text = "Switch on, then open the address in a browser on a PC on the same Wi-Fi and type the access code. There you see, download and delete the canvases, and upload SVG files that arrive here as canvases you can edit."
+		return
+	_share_code.text = "Access code  %s" % board.share.pin_text()
+	var urls := board.share.urls()
+	if urls.is_empty():
+		_share_label.text = "Waiting for a Wi-Fi connection. The address will appear here (port %d)." % board.share.port
+		return
+	_share_label.text = "On your PC open:\n%s\nEveryone who knows the code and is on this network can change your canvases while this is on. It switches off when the app closes." % "\n".join(urls.slice(0, 3))
 
 
 func _refresh_docs_tab() -> void:
@@ -686,8 +738,8 @@ func _refresh_rooms_tab() -> void:
 		"searching":
 			_room_card.text = "Looking for a room you have used before..."
 			_room_card.add_theme_color_override("font_color", UITheme.WARN)
-		"needs_room":
-			_room_card.text = "This room is new to this document. Create it, or pick a room below."
+		"assumed":
+			_room_card.text = "\"%s\" is shown in front of you: its anchors were not found here. Re-anchor room keeps it here; New room here starts an empty one." % cur.get("name", "The room")
 			_room_card.add_theme_color_override("font_color", UITheme.WARN)
 		"unanchored":
 			_room_card.text = "Spatial anchors are not available: content will not stay in place between sessions."
@@ -767,7 +819,7 @@ func _build_more(p: VBoxContainer) -> void:
 	p.add_child(_label("Tap Dictate, say something and pause: the words appear as text on the canvas you are looking at (or in the correction box). Needs a free Wit.ai account: create an app at wit.ai, copy its Server Access Token into this box (in the headset tap the box to type it with the on-screen or a Bluetooth keyboard, or put it in a file wit_token.txt, see the README). Speech goes to Wit.ai only while you dictate.", true))
 	_header(p, "Stylus and hands")
 	_segmented(p, [["auto", "Stylus hand: auto"], ["left", "Left"], ["right", "Right"]], func(): return App.val("stylus_hand"), func(v): App.put("stylus_hand", v))
-	_toggle(p, "pin", "Haptic ticks", "haptics")
+	_toggle(p, "pin", "Feedback: stylus haptics and click sounds", "haptics")
 	_toggle(p, "pen", "Draw with a pinch if there is no stylus", "finger_draw")
 	_slider_row(p, "Hold-still time for snapping", 0.25, 1.2, "hold_seconds", 0.05, func(v: float): return "%.2f s" % v)
 	_header(p, "Canvas defaults")
@@ -776,7 +828,7 @@ func _build_more(p: VBoxContainer) -> void:
 	_slider_row(p, "Grid disappears at", 1.0, 5.0, "grid_fade_viewer", 0.25, func(v: float): return "%.1f m" % v)
 	_slider_row(p, "Grid light around the stylus", 0.25, 1.2, "grid_focus", 0.05, func(v: float): return "%.2f m" % v)
 	_header(p, "Controls")
-	p.add_child(_label("Stylus tip or middle button: draw.\nFront button: grab and move what the tip touches.\nBack button: undo (double tap: redo).\nPinch a canvas: carry it. Both hands: turn and resize.\nPinch a corner: change the extent.\nOpen palm facing up: bring this menu to you.", true))
+	p.add_child(_label("Stylus tip or middle button: draw (or the current tool).\nFront button = grab, like a pinch: on a shape, line or stroke it selects and drags it; on the bar under a canvas or on empty canvas it carries the canvas; on a corner it changes its size. Touch with the nib, or point along the stylus from a distance.\nBack button: undo. Front and back together: redo. The undo and redo buttons at the bottom of this menu do the same.\nHands: point (a ring shows where) and pinch, or touch a canvas with the pinch. Hands arrange (select, move, resize, carry); the stylus does the drawing. A second hand on the same canvas turns and resizes it.\nThis menu: touch a button with the stylus tip or a fingertip, or point and pinch (stylus: front button). Grab the bar under it to move it, touching it or pointing at it.\nBring this menu in front of you: open your palm facing up, or hold the stylus front button with nothing to grab.", true))
 	_header(p, "Display")
 	_slider_row(p, "Menu size", 0.7, 1.6, "ui_scale", 0.05, func(v: float): return "%d %%" % int(v * 100.0))
 
@@ -897,6 +949,17 @@ func _selection_action(what: String) -> void:
 
 # ------------------------------------------------------------------------------------------------ state
 
+## Quit needs two presses (a stray pinch must not close the app); the document is saved first.
+func _on_quit() -> void:
+	if _quit_armed <= 0.0:
+		_quit_armed = 3.0
+		_quit_btn.text = "Sure?"
+		return
+	if board != null and board.doc != null:
+		board.flush_save()
+	get_tree().quit()
+
+
 func show_toast(text: String) -> void:
 	if _toast_label == null:
 		return
@@ -910,7 +973,7 @@ func _refresh_dynamic() -> void:
 		return
 	_title.text = board.doc.name
 	var room := board.doc.room(board.current_room)
-	_status.text = str(room.get("name", "no room")) if board.room_state == "found" else ("searching..." if board.room_state == "searching" else board.room_state.replace("_", " "))
+	_status.text = str(room.get("name", "no room")) if board.room_state == "found" or board.room_state == "assumed" else ("searching..." if board.room_state == "searching" else board.room_state.replace("_", " "))
 	_refresh_canvas_tab()
 	_refresh_docs_tab()
 	_refresh_rooms_tab()

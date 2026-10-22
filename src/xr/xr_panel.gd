@@ -7,8 +7,8 @@ extends Node3D
 ## Pokes and pinch rays arrive as pointer events and become mouse events, so every Control works unchanged. A press inside a scrolling
 ## list is held back until it is known whether it is a tap (click) or a drag (scroll).
 
-const SCROLL_DEADZONE := 14.0
-const HANDLE_Y := 0.03
+const SCROLL_DEADZONE := InputTuning.SCROLL_DEADZONE
+const HANDLE_Y := InputTuning.HANDLE_Y
 
 var widget: Control
 var viewport: SubViewport
@@ -209,7 +209,7 @@ func pointer_move(uv: Vector2) -> void:
 		if not _scrolling:
 			if absf(d.y) > SCROLL_DEADZONE and absf(d.y) >= absf(d.x):
 				_scrolling = true
-			elif absf(d.x) > SCROLL_DEADZONE * 1.6:
+			elif absf(d.x) > SCROLL_DEADZONE * InputTuning.SCROLL_SIDE:
 				_flush_press()
 				_push_motion(uv)
 				return
