@@ -193,6 +193,13 @@ static func draw(ci: CanvasItem, id: String, r: Rect2, col: Color) -> void:
 				var rad2 := 0.15 if k % 2 == 0 else 0.045
 				small_spark.append(P.call(0.78 + cos(ang2) * rad2, 0.2 + sin(ang2) * rad2))
 			ci.draw_colored_polygon(small_spark, col)
+		"desk":
+			# a desk top in perspective with the stylus nib touching it
+			ci.draw_polyline(PackedVector2Array([P.call(0.08, 0.7), P.call(0.28, 0.5), P.call(0.92, 0.5), P.call(0.72, 0.7), P.call(0.08, 0.7)]), col, w, true)
+			ci.draw_line(P.call(0.12, 0.72), P.call(0.12, 0.9), col, w, true)
+			ci.draw_line(P.call(0.68, 0.72), P.call(0.68, 0.9), col, w, true)
+			ci.draw_line(P.call(0.66, 0.1), P.call(0.5, 0.5), col, w * 1.8, true)
+			ci.draw_circle(P.call(0.5, 0.58), s * 0.055, col)
 		"pin":
 			ci.draw_circle(P.call(0.5, 0.36), s * 0.2, col)
 			ci.draw_colored_polygon(PackedVector2Array([P.call(0.4, 0.5), P.call(0.6, 0.5), P.call(0.5, 0.88)]), col)

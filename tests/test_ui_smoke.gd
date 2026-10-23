@@ -69,6 +69,7 @@ func _ready() -> void:
 		await _frames(2)
 		_move_sliders(ui.popover)
 		board.cancel_place()
+		board.surface.cancel()
 		board.speech.cancel()
 	ui.close_popover()
 	# every Home tab
@@ -86,6 +87,7 @@ func _ready() -> void:
 			ui.home.snap_fade())
 		_move_sliders(ui.home)
 		board.cancel_place()
+		board.surface.cancel()
 		if board.share.is_running():
 			board.share.stop()
 		if board.doc == null or board.doc.id != "ui-smoke":
@@ -107,6 +109,7 @@ func _ready() -> void:
 
 	await _selection_bar()
 	await _flow_rules()
+	await _desk_card()
 	await _chat()
 
 	# Quit needs a second press: the first only arms it (and times out again)
@@ -244,6 +247,49 @@ func _flow_rules() -> void:
 	t.check(ui.back() and ui.popover_id == "" and ui.is_side_open("home"), "back closes the popover first")
 	t.check(ui.back() and not ui.is_side_open("home"), "...then the side panel")
 	App.put("tool", "draw")
+
+
+## Finding the desk: Add offers it, its card stands on the dock with what is still needed, Done waits for enough points, Esc cancels.
+func _desk_card() -> void:
+	ui.open_popover("add")
+	await _frames(3)
+	var desk_btn := _btn(ui.popover, "On my desk")
+	t.check(desk_btn != null, "Add offers a canvas on my desk")
+	desk_btn.pressed.emit()
+	await _frames(int(UiShell.CALM_S * 60.0) + 6)
+	t.check(board.surface.finding() and ui.popover_id == "", "pressing it starts the search and closes the options")
+	t.check(ui.surface_card.visible and ui.surface_card.is_shown(), "the desk card shows")
+	var done := _btn(ui.surface_card, "Done")
+	t.check(done != null and done.disabled, "Done waits until the desk is found")
+	t.check(_label(ui.surface_card, "Press the stylus tip on your desk. It feels the surface when it touches.") != null, "the card says what to do first")
+	var fn: FrameNode = board.frame_nodes[board.doc.frames.keys()[0]]
+	var base := fn.global_position + Vector3(0, -0.4, 0.3)
+	for p in [Vector3(-0.2, 0, -0.1), Vector3(0.2, 0, 0.0), Vector3(0.0, 0, 0.2)]:
+		pen.tracked = true
+		pen.source = "stylus"
+		pen.tip = base + p
+		pen.contact = true
+		pen.down = true
+		for i in 10:
+			board.tick(pen, [], 0.016)
+		pen.contact = false
+		pen.down = false
+		board.tick(pen, [], 0.016)
+	await _frames(4)
+	t.eq(int(board.surface.status().points), 3, "(three presses)")
+	t.check(not done.disabled, "three spread presses and Done is ready")
+	ui.back()
+	await _frames(int(UiShell.CALM_S * 60.0) + 6)
+	t.check(not board.surface.finding() and not ui.surface_card.visible, "Esc cancels the search and the card goes")
+	# the same from Home > Canvases: a canvas can be laid on the desk and freed again
+	ui.show_home("canvas")
+	await _frames(4)
+	t.check(_tool(ui.home, "desk") != null, "Home > Canvases has a desk button for each canvas")
+	_tool(ui.home, "desk").pressed.emit()
+	t.check(board.surface.finding() and str(board.surface.calib.target) != "", "...which feels for the desk to lay that canvas on it")
+	board.surface.cancel()
+	ui.close_side("home")
+	await _frames(4)
 
 
 ## The assistant as a conversation: the setup card without a key, a message typed in the box and sent, the typing indicator, the

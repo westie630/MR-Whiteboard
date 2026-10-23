@@ -136,7 +136,7 @@ func refresh() -> void:
 	_room_chip.text = str(room.get("name", "")) if b.room_state in ["found", "assumed"] else ("Looking for the room..." if b.room_state == "searching" else "")
 	var sig := "%s|%s|%s|%s|%s|%d|%d|%s" % [tab, b.doc.id, b.doc.name, b.current_room, b.active_frame, b.doc.frames.size(), b.doc.rooms.size(), _confirm]
 	for f in b.doc.frames.values():
-		sig += "/" + (f as FrameData).name + str((f as FrameData).locked)
+		sig += "/" + (f as FrameData).name + str((f as FrameData).locked) + str((f as FrameData).surface)
 	if sig != _lists_sig:
 		_lists_sig = sig
 		_kit_dynamic_reset()
@@ -266,6 +266,10 @@ func _build_canvas(p: VBoxContainer) -> void:
 	var r := UiKit.hrow(p, 8)
 	r.add_child(UiKit.button("canvas", "New on a wall", func(): shell.board.begin_place("wall", Popover.SIZES[shell.canvas_size_idx][2]), 52.0))
 	r.add_child(UiKit.button("canvas", "New on a table", func(): shell.board.begin_place("table", Popover.SIZES[shell.canvas_size_idx][2]), 52.0))
+	var rd := UiKit.hrow(p, 8)
+	var desk := UiKit.button("desk", "New on my desk", func(): shell.board.surface.begin("", Popover.SIZES[shell.canvas_size_idx][2]), 52.0)
+	desk.tint = UITheme.DESK
+	rd.add_child(desk)
 	UiKit.header(p, "In this room")
 	_canvas_list = UiKit.vcol(p, 6)
 	UiKit.header(p, "Selected canvas")
@@ -293,6 +297,12 @@ func _refresh_canvas() -> void:
 			_lists_sig = "")
 		row.add_child(nb)
 		row.add_child(UiKit.tool("text", "Rename", func(): shell.ask_name("Rename canvas", fd.name, func(t: String): b.rename_frame(fid, t)), 52.0))
+		if fd.kind == FrameData.CANVAS:
+			var dk := UiKit.tool("desk", "Free it from the desk" if fd.surface else "Lay it on the desk: feel for the desk with the stylus tip",
+				func(): _toggle_desk(fid), 52.0)
+			dk.on = fd.surface
+			dk.accent = UITheme.DESK
+			row.add_child(dk)
 		var lk := UiKit.tool("lock", "Lock", func(): b.set_frame_prop(fid, "locked", not fd.locked), 52.0)
 		lk.on = fd.locked
 		row.add_child(lk)
@@ -322,10 +332,25 @@ func _refresh_canvas() -> void:
 	hb.add_child(UiKit.button("pin", "Bring to me", func(): _bring_to_me(aid), 52.0))
 
 
+## A canvas on the desk is let go of it; any other feels for the desk with the stylus tip and lies down on it.
+func _toggle_desk(frame_id: String) -> void:
+	var b: Board = shell.board
+	var fd: FrameData = b.doc.frames.get(frame_id)
+	if fd == null:
+		return
+	if fd.surface:
+		b.surface.release(frame_id)
+	else:
+		b.surface.begin(frame_id)
+
+
 func _bring_to_me(frame_id: String) -> void:
 	var b: Board = shell.board
 	var fd: FrameData = b.doc.frames.get(frame_id)
 	if fd == null:
+		return
+	if fd.surface:
+		b.toast.emit("That canvas lies on your desk: it stays there. Free it from the desk first.")
 		return
 	var h := b.head
 	var pos := h.origin + (-h.basis.z) * 0.9

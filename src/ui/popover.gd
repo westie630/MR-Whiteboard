@@ -217,6 +217,12 @@ func _build_add(p: VBoxContainer) -> void:
 	var r2 := UiKit.hrow(p, 8)
 	r2.add_child(UiKit.button("canvas", "On a wall", func(): _place("wall"), 64.0))
 	r2.add_child(UiKit.button("canvas", "On a table", func(): _place("table"), 64.0))
+	var rd := UiKit.hrow(p, 8)
+	var desk := UiKit.button("desk", "On my desk", func(): _find_desk(), 64.0)
+	desk.accent = UITheme.DESK
+	desk.tint = UITheme.DESK
+	rd.add_child(desk)
+	UiKit.note(p, "Press the stylus tip on your desk in a few places: the canvas then lies on it and can only slide, turn and scale along it.")
 	var r3 := UiKit.hrow(p, 8)
 	r3.add_child(UiKit.button("pin", "Bring the canvas to me", func():
 		shell.close_popover()
@@ -224,6 +230,11 @@ func _build_add(p: VBoxContainer) -> void:
 	UiKit.note(p, "Size of a new canvas (it grows as you draw past its edge):")
 	_kit.segmented(p, SIZES.map(func(s): return [SIZES.find(s), "%d × %d cm" % [int(s[2].x * 100), int(s[2].y * 100)]]),
 		func(): return shell.canvas_size_idx, func(v): shell.canvas_size_idx = int(v), 40.0)
+
+
+func _find_desk() -> void:
+	shell.close_popover()
+	shell.board.surface.begin("", SIZES[shell.canvas_size_idx][2])
 
 
 func _place(where: String) -> void:

@@ -5,6 +5,8 @@ extends Node
 ##   ink       words written with the pen: the chip offers to turn them into text
 ##   readings  ...converted: the other readings beside the new text
 ##   ai        the assistant answered with a drawing: the suggestion bar on the canvas, the assistant panel open
+##   desk      feeling for the desk: the mouse presses on the simulated table, the card shows the points and the fitted desk
+##   deskcanvas ...and Done: the canvas lies on the table with a stroke drawn on it
 
 class FakeInk extends InkRecognizer:
 	func name_of() -> String:
@@ -72,6 +74,8 @@ func _ready() -> void:
 			if show == "readings":
 				board.ink.accept_suggestion()
 				await _frames(60)
+		"desk", "deskcanvas":
+			await _desk(show == "deskcanvas")
 		"ai":
 			board.ai.client = FakeClient.new()
 			board.ai.set_key("anthropic", "sk-showcase-0000")
@@ -87,6 +91,60 @@ func _ready() -> void:
 	img.save_png(out)
 	print("saved ", out)
 	get_tree().quit()
+
+
+## The PC build's way of finding the desk: the mouse ray meets the simulated table, a held left button is the nib pressed on it.
+func _desk(finish: bool) -> void:
+	rig.camera.position = Vector3(1.4, 1.3, -0.4)
+	rig._yaw = -0.4636
+	rig._pitch = -0.62
+	rig._apply_look()
+	rig.ui.close_side("home")
+	rig.ui.close_side("assistant")
+	rig.ui.close_popover()
+	board.surface.begin("", Vector2(0.9, 0.6))
+	await _frames(10)
+	var c := rig.view_container.size * 0.5
+	for off in [Vector2(-250, -30), Vector2(160, -70), Vector2(-60, 10), Vector2(80, -130), Vector2(-330, -110)]:
+		_mouse(c + off)
+		await _frames(2)
+		_button(c + off, true)
+		await _frames(14)
+		_button(c + off, false)
+		await _frames(3)
+	var st := board.surface.status()
+	print("points: ", board.surface.calib.get("points"))
+	print("points felt: ", st.points, "  ok: ", st.ok, "  rms mm: ", st.rms_mm, "  tilt deg: ", st.tilt_deg)
+	await _frames(20)
+	if finish:
+		board.surface.finish()
+		await _frames(30)
+		var f: FrameNode = board.frame_nodes[board.active_frame]
+		_mouse(c + Vector2(-120, 0))
+		await _frames(2)
+		_button(c + Vector2(-120, 0), true)
+		for i in 40:
+			_mouse(c + Vector2(-120 + i * 6, sin(i * 0.35) * 30))
+			await _frames(1)
+		_button(c + Vector2(240, 0), false)
+		await _frames(60)
+		print("desk canvas: ", f.data.name, " surface=", f.data.surface, " items=", board.doc.items_of(f.data.id).size())
+
+
+func _mouse(p: Vector2) -> void:
+	var e := InputEventMouseMotion.new()
+	e.position = p
+	e.global_position = p
+	Input.parse_input_event(e)
+
+
+func _button(p: Vector2, pressed: bool) -> void:
+	var e := InputEventMouseButton.new()
+	e.button_index = MOUSE_BUTTON_LEFT
+	e.pressed = pressed
+	e.position = p
+	e.global_position = p
+	Input.parse_input_event(e)
 
 
 func _frames(n: int) -> void:

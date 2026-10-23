@@ -18,6 +18,7 @@ const TEXT_FAINT := Color(0.62, 0.69, 0.8, 0.6)
 const WARN := Color("#ffd166")
 const BAD := Color("#ef476f")
 const GOOD := Color("#06d6a0")
+const DESK := Color("#ffb454")             # the desk's colour: a canvas bound to a physical surface, and the points felt for it
 const AI := Color("#b69cff")               # the assistant's colour (its suggestions are outlined in violet on the canvas too)
 
 const GLASS := Color(0.07, 0.085, 0.115, 0.93)       # floating surfaces

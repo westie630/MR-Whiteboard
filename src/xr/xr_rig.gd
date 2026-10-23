@@ -294,8 +294,8 @@ func _place_ui(delta: float) -> void:
 	var d := panel.global_transform
 	var up := d.basis.y.normalized()
 	var dock_top := ui.dock.size.y * panel.mpp()
-	# a popover and the typing card stand on the dock (a popover over the button it came from)
-	for id in ["popover", "compose"]:
+	# a popover, the typing card and the desk card stand on the dock (a popover over the button it came from)
+	for id in ["popover", "compose", "surface"]:
 		var xp2: XrPanel = panels[id]
 		if not xp2.visible:
 			continue

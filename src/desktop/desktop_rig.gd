@@ -138,6 +138,10 @@ func _place_ui() -> void:
 	var cp := ui.compose
 	if cp.visible:
 		cp.position = Vector2((win.x - cp.size.x * sc) * 0.5, maxf(dock_top - 14.0 - cp.size.y * sc, MARGIN))
+	# the desk card keeps to the right, so the desk itself stays in view in the middle
+	var sf := ui.surface_card
+	if sf.visible:
+		sf.position = Vector2(win.x - MARGIN - sf.size.x * sc, maxf(dock_top - 14.0 - sf.size.y * sc, MARGIN))
 	# Home on the left, the assistant on the right, as tall as there is room above the dock
 	var avail := (dock_top - 2.0 * MARGIN) / sc
 	for sp in [ui.home, ui.assistant]:
@@ -351,6 +355,9 @@ func _key(k: InputEventKey) -> void:
 		KEY_C:
 			if not k.ctrl_pressed:
 				board.begin_place("wall", Vector2(1.2, 0.8))
+		KEY_F:
+			if not k.ctrl_pressed:
+				board.surface.begin("", Popover.SIZES[ui.canvas_size_idx][2])
 		KEY_1:
 			App.put("tool", "draw")
 		KEY_2:
@@ -434,9 +441,17 @@ func _update_pen() -> void:
 			if n.bounds().grow(0.6 / n.data.scale).has_point(Vector2(lp.x, lp.y)) and not n.data.locked:
 				best_t = t
 				tip = o + d * t
+	var feels := true
+	if board.surface.finding():
+		# feeling for the desk: the nib lands on the simulated room's tables and walls, and feels nothing in the air
+		var hit := _surface_hit(o, d)
+		feels = not hit.is_empty()
+		if feels:
+			tip = hit.point
 	pen.tip = tip
 	pen.dir = d
 	pen.down = _lmb and not Input.is_key_pressed(KEY_SHIFT)
+	pen.contact = pen.down and feels
 	pen.front = _lmb and Input.is_key_pressed(KEY_SHIFT)
 	pen.pressure = _pressure if (_lmb or _tablet) else 0.0
 	# the middle mouse button is a pinch on whatever canvas or sketch is under the pointer

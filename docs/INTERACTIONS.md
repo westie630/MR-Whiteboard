@@ -56,6 +56,7 @@ thing moves further than the hand by the ratio of its distance from the head to 
 | Tip pressure | `tip_force` | down at > 0.035, up at < 0.018 |
 | Middle button (pressure sensitive) | `middle_force` | down at > 0.09, up at < 0.05 |
 | **Pen down** | tip **or** middle | the two are OR-ed: the middle button *is* the nib to the app |
+| **Contact** (`pen.contact`) | tip only, same thresholds | the nib itself is pressed against something. Only this feels the desk (section 10.1): the middle button pressed in the air is not a surface |
 | Pressure value | `max(tip, mid) ^ 0.75` | applied only while down |
 | Front button | `front_click` | digital: **grab** |
 | Back button | `back_click` | digital: **undo** |
@@ -337,6 +338,35 @@ Dock: Add (+) > On a wall / On a table (or Home > Canvases). While placing, **th
 | Confirm | **pen-down** (a new press) **or `pinch_down` of any free hand** |
 | Cancel | stylus **back button** |
 
+### 10.1 The desk: a canvas on a physical surface
+
+Dock: Add (+) > **On my desk** (PC: **F**), or Home > Canvases > the desk button of an existing canvas ("lay it on the desk"; the same button frees it again).
+[SurfaceController](../src/board/surface_controller.gd), card: [SurfaceCard](../src/ui/surface_card.gd).
+
+**Finding it.** The stylus tip force sensor tells when the nib touches something. While the card is up (it stands on the dock; PC: right side), every press of the
+nib (`pen.contact`) is a point of the surface: a **tap** is one point (the average position while pressed; a press under 0.12 s counts on release), a **rub** adds one every 2 cm. An amber dot
+marks each point in the room, a plan on the card shows them and the area they span. A plane is fitted through all of them ([PlaneFit](../src/core/plane_fit.gd): least squares, so
+any number of points is used, and any tilt: a wall works too). **Done** is available when at least 3 points span 5 cm in both directions and lie flat within 8 mm rms; the card says what is missing
+("a few more points", "spread them out", "not flat enough") and shows how level the desk is. A ghost of the canvas shows on the fitted plane. While finding, the pen draws and grabs nothing. Back button, Esc or Cancel ends it.
+
+**The canvas.** It lies in the plane at the middle of the points, facing the side your head is on, its top pointing away from you (up on a wall), at the size chosen in Add (S / M / L; it grows as you draw).
+One undo step. It keeps a thin amber edge and "on the desk" in its title.
+
+**Bound to the surface.** Whatever carries it (a pinch, the stylus front button, two hands, Q / E and the wheel on the PC) works on the canvas as for any other; the Board then puts the result back on the
+surface (`FrameData.on_surface`, applied while it is carried and when it is let go): the origin slides to the nearest point of the plane, the canvas keeps facing along the plane's normal, the turn about the normal is kept, the
+**scale is free**. So it moves around the desk, turns on it and grows or shrinks on it, and never leaves it. A corner still changes its extent. "Bring the canvas to me" refuses it with a message; the Home button frees it first.
+
+**Following the desk.** Every touch of the nib on a desk canvas (within 4 cm of its plane, inside it) is a measurement, one per 3 cm of rubbing. After 4 new ones, the median height against the plane
+is checked: more than 4 mm off, and the canvas is **moved** onto the surface (a single press on a book does nothing, the median ignores it). When 12 or more measurements span 25 cm, the plane is **refitted**; a tilt between 0.5 and 8 degrees is adopted
+(the first guess from a few taps is a degree or so off; strokes across the canvas make it exact). These corrections are not undo steps (they are not edits) and make the anchor stale like any move.
+
+| Tunable | |
+|---|---|
+| `PlaneFit` | `MIN_POINTS` 3 · `MIN_SPAN` 5 cm · `MAX_RMS` 8 mm |
+| `SurfaceController` | `STEP` 2 cm · `TAP_S` 0.12 s · `NEAR` 4 cm · `TRACK_STEP` 3 cm · `TRACK_EVERY` 4 · `SHIFT_MIN` 4 mm · `TILT_MIN` 0.5° · `TILT_MAX` 8° · `TRACK_SPAN` 25 cm · `TRACK_MIN` 12 |
+
+PC: **F** starts it; the mouse ray lands on the simulated room's table top or wall (the nib feels nothing in the air) and the held left button is the nib pressed.
+
 ---
 
 ## 11. Feedback: what you see, hear and feel
@@ -389,6 +419,7 @@ All in [input_tuning.gd](../src/core/input_tuning.gd) (`InputTuning`). The scrip
 | Group | Constants |
 |---|---|
 | Pinch | `PINCH_ON` 0.9 · `PINCH_OFF` 0.6 · `CLOSE_START` 0.35 · `CLOSE_CANCEL` 0.2 · `RISE_STEP` 0.003 · `JOINT_ON` 22 mm · `JOINT_FAR` 65 mm · `LOST_GRACE` 0.15 s · `PINCH_HISTORY_S` 0.6 · `PALM_UP_Y` 0.6 · `AIM_DOT_PROFILE` 0 · `AIM_DOT_JOINT` 0.1 |
+| Desk | see 10.1: `PlaneFit` and `SurfaceController` constants (kept in those files: they are about measuring, not feel) |
 | Stylus | `TIP_ON` 0.035 · `TIP_OFF` 0.018 · `MID_ON` 0.09 · `MID_OFF` 0.05 · `AXIS_SAMPLES` 45 · `PRESSURE_EXP` 0.75 · `STYLUS_FILTER` (2.2, 45) |
 | Menu | `POKE_PRESS` 15 mm · `POKE_RELEASE` 30 mm · `POKE_BEHIND` 5 cm · `POKE_FRONT` 8 cm · `POKE_MARGIN` 1 cm · `MENU_RAY_REACH` 1.4 m · `HANDLE_Y` 3 cm · `HANDLE_NEAR` 7 cm · `HANDLE_RAY_R` 6 cm · `MENU_MAX_DIST` 2.5 m · `SCROLL_DEADZONE` 14 px · `SCROLL_SIDE` 1.6 · `GLOVES_OFF_NEAR` 0.2 m |
 | Bringing the menu | `SUMMON_HOLD_S` 0.6 s · `PALM_SUMMON_DIST` 0.7 m · `PALM_REARM_S` 2 s · `SUMMON_AHEAD` 0.55 · `SUMMON_RIGHT` 0 · `SUMMON_UP` -0.3 · `SUMMON_STYLUS_CANVAS` 0.14 m |
@@ -412,7 +443,7 @@ Settings that change behaviour (Home > Settings and the popovers): `stylus_hand`
 | Right button + mouse, WASD | look, walk |
 | Ctrl+Z / Ctrl+Y | undo / redo (the dock's buttons too; the back button has no key of its own) |
 | 1 to 5 | Pen, Shapes, Write, Select, Erase (the dock shows them in the order Pen, Write, Shapes, Select, Erase) |
-| C | place a canvas; T / Enter type text; B the brush; Tab hides the interface; Esc closes the topmost panel |
+| C | place a canvas; F find the desk (section 10.1); T / Enter type text; B the brush; Tab hides the interface; Esc closes the topmost panel |
 
 On the PC the panels float over the 3D view the same way (dock at the bottom, Home left, Assistant right, the canvas bars projected onto
 their spot on the screen); the dock and the side panels have a grip (the dotted handle) to drag them, remembered in `panel_pos`.

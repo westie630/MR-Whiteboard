@@ -17,6 +17,7 @@ An infinite whiteboard for the **Meta Quest 3** and the **Logitech MX Ink** styl
 |---|---|
 | **Interface** | Out of the way of the work: a slim **dock** of tools low in front of you, and small panels that appear only where they are needed: a tool's options above it, a **bar above the selection** with what fits it (text styles, recolour, to text, label, fill, order), Home and the assistant beside the dock. Everything fades back while you draw. See [The interface](#the-interface). |
 | **Canvases** | Place a canvas on a wall, on a table or in mid-air whenever you want. The grid fades in around the stylus, fades out as you walk away and fades at the edges. Draw past the edge and the canvas grows: it is infinite. |
+| **Desk canvas** | **Add > On my desk**: press the stylus tip on your desk in a few places (or rub it across): the tip's pressure sensor finds the surface and a canvas lies on it. It can be moved around the desk, turned and scaled, and never leaves the surface; touching the desk while you draw keeps it exact. Works on any flat surface, a wall too. See [The desk](#the-desk). |
 | **Rooms and anchors** | Every canvas and sketch is fixed in the real room by a Meta **spatial anchor**. The app recognises the room you are in by its anchors, shows only that room's content, and offers to create a room when you walk into a new one. Moving something and letting go fixes it at its new place with a new anchor. |
 | **Documents** | Several documents, listed and opened like Word documents, with auto-save. Duplicate, rename, delete. |
 | **Brushes** | Pen, marker, highlighter, pencil, calligraphy, neon, spray, dashed. 14 colours plus a full colour picker, width 1-40 mm, pressure sensitive. |
@@ -40,7 +41,7 @@ pwsh tools/pc.ps1 -Demo                          # opens a demo document
 pwsh tools/pc.ps1 -Export                        # builds build/pc/MRWhiteboard.exe
 ```
 
-Controls (the interface floats over the view; **Tab** hides it, **Esc** closes the topmost panel): **left mouse** draws on the canvas under the pointer, **Shift+left** is the stylus front button (grab: an item, the bar under a canvas, a corner, or empty canvas to carry it), **middle mouse** pinches (carry a canvas, wheel scales it, Q/E turn it), **right mouse** looks around, **WASD** walks, **Ctrl+Z / Ctrl+Y** undo / redo, **C** places a canvas, **1-5** switch tools, **B** the brush, **T** type, **Delete**, **Ctrl+D**, **Ctrl+S**. A graphics tablet gives pressure. Drag the dock, Home or the assistant by their dotted grip.
+Controls (the interface floats over the view; **Tab** hides it, **Esc** closes the topmost panel): **left mouse** draws on the canvas under the pointer, **Shift+left** is the stylus front button (grab: an item, the bar under a canvas, a corner, or empty canvas to carry it), **middle mouse** pinches (carry a canvas, wheel scales it, Q/E turn it), **right mouse** looks around, **WASD** walks, **Ctrl+Z / Ctrl+Y** undo / redo, **C** places a canvas, **F** finds the desk (the mouse lands on the simulated table), **1-5** switch tools, **B** the brush, **T** type, **Delete**, **Ctrl+D**, **Ctrl+S**. A graphics tablet gives pressure. Drag the dock, Home or the assistant by their dotted grip.
 
 ### On the Quest 3
 
@@ -92,6 +93,7 @@ The work is the canvas, so the interface stays small and comes to where it is ne
 | **Popovers** | above the dock button they belong to: **Brush** (brush, colour, any colour, width with a live sample, snapping), **Shapes** (stencils, fill, sticky connectors), **Handwriting** (text style, convert after a pause, language, what the pen does with writing), **Add**. Drawing on a canvas closes them. |
 | **Selection bar** | above what is selected, on the canvas: recolour · text: H1 / H2 / H3 / Body / Small, bold, italic, weight, edit, and the other readings of converted handwriting · ink: to text · a box: label, fill · duplicate, front, back. Undo, redo and delete stay the round buttons beside the selection box. |
 | **Ink chip** | beside handwriting: *Convert to text* when the pen notices words, the other readings right after a conversion. |
+| **Desk card** | while the stylus feels for the desk: a plan of the points, what is still needed, how level and flat the desk is, Done / Start over / Cancel (stands on the dock; on the PC at the right). |
 | **Suggestion bar** | inside the top of a canvas the assistant drew on: Accept, Discard, Hide. |
 | **Home** | Documents (new, duplicate, save, export, all documents), Canvases, Rooms, Share (the web page), Settings, Quit. |
 | **Assistant** | the conversation about the canvas in front of you (see [AI assistant](#ai-assistant)). |
@@ -106,6 +108,12 @@ by side in reading order, curvy; a line much longer than the letters, a loop rou
 drawing. In Write mode, an underline, a strike, a box round the words or an arrow (shaft and head) is kept as a drawing instead of being
 read. With the Pen, words are watched; once the pen rests, a chip offers to turn them into text (Handwriting popover: *Offer to convert*,
 *Convert* by itself, or *Off*); *Keep as drawing* is remembered. No ink is sent anywhere until you convert.
+
+## The desk
+
+A canvas that lies on a real surface. **Add (+) > On my desk** (or **Home > Canvases** and the desk button of a canvas you already have; the same button frees it again): the card that appears asks you to press the **tip of the stylus** on the desk. The tip force sensor knows when the nib touches something, so each press is a point of the surface; a quick tap is one point, a rub across the desk is many. The points appear in the room, a plan on the card shows how far they spread, and a plane is fitted through them (any tilt: a wall works as well). **Done** is ready when the points are spread out and flat enough (the card says what is missing and how level the desk is); the canvas then lies exactly on the surface, facing you.
+
+The canvas is bound to the surface. Carry it (pinch, the stylus front button, two hands), turn it, scale it: it slides, turns and grows on the desk but never leaves its plane, whatever your hand does in the air. A corner still changes its extent; **Home > Canvases > desk button** frees it again, and *Bring the canvas to me* leaves it alone. While you draw on it, every touch of the nib is another measurement: if the headset's idea of the desk drifts (or the first few taps were a degree out) the canvas follows the real surface. A thin amber edge and "on the desk" in its title mark it. How it works, with every number: [docs/INTERACTIONS.md](docs/INTERACTIONS.md) section 10.1.
 
 ## Handwriting recognition
 
@@ -173,16 +181,16 @@ Documents are JSON (`.mrw`) in the app's data folder (`user://docs`): plain text
 ## How it is built
 
 ```
-src/core/      document model (Document, FrameData, Item), History (undo/redo), DocStore, shape library (Shapes),
+src/core/      document model (Document, FrameData, Item), History (undo/redo), DocStore, shape library (Shapes), PlaneFit (a plane through the points the nib felt),
                ShapeRecognizer, StrokeMesher, Brushes, SvgExport, Exporter, SvgImport, ExportServer + WebPages + WebAssets (the Wi-Fi web page), TextLayout,
                InputTuning (every number that decides how hands, stylus and menu feel)
-src/board/     Board (the world: rooms, anchors, frames, selection), PenController, HandController, InkController, TextController, Shortcuts,
+src/board/     Board (the world: rooms, anchors, frames, selection), SurfaceController (the desk), PenController, HandController, InkController, TextController, Shortcuts,
                AiController (the AI assistant: asking, notes, suggestion layers), FrameNode / ItemView (3D views), LiveStroke, AnchorService (+ SimAnchors for the PC)
 src/ai/        LlmApi (Claude / OpenAI / MiniMax requests and answers, model lists, thinking levels), LlmClient (HTTP), CanvasBrief (a canvas as JSON + picture),
                AiPrompts (the system prompt and the requests), AiReply (an answer into items)
 src/xr/        XrRig, StylusInput, HandInput, HandCursor, Feedback (click sounds), MetaAnchors, MetaScene, XrPanel (a panel of the interface in the room)
 src/desktop/   DesktopRig (the PC build)
-src/ui/        UiShell (which panel shows when) and the panels: Dock, Popover, ContextBar, InkChip, SuggestionBar, HomePanel, AssistantPanel,
+src/ui/        UiShell (which panel shows when) and the panels: Dock, Popover, ContextBar, InkChip, SuggestionBar, SurfaceCard, HomePanel, AssistantPanel,
                ComposePanel, ToastView (all FloatPanel); the vector-drawn controls (Btn, Switch, FlatSlider, HsvPicker, InkField, VKeyboard,
                TextEntry, Icons, UiKit, UITheme)
 src/ink/       InkRecognizer interface and GoogleInk; WritingDetector (writing or drawing, from the shape of the ink)
@@ -205,7 +213,7 @@ Ideas worth knowing:
 pwsh tests/run_all.ps1
 ```
 
-Covers the shape recogniser (noisy synthetic strokes), the document model, save / load, undo, SVG export, the Wi-Fi web page (access code, pages, zips, delete / rename / upload through a real board with undo, saved files, answers over a real local connection, the live view's change feed and picture cache), SVG import (shapes, curves, arcs, text, style sheets, transforms, limits), a simulated pen driving the whole board (draw, snap, erase, select, glued connectors, rooms, anchors, hands), the interface (every button of every panel, the flow rules: fading while drawing, popovers closing, the selection bar's edits, the assistant's conversation; pointer mapping at 2x scale and see-through margins; several panels in the headset), handwriting predicted (words against drawings, marks in Write mode, the pen's offer, readings), the handwriting service, speech to text (recorder, Wit.ai answer parser, text placement), and typing (on-screen and physical keys, new / edited / labelled text, names), and the AI assistant without the network (each provider's model list, thinking levels, request and answer formats and errors; the canvas description and picture; answers turned into glued shapes, text, strokes, changes and removals; notes, the suggestion layer, accept / discard / undo, its file, and the web page's key handling). `tools/dev/render_demo.tscn` and `--screenshot` render real frames for checking by eye.
+Covers the shape recogniser (noisy synthetic strokes), the document model, save / load, undo, SVG export, the Wi-Fi web page (access code, pages, zips, delete / rename / upload through a real board with undo, saved files, answers over a real local connection, the live view's change feed and picture cache), SVG import (shapes, curves, arcs, text, style sheets, transforms, limits), a simulated pen driving the whole board (draw, snap, erase, select, glued connectors, rooms, anchors, hands), the interface (every button of every panel, the flow rules: fading while drawing, popovers closing, the selection bar's edits, the assistant's conversation; pointer mapping at 2x scale and see-through margins; several panels in the headset), handwriting predicted (words against drawings, marks in Write mode, the pen's offer, readings), the handwriting service, speech to text (recorder, Wit.ai answer parser, text placement), and typing (on-screen and physical keys, new / edited / labelled text, names), the desk (plane fit, finding it with the nib, staying on the surface when carried, turned and scaled, following it while drawing), and the AI assistant without the network (each provider's model list, thinking levels, request and answer formats and errors; the canvas description and picture; answers turned into glued shapes, text, strokes, changes and removals; notes, the suggestion layer, accept / discard / undo, its file, and the web page's key handling). `tools/dev/render_demo.tscn` and `--screenshot` render real frames for checking by eye.
 
 ## Status: what is verified and what needs your headset
 
@@ -222,6 +230,8 @@ Everything above runs and is tested on the PC. The headset-specific parts are wr
 7. **Web page**: switch it on in Docs and open the address on a PC. The server, the pages (driven in a real Chrome: sign in, upload, rename, delete, bulk delete, viewer, the live view following adds, renames and deletes) and the SVG import are tested on the PC, but not on a headset: whether Horizon OS lets the app listen, which address it reports, and how an imported canvas looks and feels in the room are unchecked. If the page does not load, check that both devices are on the same Wi-Fi without client isolation (guest networks often block it) and that the PC's firewall is not the problem.
 
 8. **AI assistant**: no real request has been made to Claude, OpenAI or MiniMax (no keys here). The requests follow each provider's documentation (Anthropic Messages API and Models API; OpenAI Responses API; MiniMax's OpenAI-compatible Chat Completions) and the answer readers are tested against sample answers, so the first real question per provider is the check: the log shows `[board] ...` with the provider's own error message if a field is refused. On the headset it needs internet, like handwriting.
+
+9. **Desk**: `[stylus] tip=... down=true` lines show the nib's force; press it on the desk and the card counts points. Whether a real desk gives enough force at `TIP_ON` (0.035) to register a light tap, and how much the nib position scatters on a real surface (`PlaneFit.MAX_RMS` 8 mm is a guess), are unchecked: the finding, the constraint and the tracking are tested on the PC with synthetic nib presses on a tilted plane, and the mouse-on-simulated-table path was rendered, but never felt on a headset.
 
 ## Credits
 

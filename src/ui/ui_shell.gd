@@ -9,6 +9,7 @@ extends Node
 ##   Home          documents, canvases, rooms, sharing, settings (opened from the dock)
 ##   Assistant     the AI assistant (opened from the dock)
 ##   Compose       the typing card with its keyboard
+##   SurfaceCard   finding the desk with the stylus nib (stands on the dock like the typing card)
 ##   Toast         short messages
 ## While the pen draws or a hand carries something, the surfaces fade back and the ones on the canvas step away, so the interface
 ## never covers the work. The shell owns no layout: the rig puts each surface on the screen (PC) or in the room (headset).
@@ -28,6 +29,7 @@ var suggestion: SuggestionBar
 var home: HomePanel
 var assistant: AssistantPanel
 var compose: ComposePanel
+var surface_card: SurfaceCard
 var toast: ToastView
 var panels: Array = []                     # every surface, back to front
 var popover_id := ""
@@ -51,8 +53,9 @@ func setup(b: Board) -> void:
 	home = HomePanel.new()
 	assistant = AssistantPanel.new()
 	compose = ComposePanel.new()
+	surface_card = SurfaceCard.new()
 	toast = ToastView.new()
-	panels = [context, ink_chip, suggestion, dock, home, assistant, popover, compose, toast]
+	panels = [context, ink_chip, suggestion, dock, home, assistant, popover, compose, surface_card, toast]
 	for p in panels:
 		(p as FloatPanel).shell = self
 	compose.entry.accepted.connect(_entry_ok)
@@ -101,6 +104,7 @@ func update(delta: float) -> void:
 		p.wanted = bool(_side[id]) and not hidden and has_doc
 		p.dim = 1.0 if (calm or not fade) else SIDE_FADED
 	compose.wanted = typing
+	surface_card.wanted = board.surface.finding() and not hidden and not typing
 	var on_canvas := not hidden and calm and has_doc and not typing
 	var sel_sig := ",".join(PackedStringArray(board.selection))
 	if sel_sig != _sel_sig:
@@ -213,6 +217,9 @@ func toggle_side(id: String) -> void:
 func back() -> bool:
 	if entry_open():
 		close_entry()
+		return true
+	if board.surface.finding():
+		board.surface.cancel()
 		return true
 	if popover_id != "":
 		close_popover()

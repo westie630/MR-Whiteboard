@@ -22,6 +22,12 @@ var grid := ""                            # "" = app default
 var backing := ""
 var locked := false
 var created := 0
+## A canvas on a physical surface (the desk), found with the stylus nib: it can slide and turn along that surface and be scaled, but never leaves it.
+var surface := false
+var plane_point := Vector3.ZERO           # a point of the surface (room space)
+var plane_normal := Vector3.UP            # its normal, towards the side the canvas faces (room space)
+var plane_error := 0.0                    # how far the points it was found from strayed from flat (rms, m)
+var plane_points := 0                     # how many points it stands on
 
 
 static func make(kind_id: String, room_id: String, pose: Transform3D, frame_name: String = "") -> FrameData:
@@ -38,7 +44,10 @@ static func make(kind_id: String, room_id: String, pose: Transform3D, frame_name
 func to_dict() -> Dictionary:
 	return {"id": id, "name": name, "kind": kind, "room": room, "xf": U.xf_to_array(xf), "scale": snappedf(scale, 1e-5),
 		"size": U.v2_to_array(size), "offset": U.v2_to_array(offset), "anchor": anchor, "anchor_xf": U.xf_to_array(anchor_xf), "grid": grid, "backing": backing,
-		"locked": locked, "created": created}
+		"locked": locked, "created": created, "surface": surface,
+		"plane": [snappedf(plane_point.x, 1e-5), snappedf(plane_point.y, 1e-5), snappedf(plane_point.z, 1e-5),
+			snappedf(plane_normal.x, 1e-6), snappedf(plane_normal.y, 1e-6), snappedf(plane_normal.z, 1e-6)],
+		"plane_error": snappedf(plane_error, 1e-5), "plane_points": plane_points}
 
 
 static func from_dict(d: Dictionary) -> FrameData:
@@ -57,11 +66,34 @@ static func from_dict(d: Dictionary) -> FrameData:
 	f.backing = str(d.get("backing", ""))
 	f.locked = bool(d.get("locked", false))
 	f.created = int(d.get("created", 0))
+	f.surface = bool(d.get("surface", false))
+	var pl: Variant = d.get("plane")
+	if pl is Array and (pl as Array).size() >= 6:
+		f.plane_point = Vector3(pl[0], pl[1], pl[2])
+		f.plane_normal = Vector3(pl[3], pl[4], pl[5]).normalized()
+	f.plane_error = float(d.get("plane_error", 0.0))
+	f.plane_points = int(d.get("plane_points", 0))
 	return f
 
 
 func copy() -> FrameData:
 	return FrameData.from_dict(to_dict())
+
+
+## A pose in room space put onto the surface: the origin slides to the nearest point of it, the canvas's z axis is the surface's
+## normal, and the turn about that normal is kept (the canvas's x axis, flattened onto the surface). Unchanged when not on a surface.
+func on_surface(pose: Transform3D) -> Transform3D:
+	if not surface:
+		return pose
+	var n := plane_normal.normalized()
+	var o := pose.origin - n * n.dot(pose.origin - plane_point)
+	var x := pose.basis.x - n * n.dot(pose.basis.x)
+	if x.length() < 0.2:                                # standing edge-on to the surface: turn by the y axis instead
+		x = pose.basis.y.cross(n)
+	if x.length() < 1e-4:
+		x = n.cross(Vector3.UP) if absf(n.dot(Vector3.UP)) < 0.99 else Vector3.RIGHT
+	x = x.normalized()
+	return Transform3D(Basis(x, n.cross(x), n), o)
 
 
 ## Has the frame moved since its anchor was created (so a new anchor is needed)?

@@ -24,6 +24,7 @@ var _axis_local := Vector3.ZERO            # the stylus's length, pointing out o
 var _axis_sum := Vector3.ZERO
 var _axis_n := 0
 var _down := false
+var _contact := false                      # the nib alone is pressed (with its own hysteresis)
 var _prev_active := ""
 var _pose_name := ""
 var _last_key := ""
@@ -80,9 +81,11 @@ func update() -> void:
 		pen.tracked = false
 		pen.source = "none"
 		pen.down = false
+		pen.contact = false
 		pen.front = false
 		pen.back = false
 		_down = false
+		_contact = false
 		return
 	var c2: XRController3D = _tracked_controller(choice)
 	active = choice
@@ -129,6 +132,11 @@ func update() -> void:
 	else:
 		_down = tip > TIP_ON or mid > MID_ON
 	pen.down = _down
+	if _contact:
+		_contact = tip > TIP_OFF
+	else:
+		_contact = tip > TIP_ON
+	pen.contact = _contact
 	pen.pressure = pow(clampf(maxf(tip, mid), 0.0, 1.0), InputTuning.PRESSURE_EXP) if _down else 0.0
 	pen.front = c2.is_button_pressed(&"front_click")
 	pen.back = c2.is_button_pressed(&"back_click")

@@ -5,7 +5,8 @@ extends Node3D
 
 const GRID_SHADER := "res://shaders/grid.gdshader"
 const MARGIN := 0.12                       # content margin that keeps the grid around what has been drawn (infinite canvas feel)
-const AI_COLOR := Color(0.72, 0.62, 1.0, 0.95)
+const DESK_COLOR := UITheme.DESK
+const AI_COLOR :=Color(0.72, 0.62, 1.0, 0.95)
 
 var data: FrameData
 var doc: Document
@@ -216,7 +217,7 @@ func set_hover(h: float) -> void:
 
 ## Rebuild what depends on the bounds: the grid quad, the title position and the overlay.
 func refresh_frame() -> void:
-	_title.text = data.name
+	_title.text = data.name + ("   on the desk" if data.surface else "")
 	if is_canvas:
 		var b := bounds()
 		(_grid.mesh as QuadMesh).size = b.size + Vector2(0.02, 0.02)
@@ -248,10 +249,15 @@ func _process(_delta: float) -> void:
 func _redraw_overlay() -> void:
 	_draw.clear()
 	if is_canvas:
+		if data.surface:
+			# a canvas on the desk keeps a thin amber edge: it is bound to that surface
+			_draw.rect(bounds(), 0.0016, Color(DESK_COLOR.r, DESK_COLOR.g, DESK_COLOR.b, 0.3 + 0.45 * clampf(hover, 0.0, 1.0)))
 		if hover > 0.05:
 			var b := bounds()
 			var a := clampf(hover, 0.0, 1.0)
 			var rail := Color(0.65, 1.0, 0.95, 0.5 * a)
+			if data.surface:
+				rail = Color(DESK_COLOR.r, DESK_COLOR.g, DESK_COLOR.b, 0.6 * a)
 			for c in [b.position, Vector2(b.end.x, b.position.y), b.end, Vector2(b.position.x, b.end.y)]:
 				_draw.disc(c, 0.014, rail)
 			_draw.disc(Vector2(b.get_center().x, b.position.y), 0.014, Color(rail.r, rail.g, rail.b, rail.a * 0.7))

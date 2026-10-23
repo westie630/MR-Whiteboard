@@ -36,6 +36,8 @@ static func edit_key(board: Board, k: InputEventKey) -> bool:
 		KEY_ESCAPE:
 			if not board.placing.is_empty():
 				board.cancel_place()
+			elif board.surface.finding():
+				board.surface.cancel()
 			else:
 				board.clear_selection()
 		_:

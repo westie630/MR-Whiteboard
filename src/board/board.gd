@@ -41,6 +41,7 @@ var ink: InkController
 var speech: SpeechController
 var texts: TextController
 var ai: AiController                       # the AI assistant (ask a language model about a canvas; its suggestion layers)
+var surface: SurfaceController             # the desk: canvases bound to a physical surface found with the stylus nib
 var share: ExportServer                   # the web server that lets a PC browser view / download the canvases (off until switched on)
 var head := Transform3D(Basis.IDENTITY, Vector3(0, 1.6, 0))
 
@@ -68,6 +69,7 @@ func _init() -> void:
 	speech = SpeechController.new(self)
 	texts = TextController.new(self)
 	ai = AiController.new(self)
+	surface = SurfaceController.new(self)
 	share = ExportServer.new()
 	share.name = "Share"
 	share.doc_source = func(): return doc
@@ -136,6 +138,7 @@ func close_document() -> void:
 	_pending.clear()
 	ink.reset()
 	cancel_place()
+	surface.reset()
 	_disconnect_doc()
 	ai.close_doc()
 	for a in _orphans:
@@ -574,6 +577,8 @@ func _place_frames(dt: float) -> void:
 		fn.visible = show and w != null
 		if fn.visible:
 			var xf := w as Transform3D
+			if f.surface and grabs.has(fid):
+				xf = _on_surface_world(f, xf)               # carried or turned, a desk canvas slides along its surface
 			var sc: float = (grabs[fid] as Dictionary).scale if grabs.has(fid) else f.scale
 			fn.transform = Transform3D(xf.basis.orthonormalized().scaled(Vector3.ONE * sc), xf.origin)
 
@@ -585,6 +590,14 @@ func visible_frames(kind: String = "") -> Array:
 		if n.visible and (kind == "" or n.data.kind == kind):
 			out.append(n)
 	return out
+
+
+## A world pose of a desk canvas put onto its surface (FrameData.on_surface works in room space).
+func _on_surface_world(f: FrameData, world_xf: Transform3D) -> Transform3D:
+	var rw: Variant = room_world(f.room)
+	if rw == null:
+		return world_xf
+	return (rw as Transform3D) * f.on_surface((rw as Transform3D).affine_inverse() * world_xf)
 
 
 ## Who is dragging the selection right now (the stylus's controller, or one of the hands'), for drawing the selection as it moves.
@@ -674,6 +687,7 @@ func end_grab(f: FrameData) -> void:
 	var after := f.copy()
 	var xf := g.xf as Transform3D
 	after.xf = (rw as Transform3D).affine_inverse() * xf if rw != null else xf
+	after.xf = after.on_surface(after.xf)
 	after.scale = clampf(float(g.scale), 0.15, 8.0)
 	grabs.erase(f.id)
 	_held.erase("frame:" + f.id)
@@ -694,6 +708,9 @@ func bring_canvas_here() -> void:
 	if f.locked:
 		toast.emit("That canvas is locked.")
 		return
+	if f.surface:
+		toast.emit("That canvas lies on your desk: it stays there. Free it in Home > Canvases to bring it.")
+		return
 	begin_grab(f)
 	if not grabs.has(f.id):
 		return
@@ -708,7 +725,8 @@ func bring_canvas_here() -> void:
 	toast.emit("Canvas brought within reach.")
 
 
-func add_frame(kind: String, world_xf: Transform3D, size: Vector2 = Vector2(1.2, 0.8)) -> FrameData:
+## `plane` ({point, normal, error, count}, world space) puts the new canvas on a physical surface (SurfaceController.finish).
+func add_frame(kind: String, world_xf: Transform3D, size: Vector2 = Vector2(1.2, 0.8), plane: Dictionary = {}) -> FrameData:
 	if doc == null:
 		return null
 	if current_room == "":
@@ -716,6 +734,9 @@ func add_frame(kind: String, world_xf: Transform3D, size: Vector2 = Vector2(1.2,
 	var rw: Variant = room_world(current_room)
 	var f := FrameData.make(kind, current_room, (rw as Transform3D).affine_inverse() * world_xf if rw != null else world_xf)
 	f.size = size
+	if not plane.is_empty():
+		surface.apply_plane(f, rw, plane)
+		f.xf = f.on_surface(f.xf)
 	history.do(History.op_frame_add(f))
 	var made: FrameData = doc.frames.get(f.id)
 	if kind == FrameData.CANVAS:
@@ -834,6 +855,7 @@ func clear_frame(frame_id: String) -> void:
 ## Start placing a new canvas: a ghost follows the pen / hand ray until it is confirmed (kind: "wall" | "table").
 func begin_place(kind: String = "wall", size: Vector2 = Vector2(1.2, 0.8)) -> void:
 	cancel_place()
+	surface.cancel()
 	var tmp := Document.create("ghost")
 	var gf := FrameData.make(FrameData.CANVAS, "", Transform3D.IDENTITY, "")
 	gf.size = size
@@ -1322,11 +1344,14 @@ func tick(pen: PenState, hands: Array, dt: float) -> void:
 	_reconcile(dt)
 	if not placing.is_empty():
 		_update_placing(pen, hands, dt)
+	elif surface.finding():
+		surface.update(pen, dt)                       # the nib is feeling for the desk: it neither draws nor grabs meanwhile
 	else:
 		# the front button grabs with the same rules as a pinch (HandController); while it holds something no stroke may start
 		hand_ctl.update(hands, dt, pen)
 		pen_ctl.blocked = hand_ctl.pen_busy()
 		pen_ctl.update(pen, dt)
+		surface.track(pen, dt)
 	_update_hover(pen, hands, dt)
 	ink.update(dt)
 	if _save_due >= 0.0:
