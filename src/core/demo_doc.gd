@@ -1,4 +1,4 @@
-class_name DemoDoc
+﻿class_name DemoDoc
 extends RefCounted
 ## A small demo document (flow diagram, every brush, text, shapes) used by the render check and for trying the app out.
 
@@ -39,6 +39,15 @@ static func build() -> Document:
 	var t := Item.make_text(canvas.id, "Hello, mixed reality!", Color.WHITE, 0.07)
 	t.center = Vector2(0.0, 0.52)
 	doc.add_item(t)
+	for row in 2:
+		for i in TextLayout.WEIGHTS.size():
+			var w: Array = TextLayout.WEIGHTS[i]
+			var sample := Item.make_text(canvas.id, str(w[1]), Color(0.9, 0.95, 1.0), 0.032)
+			sample.weight = int(w[0])
+			sample.italic = row == 1
+			sample.refit_text()
+			sample.center = Vector2(-0.6 + float(i) * 0.24, 0.68 - float(row) * 0.05)
+			doc.add_item(sample)
 	var cyl := Item.make_shape(canvas.id, "cyl", Color("#8ecae6"), 0.004)
 	cyl.center = Vector2(0.62, -0.25)
 	cyl.fill = Color(0.55, 0.8, 0.9, 0.2)

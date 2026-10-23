@@ -175,8 +175,16 @@ func controllers() -> Array:
 	return _pens.values()
 
 
-func _other(side: String) -> String:
-	return "left" if side == "right" else "right" if side == "left" else ""
+## Another pointer that is carrying a canvas (not changing its size by a corner) and may be joined by `side`: the same canvas as `fn`, or
+## any when `fn` is null. "" when there is none. A hand and the stylus's front button join each other like two hands.
+func _partner(side: String, fn: FrameNode) -> String:
+	for s in POINTERS:
+		if s == side or not _holds.has(s):
+			continue
+		var hold: Dictionary = _holds[s]
+		if int(hold.corner) < 0 and (fn == null or hold.fn == fn):
+			return s
+	return ""
 
 
 ## The stylus's front button is busy with a grab (or a drag of items): a stroke must not start under it.
@@ -345,8 +353,8 @@ func _press(h: HandInput) -> void:
 		return
 	# the other hand is carrying a canvas: this pinch takes hold of it too (turn and resize with both hands), wherever this ray is,
 	# unless it is on another canvas
-	var other_hold: Dictionary = _holds.get(_other(side), {})
-	if not other_hold.is_empty() and int(other_hold.corner) < 0 and (t.is_empty() or t.fn == other_hold.fn):
+	var other_hold: Dictionary = _holds.get(_partner(side, null), {})
+	if not other_hold.is_empty() and (t.is_empty() or t.fn == other_hold.fn):
 		print("[hand] %s pinch: second hand on the carried canvas: turn and resize" % side)
 		_begin_hold(h, other_hold.fn, -1, false)
 		return
@@ -358,8 +366,7 @@ func _press(h: HandInput) -> void:
 	_set_reach(side, direct)
 	_direct[side] = direct
 	var c := classify(fn, t.local as Vector3, side)
-	var other := _other(side)
-	var joins: bool = _holds.has(other) and (_holds[other] as Dictionary).fn == fn and KINDS_THAT_JOIN.has(str(c.kind))
+	var joins: bool = _partner(side, fn) != "" and KINDS_THAT_JOIN.has(str(c.kind))
 	var how := "touching" if direct else "pointing"
 	if joins or grab_anywhere or c.kind == "bar":
 		print("[hand] %s pinch on %s (%s): carrying the canvas%s" % [side, c.kind, how, " with both hands" if joins else ""])
@@ -461,12 +468,31 @@ func _release(side: String) -> void:
 		_tick(side, 0.2, 0.015)
 
 
+## The two pointers that turn and resize one canvas together: the pair already doing so while both still hold it, else the first two (of
+## left, right, stylus) that carry the same canvas. [] when there are not two.
+func _two_pair(seen: Dictionary) -> Array:
+	var carrying: Dictionary = {}                      # frame id -> sides carrying it
+	for s in POINTERS:
+		var hold: Dictionary = _holds.get(s, {})
+		if hold.is_empty() or int(hold.corner) >= 0 or not seen.has(s):
+			continue
+		var id: String = (hold.f as FrameData).id
+		if not carrying.has(id):
+			carrying[id] = []
+		(carrying[id] as Array).append(s)
+	if not _two.is_empty():
+		var kept: Array = _two.sides
+		if (carrying.get((_two.f as FrameData).id, []) as Array).has(kept[0]) and (carrying[(_two.f as FrameData).id] as Array).has(kept[1]):
+			return kept
+	for id in carrying:
+		if (carrying[id] as Array).size() >= 2:
+			return [carrying[id][0], carrying[id][1]]
+	return []
+
+
 func _update_two(seen: Dictionary) -> void:
-	var l: Dictionary = _holds.get("left", {})
-	var r: Dictionary = _holds.get("right", {})
-	var both: bool = not l.is_empty() and not r.is_empty() and l.f == r.f and int(l.corner) < 0 and int(r.corner) < 0 \
-		and seen.has("left") and seen.has("right")
-	if not both:
+	var pair := _two_pair(seen)
+	if pair.is_empty():
 		if not _two.is_empty():
 			_two = {}
 			# one hand let go of the turn / resize: the other carries on from where the frame is now
@@ -476,18 +502,18 @@ func _update_two(seen: Dictionary) -> void:
 					hd.origin0 = ((board.grabs[hd.f.id] as Dictionary).xf as Transform3D).origin
 					hd.p0 = hd.get("last", hd.p0)
 		return
-	var f: FrameData = l.f
+	var f: FrameData = (_holds[pair[0]] as Dictionary).f
 	if not board.grabs.has(f.id):
 		return
-	var a := (seen["left"] as HandInput).pinch_point
-	var b := (seen["right"] as HandInput).pinch_point
+	var a := (seen[pair[0]] as HandInput).pinch_point
+	var b := (seen[pair[1]] as HandInput).pinch_point
 	var g: Dictionary = board.grabs[f.id]
 	if _two.is_empty():
 		var d := a.distance_to(b)
 		if d < InputTuning.TWO_HAND_MIN:
 			return
 		var v := b - a
-		_two = {"f": f, "d0": d, "mid0": (a + b) * 0.5, "yaw0": atan2(v.x, v.z), "scale0": float(g.scale), "basis0": (g.xf as Transform3D).basis, "origin0": (g.xf as Transform3D).origin}
+		_two = {"f": f, "sides": pair, "d0": d, "mid0": (a + b) * 0.5, "yaw0": atan2(v.x, v.z), "scale0": float(g.scale), "basis0": (g.xf as Transform3D).basis, "origin0": (g.xf as Transform3D).origin}
 		return
 	var mid := (a + b) * 0.5
 	var v2 := b - a

@@ -1,7 +1,8 @@
 extends Node3D
 ## Entry point. In the headset (OpenXR started by the engine on Android) the XR rig runs; on the PC the desktop rig does.
 ## Development switches (after `--`): --demo  open the demo document;  --screenshot=PATH [--tab=NAME] [--type] [--frames=N] [--cam=x,y,z,yaw,pitch]
-## saves a picture after N frames and quits.  --share  starts the web server for the canvases (as the Docs tab's switch does); --share=nopin leaves out the access code (for scripts).
+## saves a picture after N frames and quits (--tab: brush, shapes, write, add, ai, docs, canvas, rooms, share, settings; --select=text|shape|stroke
+## selects the first such item first).  --share  starts the web server for the canvases (as the Docs tab's switch does); --share=nopin leaves out the access code (for scripts).
 
 var board: Board
 var rig: Node
@@ -78,10 +79,8 @@ func _open_document(args: Dictionary) -> void:
 
 
 func _screenshot_later(args: Dictionary) -> void:
-	if args.has("tab"):
-		App.put("menu_tab", str(args.tab))
-		if rig is DesktopRig and (rig as DesktopRig).menu != null:
-			(rig as DesktopRig).menu._select_tab(str(args.tab))
+	if args.has("tab") and rig is DesktopRig:
+		_show_tab((rig as DesktopRig).ui, str(args.tab))
 	if args.has("cam") and rig is DesktopRig:
 		var c := String(args.cam).split(",")
 		var cam := (rig as DesktopRig).camera
@@ -94,10 +93,36 @@ func _screenshot_later(args: Dictionary) -> void:
 	for i in frames:
 		await get_tree().process_frame
 		if i == frames / 2 and args.has("type") and rig is DesktopRig:
-			(rig as DesktopRig).menu.open_text_entry()
+			(rig as DesktopRig).ui.open_text_entry()
+		if i == frames / 3 and args.has("select"):
+			_select_kind(str(args.select))
 	var img := get_viewport().get_texture().get_image()
 	var path := String(args.screenshot)
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	img.save_png(path)
 	print("saved ", path)
 	get_tree().quit()
+
+
+func _show_tab(ui: UiShell, tab: String) -> void:
+	match tab:
+		"draw", "brush":
+			ui.open_popover("brush")
+		"shapes", "write", "add":
+			ui.open_popover(tab)
+		"ai":
+			ui.open_side("assistant")
+		"more":
+			ui.show_home("settings")
+		_:
+			ui.show_home(tab)
+
+
+func _select_kind(kind: String) -> void:
+	for it in board.doc.items.values():
+		var item: Item = it
+		var k := "text" if item.kind == Item.TEXT else ("stroke" if item.kind == Item.STROKE else "shape")
+		if k == kind and board.doc.frames.has(item.frame):
+			App.put("tool", "select")
+			board.select_items([item.id], item.frame)
+			return

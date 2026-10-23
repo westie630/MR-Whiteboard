@@ -10,10 +10,15 @@ extends Node
 ##   GET  /all  /all.zip      the whole document                       /zip?ids=a,b,c     chosen canvases as a zip
 ##   GET  /svg/<canvas>.svg   the SVG itself (?dl=1 downloads it; ?bg=white|dark|none and ?grid=1 set how it looks)
 ##   GET  /files/<name>       a file saved on the headset by the app's Export buttons
-##   POST /api/delete         {ids: [...]}          delete canvases (undoable in the headset)
+##   GET  /live               the live view: every canvas of the open document, redrawn as the headset changes it (read-only, many viewers)
+##   GET  /api/live?since=    what the live view polls: the document's canvases with a version each, only when something changed
+##   POST /api/delete        {ids: [...]}          delete canvases (undoable in the headset)
 ##   POST /api/rename         {id, name}            rename a canvas
 ##   POST /api/upload?name=   the raw .svg          import it as a new canvas, as shapes, strokes and text that can be edited
 ##   POST /api/files/delete   {names: [...]}        delete saved files
+##   GET  /ai                 the AI assistant: API keys, models and thinking levels, asking about a canvas, its suggestions
+##   GET  /api/ai/state       what the AI page shows (keys only as their last four characters)
+##   POST /api/ai/<command>   key | select | refresh | ask | accept | discard | show | forget  (see AiController.api)
 ##
 ## It listens only while it is switched on. Because it can change things, every page needs the 6-digit access code shown in the
 ## headset (a new one each time it is switched on; a wrong code five times in a row locks that address for a minute), and every
@@ -34,6 +39,7 @@ const COOKIE := "mrw_session"
 const SESSION_MS := 8 * 3600 * 1000
 const MAX_FAILS := 5
 const LOCK_MS := 60 * 1000
+const LIVE_CACHE := 96                    # pictures kept for the live view
 const FILE_EXTS := ["svg", "glb", "mrw"]
 const FILE_TYPES := {"svg": "image/svg+xml", "glb": "model/gltf-binary", "mrw": "application/json"}
 
@@ -42,6 +48,9 @@ var room_source := Callable()             # -> String: the room the viewer is in
 var delete_canvas := Callable()           # (frame id): removes a canvas (the Board does it as an undoable step)
 var rename_canvas := Callable()           # (frame id, name)
 var import_svg := Callable()              # (svg text, file name) -> {ok, message, id?, name?, count?}
+var active_source := Callable()           # -> String: the canvas drawn on last (the live view can follow it)
+var backing_source := Callable()          # -> String: the backing canvases have unless they say otherwise (none | glass | dark | white)
+var ai_api := Callable()                  # (command, data) -> Dictionary: the AI assistant's page (AiController.api)
 var require_pin := true
 var files_dir := ""                       # where saved exports are listed from ("" = the app's export folder)
 var pin := ""                             # the access code while running
@@ -52,6 +61,16 @@ var _tcp: TCPServer
 var _clients: Array = []                  # {peer, inbuf, outbuf, sent, age, replied, hdr, scan, need}
 var _sessions := {}                       # token -> expiry (ticks, ms)
 var _fails := {}                          # address -> {n, until}
+
+# What the live view needs: which canvas changed when. Kept from the document's own signals while the server is asked about it.
+var _watched: Document
+var _epoch := int(Time.get_unix_time_from_system() * 1000.0)   # new each time the server starts: versions never repeat across runs
+var _seq := 0                             # counts every change
+var _base := 0                            # version of a canvas nobody changed since the document was first looked at
+var _frame_rev := {}                      # canvas id -> _seq at its last change
+var _item_frame := {}                     # item id -> the canvas it was on (an item can move to another canvas)
+var _dims := {}                           # canvas id -> {rev, items, w, h}
+var _svg_cache := {}                      # "canvas|background|grid" -> {rev, bytes}
 
 
 func _ready() -> void:
@@ -73,6 +92,7 @@ func start(preferred: int = DEFAULT_PORT) -> bool:
 	for i in PORT_TRIES:
 		if tcp.listen(preferred + i) == OK:
 			_tcp = tcp
+			_epoch = int(Time.get_unix_time_from_system() * 1000.0)
 			port = preferred + i
 			pin = "%06d" % (Crypto.new().generate_random_bytes(4).decode_u32(0) % 1000000)
 			_sessions.clear()
@@ -94,6 +114,7 @@ func stop() -> void:
 	port = 0
 	pin = ""
 	_sessions.clear()
+	_unwatch()
 	set_process(false)
 	if was:
 		state_changed.emit()
@@ -365,7 +386,10 @@ func route(target: String) -> Dictionary:
 	path = path.uri_decode()
 	var doc: Document = doc_source.call() if doc_source.is_valid() else null
 	if doc == null:
+		if path.begins_with("/api/"):
+			return _json(503, {"ok": false, "message": "No document is open in the app."})
 		return _html(503, WebPages.message("No document", "No document is open in the app."))
+	_watch(doc)
 	var bg := str(query.get("bg", "white"))
 	if not BACKGROUNDS.has(bg):
 		bg = "white"
@@ -374,6 +398,16 @@ func route(target: String) -> Dictionary:
 		return _html(200, WebPages.dashboard(_snapshot(doc), _export_files()))
 	if path == "/api/rev":
 		return _json(200, {"ok": true})
+	if path == "/live":
+		return _html(200, WebPages.live(doc.name))
+	if path == "/ai":
+		return _html(200, WebPages.ai(doc.name))
+	if path == "/api/ai/state":
+		if not ai_api.is_valid():
+			return _json_plain(501, {"ok": false, "message": "The assistant is not available."})
+		return _json_plain(200, ai_api.call("state", {}))
+	if path == "/api/live":
+		return _json_plain(200, _live(doc, str(query.get("since", ""))))
 	if path == "/all":
 		return _gallery(doc, "")
 	if path == "/all.zip":
@@ -394,6 +428,9 @@ func route(target: String) -> Dictionary:
 		var fid := path.substr(5).trim_suffix(".svg")
 		if not _is_canvas(doc, fid):
 			return _html(404, WebPages.message("Not found", "There is no such canvas."))
+		if query.has("v") and query.get("dl", "") != "1":
+			# the live view: ?v= is the canvas version the page was told about; one drawing of it serves every viewer
+			return {"status": 200, "type": "image/svg+xml; charset=utf-8", "body": _live_svg(doc, fid, bg, opts), "cache": "private, max-age=600"}
 		var res := {"status": 200, "type": "image/svg+xml; charset=utf-8", "body": SvgExport.canvas(doc, fid, opts).to_utf8_buffer()}
 		if query.get("dl", "") == "1":
 			res["download"] = "%s.svg" % DocStore.safe_name((doc.frames[fid] as FrameData).name)
@@ -486,19 +523,24 @@ func _snapshot(doc: Document) -> Dictionary:
 		for f in g.frames:
 			var fd: FrameData = f
 			var list := doc.items_of(fd.id)
-			var bb := fd.size
-			if not list.is_empty():
-				var r := Rect2()
-				var first := true
-				for it in list:
-					var ib: Rect2 = (it as Item).bounds()
-					r = ib if first else r.merge(ib)
-					first = false
-				bb = r.size * fd.scale
+			var bb := _extent(fd, list)
 			frames.append({"id": fd.id, "name": fd.name, "items": list.size(), "w": bb.x, "h": bb.y})
 		total += frames.size()
 		groups.append({"id": g.id, "name": g.name, "here": g.here, "frames": frames})
 	return {"doc": doc.name, "rev": _rev(doc), "total": total, "items": doc.items.size(), "groups": groups}
+
+
+## Width and height in metres of what is on a canvas (the canvas itself while it is empty).
+func _extent(fd: FrameData, list: Array) -> Vector2:
+	if list.is_empty():
+		return fd.size
+	var r := Rect2()
+	var first := true
+	for it in list:
+		var ib: Rect2 = (it as Item).bounds()
+		r = ib if first else r.merge(ib)
+		first = false
+	return r.size * fd.scale
 
 
 func _rev(doc: Document) -> String:
@@ -562,6 +604,138 @@ func _zip(doc: Document, entries: Array, label: String, opts: Dictionary) -> Dic
 	return {"status": 200, "type": "application/zip", "body": bytes, "download": "%s.zip" % DocStore.safe_name(label)}
 
 
+# ------------------------------------------------------------------------------------------------ live view
+
+## Starts following a document's signals, so that it is known which canvas changed when. Called on every request: only a different
+## document (the headset opened another one) does anything.
+func _watch(doc: Document) -> void:
+	if doc == _watched:
+		return
+	_unwatch()
+	_watched = doc
+	_base = _bump()
+	for it in doc.items.values():
+		_item_frame[(it as Item).id] = (it as Item).frame
+	doc.item_added.connect(_on_item_added)
+	doc.item_removed.connect(_on_item_removed)
+	doc.item_changed.connect(_on_item_changed)
+	doc.frame_added.connect(_on_frame_changed)
+	doc.frame_removed.connect(_on_frame_changed)
+	doc.frame_changed.connect(_on_frame_changed)
+	doc.changed.connect(_bump)
+
+
+func _unwatch() -> void:
+	if _watched != null:
+		_watched.item_added.disconnect(_on_item_added)
+		_watched.item_removed.disconnect(_on_item_removed)
+		_watched.item_changed.disconnect(_on_item_changed)
+		_watched.frame_added.disconnect(_on_frame_changed)
+		_watched.frame_removed.disconnect(_on_frame_changed)
+		_watched.frame_changed.disconnect(_on_frame_changed)
+		_watched.changed.disconnect(_bump)
+		_watched = null
+	_frame_rev.clear()
+	_item_frame.clear()
+	_dims.clear()
+	_svg_cache.clear()
+
+
+func _bump() -> int:
+	_seq += 1
+	return _seq
+
+
+func _on_item_added(it: Item) -> void:
+	_item_frame[it.id] = it.frame
+	_frame_rev[it.frame] = _bump()
+
+
+func _on_item_removed(it: Item) -> void:
+	_item_frame.erase(it.id)
+	_frame_rev[it.frame] = _bump()
+
+
+func _on_item_changed(it: Item) -> void:
+	var was := str(_item_frame.get(it.id, it.frame))
+	_item_frame[it.id] = it.frame
+	var n := _bump()
+	_frame_rev[it.frame] = n
+	if was != it.frame:
+		_frame_rev[was] = n
+
+
+## A canvas itself changed (named, moved, resized, added, removed). Moving one changes nothing on it; only an empty canvas is drawn
+## from its size.
+func _on_frame_changed(f: FrameData) -> void:
+	_dims.erase(f.id)
+	if _watched != null and _watched.items_of(f.id).is_empty():
+		_frame_rev[f.id] = _bump()
+
+
+func _frame_version(fid: String) -> int:
+	return int(_frame_rev.get(fid, _base))
+
+
+## What the live page is told about a canvas, and puts in the address of its picture: different whenever the picture would differ.
+func _version_text(fid: String) -> String:
+	return "%d.%d" % [_epoch, _frame_version(fid)]
+
+
+## The answer to /api/live?since=<token>. The token changes with every edit and with the room you are in; while it is the one the page
+## already has, only the small header comes back (who is drawing where), otherwise the whole list of rooms and canvases with versions.
+func _live(doc: Document, since: String) -> Dictionary:
+	var here := str(room_source.call()) if room_source.is_valid() else ""
+	var token := "%d.%d.%s" % [_epoch, _seq, here]
+	var out := {"ok": true, "seq": token, "doc": {"id": doc.id, "name": doc.name}, "active": str(active_source.call()) if active_source.is_valid() else "", "here": here}
+	if since == token:
+		return out
+	var groups: Array = []
+	for g in _groups(doc):
+		var frames: Array = []
+		for f in g.frames:
+			var fd: FrameData = f
+			var d := _live_dims(doc, fd)
+			frames.append({"id": fd.id, "name": fd.name, "rev": _version_text(fd.id), "items": d.items, "w": d.w, "h": d.h, "look": _look(fd)})
+		groups.append({"id": g.id, "name": g.name, "here": g.here, "frames": frames})
+	out["groups"] = groups
+	return out
+
+
+## The background that shows a canvas as it looks in the headset: white on a white backing, dark on the others (ink is mostly light
+## on the glass of the passthrough).
+func _look(fd: FrameData) -> String:
+	var backing := fd.backing
+	if backing == "" and backing_source.is_valid():
+		backing = str(backing_source.call())
+	return "white" if backing == "white" else "dark"
+
+
+func _live_dims(doc: Document, fd: FrameData) -> Dictionary:
+	var rev := _frame_version(fd.id)
+	var c: Dictionary = _dims.get(fd.id, {})
+	if int(c.get("rev", -1)) != rev:
+		var list := doc.items_of(fd.id)
+		var ext := _extent(fd, list)
+		c = {"rev": rev, "items": list.size(), "w": ext.x, "h": ext.y}
+		_dims[fd.id] = c
+	return c
+
+
+## The picture of a canvas as the live view asks for it. Drawn once per change, however many people are watching.
+func _live_svg(doc: Document, fid: String, bg: String, opts: Dictionary) -> PackedByteArray:
+	var key := "%s|%s|%s" % [fid, bg, opts.grid]
+	var rev := _frame_version(fid)
+	var hit: Dictionary = _svg_cache.get(key, {})
+	if int(hit.get("rev", -1)) == rev:
+		return hit.bytes
+	if _svg_cache.size() >= LIVE_CACHE:
+		_svg_cache.clear()
+	var bytes := SvgExport.canvas(doc, fid, opts).to_utf8_buffer()
+	_svg_cache[key] = {"rev": rev, "bytes": bytes}
+	return bytes
+
+
 # ------------------------------------------------------------------------------------------------ saved files
 
 func _files_root() -> String:
@@ -623,6 +797,11 @@ func _api(path: String, qs: String, body: PackedByteArray) -> Dictionary:
 	var doc: Document = doc_source.call() if doc_source.is_valid() else null
 	if doc == null:
 		return _json(503, {"ok": false, "message": "No document is open in the app."})
+	if path.begins_with("/api/ai/"):
+		if not ai_api.is_valid():
+			return _json_plain(501, {"ok": false, "message": "The assistant is not available."})
+		var res: Dictionary = ai_api.call(path.substr(8), _json_body(body))
+		return _json_plain(200 if bool(res.get("ok", false)) else 422, res)
 	match path:
 		"/api/delete":
 			var data := _json_body(body)
@@ -693,4 +872,8 @@ func _json(status: int, data: Dictionary, doc: Document = null) -> Dictionary:
 		var cur: Document = doc_source.call() if doc_source.is_valid() else null
 		if cur != null:
 			d["rev"] = _rev(cur)
-	return {"status": status, "type": "application/json; charset=utf-8", "body": JSON.stringify(d).to_utf8_buffer()}
+	return _json_plain(status, d)
+
+
+func _json_plain(status: int, data: Dictionary) -> Dictionary:
+	return {"status": status, "type": "application/json; charset=utf-8", "body": JSON.stringify(data).to_utf8_buffer()}

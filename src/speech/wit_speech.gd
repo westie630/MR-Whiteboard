@@ -33,7 +33,7 @@ func ready_reason() -> String:
 	if token() == "":
 		if App.xr_active:
 			return "Speech to text needs a Wit.ai token. Rebuild with: pwsh tools/quest.ps1 -WitToken <token>"
-		return "Speech to text needs a Wit.ai token: More tab > Speech."
+		return "Speech to text needs a Wit.ai token: Home > Settings > Speech to text."
 	return ""
 
 
@@ -69,7 +69,7 @@ static func parse_response(result: int, code: int, data: PackedByteArray) -> Dic
 		return fail.call("No internet connection for speech recognition (error %d)." % result)
 	var objects := split_json_objects(data.get_string_from_utf8())
 	if code == 401 or code == 403:
-		return fail.call("Wit.ai did not accept the token. Check it in More > Speech.")
+		return fail.call("Wit.ai did not accept the token. Check it in Home > Settings > Speech to text.")
 	if code == 429:
 		return fail.call("Wit.ai is busy (rate limit). Try again in a moment.")
 	if code != 200:

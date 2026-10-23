@@ -691,6 +691,35 @@ func run() -> void:
 	await tick(3)
 	t.near((board.doc.frames[g.id] as FrameData).xf.origin.x - sx0, 0.2, 0.03, "the nib carried the canvas 1:1")
 	await tick(80)
+	# the stylus's front button and a bare hand turn and resize a canvas together, like two hands
+	var tbar := on_canvas(cv, HandController.bar_center(cv))
+	await hover(tbar)
+	pen.front = true
+	await tick(2)
+	t.check(board.grabs.has(g.id), "the front button on the bar picks the canvas up (to be joined by a hand)")
+	var other := HandInput.new("right")
+	other.tracked = true
+	other.aiming = true
+	other.aim_o = tbar + Vector3(0.3, 0.0, 0.6)
+	other.aim_d = Vector3(1, 0, 0)                      # pointing away from every canvas
+	other.press_o = other.aim_o
+	other.press_d = other.aim_d
+	other.pinch_point = tbar + Vector3(0.3, 0.0, 0.05)
+	other.tip = other.pinch_point
+	hands = [other]
+	var tscale0: float = (board.doc.frames[g.id] as FrameData).scale
+	await pinch_down(other)
+	for i in 10:
+		other.pinch_point += Vector3(0.02, 0.0, 0.0)
+		await tick(1)
+	t.check(float((board.grabs[g.id] as Dictionary).scale) > tscale0 * 1.4, "spreading hand and stylus scales the canvas up: %f" % float((board.grabs[g.id] as Dictionary).scale))
+	pen.front = false
+	await pinch_up(other)
+	await tick(3)
+	hands = []
+	t.check(not board.hand_ctl.is_holding() and board.grabs.is_empty(), "letting go of both ends the grab")
+	board.undo()
+	await tick(80)
 	# empty canvas: a tap lets go of the selection, a drag carries the canvas
 	board.select_items([box.id], g.id)
 	var sempty := on_canvas(cv, cv.bounds().get_center() + Vector2(0.3, -0.3))

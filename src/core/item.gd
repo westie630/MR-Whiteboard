@@ -41,6 +41,8 @@ var head_b := false
 var label := ""
 var text := ""
 var font_size := 0.05                     # em height in metres
+var weight := TextLayout.REGULAR          # Open Sans weight, 300 Light .. 800 ExtraBold
+var italic := false
 var alternatives: PackedStringArray = []  # other readings of the handwriting, for correcting a text item
 var ink: Array = []                       # the handwriting strokes (item dictionaries) this text was converted from: "back to ink"
 
@@ -70,7 +72,7 @@ static func make_shape(frame_id: String, shape_id: String, col: Color, w: float,
 	return it
 
 
-static func make_text(frame_id: String, txt: String, col: Color, em: float) -> Item:
+static func make_text(frame_id: String, txt: String, col: Color, em: float, weight_: int = TextLayout.REGULAR) -> Item:
 	var it := Item.new()
 	it.id = U.uid("i")
 	it.kind = TEXT
@@ -78,6 +80,7 @@ static func make_text(frame_id: String, txt: String, col: Color, em: float) -> I
 	it.text = txt
 	it.color = col
 	it.font_size = em
+	it.weight = weight_
 	it.refit_text()
 	return it
 
@@ -108,7 +111,7 @@ func pts_2d() -> PackedVector2Array:
 ## Measure the text and keep `size` equal to its bounding box.
 func refit_text() -> void:
 	if kind == TEXT:
-		size = TextLayout.measure(text, font_size)
+		size = TextLayout.measure(text, font_size, weight, italic)
 
 
 # ------------------------------------------------------------------------------------------------ geometry
@@ -251,6 +254,10 @@ func to_dict() -> Dictionary:
 		TEXT:
 			d["text"] = text
 			d["font_size"] = snappedf(font_size, 1e-5)
+			if weight != TextLayout.REGULAR:
+				d["weight"] = weight
+			if italic:
+				d["italic"] = true
 			d["center"] = U.v2_to_array(center)
 			d["rot"] = snappedf(rot, 1e-5)
 			if not alternatives.is_empty():
@@ -296,6 +303,8 @@ static func from_dict(d: Dictionary) -> Item:
 		TEXT:
 			it.text = str(d.get("text", ""))
 			it.font_size = float(d.get("font_size", 0.05))
+			it.weight = clampi(int(d.get("weight", TextLayout.REGULAR)), TextLayout.MIN_WEIGHT, TextLayout.MAX_WEIGHT)
+			it.italic = bool(d.get("italic", false))
 			it.center = U.v2_from(d.get("center"))
 			it.rot = float(d.get("rot", 0.0))
 			it.alternatives = PackedStringArray(d.get("alt", []))

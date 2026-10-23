@@ -75,42 +75,47 @@ func _ready() -> void:
 	board.open(Document.create("Keyboard test"))
 	board.head_provider = func(): return Transform3D(Basis.IDENTITY, Vector3(0.0, 1.4, 0.0))
 	var pen := PenState.new()
-	var menu := MenuPanel.new()
-	var mvp := SubViewport.new()
-	mvp.size = Vector2i(MenuPanel.DESIGN_SIZE)
+	var ui := UiShell.new()
+	add_child(ui)
+	ui.setup(board)
+	var mvp := SubViewport.new()                           # the typing card on its own, as on its headset panel
+	mvp.size = Vector2i(ui.compose.max_size)
 	mvp.handle_input_locally = true
 	add_child(mvp)
-	mvp.add_child(menu)
-	menu.setup(board)
+	mvp.add_child(ui.compose)
 	for _i in 100:
 		board.tick(pen, [], 0.016)
 		await get_tree().process_frame
-	_t.check(not menu.open_text_entry(), "no canvas: the box does not open")
+	_t.check(not ui.open_text_entry(), "no canvas: the box does not open")
 	var f := board.add_frame(FrameData.CANVAS, Transform3D(Basis.IDENTITY, Vector3(0, 1.4, -1)))
 	for _i in 60:
 		board.tick(pen, [], 0.016)
 		await get_tree().process_frame
 
-	_t.check(menu.open_text_entry(), "with a canvas the box opens")
+	ui.open_popover("brush")
+	_t.check(ui.open_text_entry(), "with a canvas the box opens")
 	await get_tree().process_frame
-	_t.check(menu.entry_open() and menu.is_typing(), "the box has the keyboard focus")
-	_t.check(menu._keyboard.visible, "the on-screen keyboard is shown")
-	_t.check(not menu._bottom.visible and not menu._holder.visible, "the menu makes room")
-	_t.check(menu.get_combined_minimum_size().y <= MenuPanel.DESIGN_SIZE.y + 1.0, "the typing layout fits the panel (%s)" % str(menu.get_combined_minimum_size()))
-	# a physical keyboard: key events pushed to the menu's viewport
+	await get_tree().process_frame
+	var entry := ui.compose.entry
+	_t.check(ui.entry_open() and ui.is_typing() and entry.field().has_focus(), "the box has the keyboard focus")
+	_t.check(ui.compose.visible and ui.compose.keyboard.visible, "the typing card shows with the on-screen keyboard")
+	_t.eq(ui.popover_id, "", "typing closes the popover that was open")
+	_t.check(ui.compose.get_combined_minimum_size().y <= ui.compose.max_size.y and ui.compose.get_combined_minimum_size().x <= ui.compose.max_size.x,
+		"the typing card fits its panel (%s)" % str(ui.compose.get_combined_minimum_size()))
+	# a physical keyboard: key events pushed to the card's viewport
 	for ch in "Hi there":
 		_physical(mvp, ch)
-	_t.eq(menu._entry.text(), "Hi there", "a physical keyboard types into the box")
-	# and the on-screen one, pressed through the menu
-	var mkb := menu._keyboard
+	_t.eq(entry.text(), "Hi there", "a physical keyboard types into the box")
+	# and the on-screen one, pressed through the card
+	var mkb := ui.compose.keyboard
 	await get_tree().process_frame
 	await _tap(mvp, mkb, ".")
-	_t.eq(menu._entry.text(), "Hi there.", "the on-screen keyboard types into the box")
+	_t.eq(entry.text(), "Hi there.", "the on-screen keyboard types into the box")
 	await _tap(mvp, mkb, "enter")
-	_t.eq(menu._entry.text(), "Hi there.\n", "enter is a new line in the text box")
+	_t.eq(entry.text(), "Hi there.\n", "enter is a new line in the text box")
 	await _tap(mvp, mkb, "back")
-	_t.eq(menu._entry.text(), "Hi there.", "backspace removes it again")
-	menu._entry.accepted.emit(menu._entry.text())
+	_t.eq(entry.text(), "Hi there.", "backspace removes it again")
+	entry.accepted.emit(entry.text())
 	await get_tree().process_frame
 	var texts := _texts(board)
 	_t.eq(texts.size(), 1, "OK puts the text on the canvas")
@@ -119,12 +124,13 @@ func _ready() -> void:
 		_t.eq(a.text, "Hi there.", "the text is what was typed")
 		_t.eq(a.frame, f.id, "on the canvas in front of the head")
 		_t.eq(board.selection, [a.id], "and selected")
-	_t.check(not menu.entry_open() and menu._holder.visible and not menu._keyboard.visible, "the menu is back")
+	await get_tree().process_frame
+	_t.check(not ui.entry_open() and not ui.compose.wanted, "the typing card goes away")
 
 	# edit the selected text (one undo step)
-	_t.check(menu.open_text_entry(), "the box opens for the selected text")
-	_t.eq(menu._entry.text(), "Hi there.", "it holds the current text")
-	menu._entry.accepted.emit("Changed words")
+	_t.check(ui.open_text_entry(), "the box opens for the selected text")
+	_t.eq(entry.text(), "Hi there.", "it holds the current text")
+	entry.accepted.emit("Changed words")
 	texts = _texts(board)
 	_t.eq(texts.size(), 1, "still one text")
 	_t.eq((texts[0] as Item).text, "Changed words", "the text was edited")
@@ -136,40 +142,48 @@ func _ready() -> void:
 	var box := _make_rect(f.id)
 	board.history.do(History.op_add([box]))
 	board.select_items([box.id], f.id)
-	_t.check(menu.open_text_entry(), "the box opens for a selected shape")
-	menu._entry.accepted.emit("Start")
+	_t.check(ui.open_text_entry(), "the box opens for a selected shape")
+	entry.accepted.emit("Start")
 	_t.eq((board.doc.items[box.id] as Item).label, "Start", "typed words become the label of the shape")
 	board.undo()
 	_t.eq((board.doc.items[box.id] as Item).label, "", "undo removes the label")
 
 	# names go through the same box, on one line
 	var named: Array = []
-	menu._ask_name("Rename", "Old", func(s: String): named.append(s))
-	_t.check(menu.entry_open(), "the name box opens")
-	_t.eq(menu._entry.text(), "Old", "it holds the current name")
+	ui.ask_name("Rename", "Old", func(s: String): named.append(s))
+	await get_tree().process_frame
+	_t.check(ui.entry_open(), "the name box opens")
+	_t.eq(entry.text(), "Old", "it holds the current name")
 	_physical(mvp, "N")
-	_t.eq(menu._entry.text(), "N", "typing replaces the selected name")
+	_t.eq(entry.text(), "N", "typing replaces the selected name")
 	_physical_key(mvp, KEY_ENTER)
 	_t.eq(named, ["N"], "Enter accepts a one-line name")
-	_t.check(not menu.entry_open(), "the box closed")
+	_t.check(not ui.entry_open(), "the box closed")
 
-	# the token field gets the keyboard too
-	menu._select_tab("more")
-	menu._token_edit.grab_focus()
+	# a key (the Wit.ai token, an API key) is typed in the same card, hidden, with the keyboard
+	var keys: Array = []
+	ui.ask_secret("Wit.ai server access token", func(s: String): keys.append(s))
 	await get_tree().process_frame
 	await get_tree().process_frame
-	_t.check(menu._keyboard.visible, "the keyboard shows for the token field")
-	_t.check(menu.get_combined_minimum_size().y <= MenuPanel.DESIGN_SIZE.y + 1.0, "the menu with the keyboard fits the panel (%s)" % str(menu.get_combined_minimum_size()))
-	menu._token_edit.release_focus()
+	_t.check(ui.compose.keyboard.visible and (entry.field() as LineEdit).secret, "the keyboard shows for a key, and the key is hidden")
+	_t.check(ui.compose.get_combined_minimum_size().y <= ui.compose.max_size.y, "the card with the keyboard fits its panel (%s)" % str(ui.compose.get_combined_minimum_size()))
+	for ch in "Abc":
+		_physical(mvp, ch)
+	_physical_key(mvp, KEY_ENTER)
+	_t.eq(keys, ["Abc"], "the key is handed over on Enter")
 	await get_tree().process_frame
-	_t.check(not menu._keyboard.visible, "and hides again")
+	_t.check(not ui.compose.wanted, "and the card goes away")
+	ui.ask_name("Name", "", func(_s: String): pass)
+	_t.check(not (entry.field() as LineEdit).secret, "a name is not hidden")
+	ui.close_entry()
 
 	# with the keyboard switched off the writing pad is offered instead
 	App.put("vkeyboard", false)
-	menu.open_text_entry()
+	ui.open_text_entry()
 	await get_tree().process_frame
-	_t.check(not menu._keyboard.visible and menu._entry.pad.visible, "without the keyboard the pad is shown")
-	menu.close_entry()
+	await get_tree().process_frame
+	_t.check(not ui.compose.keyboard.visible and entry.pad.visible, "without the keyboard the pad is shown")
+	ui.close_entry()
 	App.put("vkeyboard", true)
 
 	get_tree().quit(_t.done())

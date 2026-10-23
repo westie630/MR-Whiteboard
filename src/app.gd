@@ -26,16 +26,32 @@ const DEFAULTS := {
 	"ink_language": "en",
 	"ink_auto": true,                # convert handwriting by itself after a pause (off: only when To text is pressed)
 	"ink_pause": 2.0,                # seconds of rest before the automatic conversion
+	"smart_ink": "suggest",          # the pen tool notices handwriting: suggest (offer to convert) | auto (convert clear writing) | off
 	"speech_provider": "wit",        # wit | none
 	"wit_token": "",                 # Wit.ai server access token (or put it in user://wit_token.txt)
-	"vkeyboard": true,               # show the on-screen keyboard while a text field is being edited (a physical keyboard always works)
+	"ai_provider": "anthropic",      # LlmApi provider of the AI assistant: anthropic | openai | minimax
+	"ai_key_anthropic": "",          # API keys (typed on the web page or in the assistant; kept only here, on the device)
+	"ai_key_openai": "",
+	"ai_key_minimax": "",
+	"ai_model_anthropic": "",        # model id per provider ("" = the provider's suggested one)
+	"ai_model_openai": "",
+	"ai_model_minimax": "",
+	"ai_think_anthropic": "default", # thinking mode per provider (an effort level, or "default")
+	"ai_think_openai": "default",
+	"ai_think_minimax": "default",
+	"ai_picture": true,              # send a picture of the canvas along with its description
+	"ai_note": true,                 # put answers in words on the canvas as a note too (they are always in the assistant's conversation)
+	"vkeyboard": true,              # show the on-screen keyboard while a text field is being edited (a physical keyboard always works)
 	"haptics": true,
 	"stylus_hand": "auto",           # auto | left | right
 	"finger_draw": false,            # draw with a pinch of the right hand when there is no stylus (off: both hands point and select)
-	"ui_scale": 1.0,                 # PC panel scale
+	"ui_scale": 1.0,                 # size of the interface (PC: its scale; headset: the panels' size)
+	"ui_fade": true,                 # the panels fade back while you draw
+	"panel_pos": {},                 # PC: where the movable panels were dragged to (id -> offset from their home position)
 	"last_doc": "",
 	"sim_room": "A",                 # PC: which simulated room the anchors belong to
-	"menu_tab": "draw",
+	"menu_tab": "docs",              # the Home panel's tab
+	"text_style": "body",            # TextLayout style id for new typed and dictated text (the last one chosen)
 	"xr_quality": "sharp",           # performance | sharp | ultra: render resolution in the headset
 }
 

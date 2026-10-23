@@ -112,7 +112,7 @@ func _draw() -> void:
 	var base_y := size.y * 0.72
 	draw_line(Vector2(16, base_y), Vector2(size.x - 16, base_y), Color(1, 1, 1, 0.12), 1.5, true)
 	if _strokes.is_empty() and _cur.is_empty():
-		var font := ThemeDB.fallback_font
+		var font := TextLayout.font()
 		draw_string(font, Vector2(18, size.y * 0.5 + 8), status, HORIZONTAL_ALIGNMENT_LEFT, size.x - 36, UITheme.FONT_SMALL, UITheme.TEXT_DIM)
 	for s in _strokes:
 		draw_polyline(s.pts, UITheme.WARN, 4.0, true)

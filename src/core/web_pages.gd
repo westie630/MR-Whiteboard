@@ -22,19 +22,21 @@ static func plural(n: int, one: String, many: String = "") -> String:
 
 
 ## Wraps a page body in the common frame: top bar, icon sprite, toasts, the stylesheet and the script.
-static func shell(title: String, body: String, doc_name: String = "", rev: String = "", signed_in: bool = true) -> String:
+static func shell(title: String, body: String, doc_name: String = "", rev: String = "", signed_in: bool = true, page: String = "") -> String:
 	var v := WebAssets.VERSION
 	var out := "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
 	out += "<meta name=color-scheme content='light dark'><title>%s - MR Whiteboard</title>" % h(title)
 	out += "<link rel=icon type='image/svg+xml' href='/assets/logo.svg'><link rel=stylesheet href='/assets/app.css?v=%d'>" % v
 	out += "<script>try{var t=localStorage.getItem('mrw-theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>"
-	out += "</head><body data-rev='%s'>" % h(rev)
+	out += "</head><body data-rev='%s'%s>" % [h(rev), " data-page='%s'" % h(page) if page != "" else ""]
 	out += WebAssets.SPRITE
 	out += "<header class=topbar><div class=topbar-in><a class=brand href='/'><img src='/assets/logo.svg' alt=''>MR Whiteboard</a>"
 	if doc_name != "":
 		out += "<span class=crumb>/ <b>%s</b></span>" % h(doc_name)
 	out += "<span class=spacer></span>"
 	if signed_in:
+		out += "<a class='btn btn-ghost btn-sm' href='/live' title='Watch the canvases as they are drawn'>%s<span>Live view</span></a>" % ic("eye")
+		out += "<a class='btn btn-ghost btn-sm' href='/ai' title='Work on a canvas with an AI: keys, models, questions'>%s<span>AI</span></a>" % ic("spark")
 		out += "<span class=live title='Live connection to the headset'><i></i><span>Connected</span></span>"
 	out += "<button class='btn btn-ghost btn-sm' id=theme title='Light / dark'>%s</button>" % ic("moon")
 	if signed_in:
@@ -50,7 +52,7 @@ static func shell(title: String, body: String, doc_name: String = "", rev: Strin
 static func login(error: String = "") -> String:
 	var b := "<div class=auth><form class=auth-card method=post action='/login' autocomplete=off>"
 	b += "<div class=badge>%s</div><h1>Enter the access code</h1>" % ic("lock")
-	b += "<p>It is shown in the headset: <b>Docs &rarr; Manage on your PC</b>.</p>"
+	b += "<p>It is shown in the headset: <b>Home &rarr; Share</b> (the last button on the toolbar).</p>"
 	b += "<input class=pin id=pin name=pin inputmode=numeric pattern='[0-9]*' maxlength=6 placeholder='------' autocomplete=one-time-code required autofocus>"
 	if error != "":
 		b += "<div class=err role=alert>%s</div>" % h(error)
@@ -72,6 +74,8 @@ static func dashboard(snap: Dictionary, files: Array) -> String:
 	b += stats(snap)
 	b += "</div><div class=actions>"
 	b += "<button class='btn btn-primary' onclick=\"document.getElementById('file').click()\">%s Upload SVG</button>" % ic("upload")
+	b += "<a class='btn btn-primary' href='/live'>%s Live view</a>" % ic("eye")
+	b += "<a class=btn href='/ai'>%s AI assistant</a>" % ic("spark")
 	if int(snap.total) > 0:
 		b += "<a class=btn href='/all.zip'>%s Download all</a><a class=btn href='/all'>%s Gallery</a>" % [ic("download"), ic("image")]
 	b += "</div></section>"
@@ -159,6 +163,56 @@ static func date_text(unix: int) -> String:
 		return ""
 	var d := Time.get_datetime_dict_from_unix_time(unix)
 	return "%04d-%02d-%02d %02d:%02d" % [d.year, d.month, d.day, d.hour, d.minute]
+
+
+# ------------------------------------------------------------------------------------------------ live view
+
+## The live view: an empty frame that the script (WebAssets.JS, "live view") fills from /api/live and keeps up to date. Nothing on it
+## changes the document.
+static func live(doc_name: String) -> String:
+	var b := "<section id=lv class=lv data-mode=grid>"
+	b += "<div class=lv-bar><div><p class=eyebrow>Live from the headset</p><h1 id=lv-name>%s</h1><div class=stats><span class=chip id=lv-stat>Connecting...</span></div></div>" % h(doc_name)
+	b += "<div class=lv-ctl>"
+	b += "<label class=lv-follow title='Show the canvas that is being drawn on, whichever it is'><input type=checkbox id=lv-follow> Follow the pen</label>"
+	b += "<div class=seg id=lv-mode><button data-mode=grid class=on>Grid</button><button data-mode=focus>One canvas</button></div>"
+	b += "<div class=seg id=lv-bg><button data-bg=auto class=on title='As the canvas looks in the headset'>As in headset</button><button data-bg=white>White</button><button data-bg=dark>Dark</button><button data-bg=none>Clear</button></div>"
+	b += "<div class=seg id=lv-lang title='Translate the text on the canvases, on this PC (Chrome or Edge 138 or newer)'><button data-lang='' class=on>Original</button><button data-lang=es title='Castilian Spanish'>Espa&ntilde;ol</button><button data-lang=eu title=Basque>Euskara</button><button data-lang=fr title=French>Fran&ccedil;ais</button></div>"
+	b += "<button class='btn btn-sm' id=lv-full title='Full screen'>%s</button>" % ic("fit")
+	b += "</div></div><p class=lv-note id=lv-tr-note hidden></p>"
+	b += "<div class=lv-nav id=lv-nav><button class='btn btn-sm' id=lv-prev title='Previous (left arrow)'>%s Previous</button>" % ic("left")
+	b += "<b id=lv-cur></b><button class='btn btn-sm' id=lv-next title='Next (right arrow)'>Next %s</button></div>" % ic("right")
+	b += "<div id=lv-body></div>"
+	b += "<div class=empty id=lv-empty hidden><div class=badge>%s</div><h2>No canvases yet</h2><div>Place a canvas in the headset: it appears here as soon as it is there.</div></div>" % ic("grid")
+	b += "</section>"
+	return shell("Live view", b, doc_name, "", true, "live")
+
+
+# ------------------------------------------------------------------------------------------------ AI assistant
+
+## The AI assistant's page: an empty frame that the script (WebAssets.JS, "AI assistant") fills from /api/ai/state. API keys typed
+## here go to the device and are never sent back (the page only learns their last four characters).
+static func ai(doc_name: String) -> String:
+	var b := "<section id=ai class=ai>"
+	b += "<div class=head><div><p class=eyebrow>AI assistant</p><h1>Work on a canvas with an AI</h1>"
+	b += "<div class=stats><span class=chip id=ai-stat>Connecting...</span></div></div></div>"
+	b += "<div class=ai-grid><section class=panel><div class=panel-h>%s<h2>Ask about a canvas</h2></div><div class=ai-body>" % ic("spark")
+	b += "<label class=lbl for=ai-canvas>Canvas</label><select id=ai-canvas class=field></select>"
+	b += "<div class=ai-acts id=ai-acts></div>"
+	b += "<label class=lbl for=ai-q>Or ask in your own words</label>"
+	b += "<textarea id=ai-q class='field ta' rows=3 maxlength=4000 placeholder='For example: turn my notes into a flow chart. What is missing here? Add a legend.'></textarea>"
+	b += "<div class=row><button class='btn btn-primary' id=ai-send>%s Ask</button><span class=spacer></span>" % ic("spark")
+	b += "<button class='btn btn-ghost btn-sm' id=ai-forget title='Forget the earlier questions about this canvas'>New conversation</button></div>"
+	b += "<div id=ai-status class=ai-status></div>"
+	b += "<div id=ai-reply class=ai-reply hidden><div class=ai-meta id=ai-meta></div><div class=ai-say id=ai-say></div></div>"
+	b += "<div id=ai-layers class=ai-layers></div></div></section>"
+	b += "<section class=panel><div class=panel-h>%s<h2>Models and keys</h2></div><div class=ai-body>" % ic("lock")
+	b += "<div id=ai-provs class=ai-provs></div>"
+	b += "<label class=chk><input type=checkbox id=ai-picture> Send a picture of the canvas with its description (lets the model read sketches and handwriting)</label>"
+	b += "<label class=chk><input type=checkbox id=ai-note> Put answers in words on the canvas as a note</label>"
+	b += "<p class=hint>Your key goes from this page to the headset over your Wi-Fi and is kept only in the app's settings there; this page never shows it again. "
+	b += "The headset sends each question, with a description and a picture of that one canvas, straight to the provider you chose; it is billed to your key.</p>"
+	b += "</div></section></div></section>"
+	return shell("AI assistant", b, doc_name, "", true, "ai")
 
 
 # ------------------------------------------------------------------------------------------------ gallery and viewer

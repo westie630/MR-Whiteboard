@@ -1,6 +1,6 @@
 extends Node
-## Handwriting to text without the network: a stand-in recogniser answers, and the controller must replace the ink with text of the
-## same size and position, bind ink written inside a box to that box as its label, keep the ink when recognition fails, and undo it all.
+## Handwriting to text without the network: a stand-in recogniser answers, and the controller must replace the ink with text in the
+## current text style, where the writing was, bind ink written inside a box to that box as its label, keep the ink when recognition fails, and undo it all.
 
 class FakeInk extends InkRecognizer:
 	var answers: Array = ["Hello", "Hallo", "Hell0"]
@@ -60,10 +60,8 @@ func _ready() -> void:
 		var tx: Item = texts[0]
 		t.eq(tx.text, "Hello", "the text is the first reading")
 		t.near(tx.center.x, 0.25, 0.015, "the text is centred where the writing was (x)")
-		t.near(tx.size.x, 0.30, 0.03, "the text is as wide as the writing (%f)" % tx.size.x)
-		var glyph_h := TextLayout.glyph_span("Hello")
-		var em_h := 0.06 / (glyph_h.x - glyph_h.y)
-		t.check(tx.font_size > em_h * 0.55 and tx.font_size < em_h * 1.75, "the text size follows the writing height (em %f vs %f)" % [tx.font_size, em_h])
+		var body := TextLayout.style("body")
+		t.check(is_equal_approx(tx.font_size, float(body[2])) and tx.weight == int(body[3]), "the text has the size of the text style, not of the writing (em %f)" % tx.font_size)
 		t.eq(tx.alternatives.size(), 2, "other readings are kept for correcting")
 		t.near(tx.color.r, Color("#ff9f43").r, 0.01, "the text keeps the ink colour")
 		board.ink.cycle_alternative(tx.id)

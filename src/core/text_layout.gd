@@ -11,31 +11,65 @@ const TALL := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789bdfhklt!?/|()[]{}%&@#$"
 const DEEP := "gjpqy,;()[]{}|/@$"
 
 
-static var _font: Font
+const WEIGHTS := [[300, "Light"], [400, "Regular"], [500, "Medium"], [600, "SemiBold"], [700, "Bold"], [800, "ExtraBold"]]
+const REGULAR := 400
+## Text sizes like Markdown's: [id, name, em height (m), weight]. A style is always exactly this size, so every Heading 1 matches.
+const STYLES := [["h1", "Heading 1", 0.09, 700], ["h2", "Heading 2", 0.07, 700], ["h3", "Heading 3", 0.055, 600],
+	["body", "Body", 0.045, 400], ["small", "Small", 0.032, 400]]
+const MIN_WEIGHT := 300
+const MAX_WEIGHT := 800
+const FACES := {false: "res://assets/fonts/OpenSans.ttf", true: "res://assets/fonts/OpenSans-Italic.ttf"}
+
+static var _fonts := {}                     # "weight/italic" -> Font
 
 
-## The text font: the engine's built-in font as a multichannel signed distance field, so text stays razor sharp at any size and
-## distance (a normal font is a bitmap and turns blocky when you lean in or scale it up).
-static func font() -> Font:
-	if _font == null:
-		var base := ThemeDB.fallback_font
-		if base is FontFile:
-			var f := (base as FontFile).duplicate() as FontFile
-			f.multichannel_signed_distance_field = true
-			f.msdf_pixel_range = 16
-			f.msdf_size = 96
-			f.antialiasing = TextServer.FONT_ANTIALIASING_GRAY
-			f.hinting = TextServer.HINTING_NONE
-			f.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
-			_font = f
-		else:
-			_font = base
-	return _font
+## Open Sans (variable font: upright and italic files, weight axis 300..800) as a multichannel signed distance field, so text stays
+## razor sharp at any size and distance (a normal font is a bitmap and turns blocky when you lean in or scale it up).
+## `weight` is the CSS weight (300 Light .. 800 ExtraBold); the fonts are built once and shared.
+static func font(weight: int = REGULAR, italic: bool = false) -> Font:
+	weight = clampi(roundi(weight / 50.0) * 50, MIN_WEIGHT, MAX_WEIGHT)
+	var key := "%d/%s" % [weight, italic]
+	if not _fonts.has(key):
+		_fonts[key] = _build(weight, italic)
+	return _fonts[key]
+
+
+static func _build(weight: int, italic: bool) -> Font:
+	var face := load(FACES[italic]) as FontFile
+	if face == null:
+		return ThemeDB.fallback_font
+	var f := face.duplicate() as FontFile
+	f.multichannel_signed_distance_field = true
+	f.msdf_pixel_range = 16
+	f.msdf_size = 96
+	f.antialiasing = TextServer.FONT_ANTIALIASING_GRAY
+	f.hinting = TextServer.HINTING_NONE
+	f.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
+	var v := FontVariation.new()
+	v.base_font = f
+	v.variation_opentype = {TextServerManager.get_primary_interface().name_to_tag("wght"): float(weight)}
+	return v
+
+
+## The style entry ([id, name, em, weight]) for an id; Body when unknown.
+static func style(id: String) -> Array:
+	for s in STYLES:
+		if s[0] == id:
+			return s
+	return STYLES[3]
+
+
+## The id of the style a text of this size and weight is in, or "" when it is custom (scaled by hand, or converted handwriting).
+static func style_id(em: float, weight: int) -> String:
+	for s in STYLES:
+		if absf(em - float(s[2])) < 1e-4 and weight == int(s[3]):
+			return s[0]
+	return ""
 
 
 ## Bounding box (m) of the text drawn at the given em height, one or several lines.
-static func measure(text: String, em: float) -> Vector2:
-	var f := font()
+static func measure(text: String, em: float, weight: int = REGULAR, italic: bool = false) -> Vector2:
+	var f := font(weight, italic)
 	var s := f.get_multiline_string_size(text if text != "" else " ", HORIZONTAL_ALIGNMENT_LEFT, -1, REF_PX)
 	var k := em / float(REF_PX)
 	return Vector2(maxf(s.x * k, em * 0.3), maxf(s.y * k, em * 1.0))

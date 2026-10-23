@@ -211,7 +211,7 @@ func _begin_draw(pen: PenState, write: bool) -> void:
 	var t := board.pen_target(pen.tip, Board.CAPTURE)
 	if t.is_empty():
 		# everything is drawn on a canvas (drawing in the air is switched off)
-		board.toast.emit("Draw on a canvas: bring the stylus to one, or place one from the Canvas tab.")
+		board.toast.emit("Draw on a canvas: bring the stylus to one, or place one with Add (+) on the toolbar.")
 		return
 	var fn: FrameNode = t.fn
 	var volume := false
@@ -446,8 +446,11 @@ func _finish_draw() -> void:
 	_clear_live()
 	board.history.do(History.op_add([item]))
 	var stored: Item = doc.items.get(item.id)
-	if write and stored != null and stored.kind == Item.STROKE:
-		board.ink.add(stored, times)
+	if stored != null and stored.kind == Item.STROKE and not hand_mode:
+		if write:
+			board.ink.add(stored, times)             # (a line or a box among the words stays a drawing)
+		elif not _live_volume:
+			board.ink.observe(stored, times)         # the pen notices when it is writing words
 	state = S.IDLE
 
 

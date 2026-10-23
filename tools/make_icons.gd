@@ -89,13 +89,13 @@ func _corner_alpha(x: int, y: int, s: int, r: int) -> float:
 	return clampf(float(r) - d + 0.5, 0.0, 1.0)
 
 
-## Just the ink stroke and stylus on the splash background colour: no tile behind them.
+## Just the ink stroke and stylus on a transparent canvas: no tile behind them (project.godot's boot_splash/bg_color shows through).
 func _splash(_bg: String, fg: String) -> Image:
 	var size := 1024
 	var icon_size := 640
 	var icon := _render(fg, icon_size, icon_size)
 	var out := Image.create(size, size, false, Image.FORMAT_RGBA8)
-	out.fill(Color(0.02, 0.025, 0.04, 1.0))
+	out.fill(Color(0, 0, 0, 0))
 	var at := (size - icon_size) / 2
 	out.blend_rect(icon, Rect2i(0, 0, icon_size, icon_size), Vector2i(at, at))
 	return out

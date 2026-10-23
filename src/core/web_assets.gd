@@ -3,7 +3,7 @@ extends RefCounted
 ## The stylesheet, the script and the icons of the web pages the app serves (see ExportServer / WebPages). Kept as strings so they
 ## travel inside the app without any extra files in the export.
 
-const VERSION := 4                         # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
+const VERSION := 7                       # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
 
 const LOGO := r"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#g)"/><path d="M14 40c6-14 11-14 14-4s8 10 12-4 6-8 10-2" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="50" cy="19" r="4" fill="#fff" opacity=".85"/></svg>"""
 
@@ -27,6 +27,7 @@ const SPRITE := r"""<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0"
 <symbol id="i-right" viewBox="0 0 24 24"><path d="m10 6 6 6-6 6"/></symbol>
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
 <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+<symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3.5 13.9 9.6 20 11.5 13.9 13.4 12 19.5 10.1 13.4 4 11.5 10.1 9.6Z"/><path d="M19 3v3M17.5 4.5h3"/></symbol>
 <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5"/></symbol>
 <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
 </defs></svg>"""
@@ -200,6 +201,69 @@ td.acts{text-align:right;white-space:nowrap;width:1%}
 .gal-h{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line)}
 .gal-h b{margin-right:auto}
 .foot{margin-top:40px;text-align:center;color:var(--muted);font-size:13px}
+[hidden]{display:none!important}
+.lv:fullscreen{background:var(--bg);overflow:auto;padding:20px}
+.lv-bar{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;justify-content:space-between;margin-bottom:18px}
+.lv-ctl{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.lv-note{margin:-6px 0 14px;font-size:13px;color:var(--muted)}
+.lv-note.bad{color:var(--bad)}
+.lv-follow{display:none;align-items:center;gap:7px;font-size:13.5px;font-weight:600;color:var(--ink-2);cursor:pointer}
+.lv[data-mode=focus] .lv-follow{display:inline-flex}
+.lv-nav{display:none;align-items:center;gap:12px;margin-bottom:12px}
+.lv[data-mode=focus] .lv-nav{display:flex}
+.lv-nav b{margin-right:auto;font-size:17px}
+.lv-nav .btn[disabled]{opacity:.35}
+.lv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(340px,100%),1fr));gap:16px}
+.lv[data-mode=focus] .lv-grid{grid-template-columns:1fr}
+.lv[data-mode=focus] .tile:not(.cur),.lv[data-mode=focus] .room-h{display:none}
+.tile{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow-1);transition:box-shadow .5s,border-color .3s}
+.tile figcaption{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);min-width:0}
+.tile figcaption b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:auto}
+.tile .pen{display:none;align-items:center;gap:6px;font-size:11.5px;font-weight:650;padding:2px 9px;border-radius:99px;background:var(--brand-soft);color:var(--brand);flex:none}
+.tile .pen::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--brand)}
+.tile.active{border-color:var(--brand)}
+.tile.active .pen{display:inline-flex}
+.tile.fresh{box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 38%,transparent);transition:none}
+.shot{position:relative;aspect-ratio:3/2;background:var(--thumb);cursor:zoom-in}
+.shot img{position:absolute;inset:10px;width:calc(100% - 20px);height:calc(100% - 20px);object-fit:contain}
+.shot.bg-dark{background:#14181f}
+.shot.bg-none{background:conic-gradient(#d4d8e0 25%,#fff 0 50%,#d4d8e0 0 75%,#fff 0) 0 0/20px 20px}
+.lv[data-mode=focus] .shot{aspect-ratio:auto;height:calc(100vh - 250px);min-height:280px;cursor:default}
+.lv:fullscreen[data-mode=focus] .shot{height:calc(100vh - 170px)}
+.ai-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:22px;align-items:start}
+.ai .panel{margin-top:0}
+.ai-body{padding:16px 18px;display:grid;gap:12px}
+.lbl{font-size:12px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:-6px}
+.ai-acts{display:flex;flex-wrap:wrap;gap:8px}
+.field.ta{height:auto;padding:10px 13px;resize:vertical;line-height:1.45}
+select.field{padding:0 10px;min-width:0;max-width:100%;text-overflow:ellipsis}
+.ai-row{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}
+.ai-row .spacer{flex:1}
+.ai-status{display:flex;gap:10px;align-items:center;color:var(--muted);font-size:14px;min-height:20px}
+.ai-status.bad{color:var(--bad)}
+.ai-reply{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2);padding:12px 14px}
+.ai-meta{font-size:12.5px;color:var(--muted);margin-bottom:6px}
+.ai-say{white-space:pre-wrap;line-height:1.55}
+.ai-layers{display:grid;gap:8px}
+.ai-layers:empty{display:none}
+.layer{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 14px;border:1px solid color-mix(in srgb,var(--brand) 40%,var(--line));border-radius:var(--r-sm);background:var(--brand-soft)}
+.layer>div{flex:1;min-width:200px;display:grid}
+.layer span{font-size:13px;color:var(--muted)}
+.ai-provs{display:grid;gap:12px}
+.prov{min-width:0;border:1px solid var(--line);border-radius:var(--r-sm);padding:12px 14px;display:grid;gap:10px;background:var(--surface)}
+.prov.on{border-color:var(--brand);box-shadow:0 0 0 2px color-mix(in srgb,var(--brand) 25%,transparent)}
+.prov-h{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.prov-h .use{display:flex;align-items:center;gap:8px;cursor:pointer;margin-right:auto}
+.prov-h .get{font-size:13px;white-space:nowrap}
+.prov .key{flex:1 1 160px;min-width:0}
+.sel{display:grid;gap:3px;flex:1 1 150px;min-width:0}
+.sel span{font-size:12px;color:var(--muted);font-weight:600}
+.note{font-size:13px;color:var(--muted)}
+.note.bad{color:var(--bad)}
+.chk{display:flex;gap:8px;align-items:flex-start;font-size:14px;color:var(--ink-2);cursor:pointer}
+.chk input{margin-top:3px}
+@media(max-width:900px){.ai-grid{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:700px){.topbar-in .btn span{display:none}.topbar-in{gap:6px}}
 @media(max-width:700px){.wrap{padding:20px 14px 70px}h1{font-size:23px}.crumb{display:none}.search{margin-left:0;width:100%}.search input{width:100%}.toolbar{position:static}.grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}.up .nm{max-width:30%}th.hide,td.hide{display:none}.drop{padding:16px}.live span{display:none}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 """
@@ -444,8 +508,463 @@ const JS := r"""
       if (j.rev !== rev) { var b = $('#banner'); if (b) b.classList.add('on'); }
     }).catch(function () { if (++failures > 1) { var live = $('.live'); if (live) live.classList.add('off'); } });
   }
-  if ($('.live')) setInterval(poll, 4000);
+  var livePage = document.body.getAttribute('data-page') === 'live' || document.body.getAttribute('data-page') === 'ai';
+  if ($('.live') && !livePage) setInterval(poll, 4000);
   var rb = $('#banner-refresh'); if (rb) rb.onclick = function () { if ($('#library')) refresh(); else location.reload(); };
+
+  // ---- live view: the canvases of the open document, redrawn when the headset changes them
+  var lv = $('#lv');
+  if (lv) {
+    var lvBody = $('#lv-body'), tiles = {}, sections = {}, sectionOrder = [], docId = null, since = '', active = '', here = '';
+    var lvFails = 0, lvTimer = null, firstDraw = true, total = 0, order = [], focusId = '';
+    var keep = function (k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} return null; };
+    var mode = keep('mrw-lv-mode') === 'focus' ? 'focus' : 'grid';
+    var bg = ['auto', 'white', 'dark', 'none'].indexOf(keep('mrw-lv-bg')) >= 0 ? keep('mrw-lv-bg') : 'auto';
+    var follow = keep('mrw-lv-follow') === '1';
+
+    var setConn = function (ok) { var live = $('.live'); if (live) { live.classList.toggle('off', !ok); $('span', live).textContent = ok ? 'Connected' : 'Reconnecting...'; } };
+    var lookOf = function (f) { return bg === 'auto' ? (f.look || 'dark') : bg; };
+    var shotUrl = function (f) { return '/svg/' + encodeURIComponent(f.id) + '.svg?bg=' + lookOf(f) + '&v=' + encodeURIComponent(f.rev); };
+
+    // ---- translation: the browser's own on-device translator (Translator, LanguageDetector). The text is translated in this browser on
+    // this PC and nothing is sent anywhere. Each text on a canvas is translated from the language it is detected to be in.
+    var LANGS = { es: 'Spanish', eu: 'Basque', fr: 'French' }, NAMES = { en: 'English', es: 'Spanish', eu: 'Basque', fr: 'French', ca: 'Catalan', gl: 'Galician', de: 'German', it: 'Italian', pt: 'Portuguese' };
+    var lang = keep('mrw-lv-lang');
+    if (!LANGS[lang]) lang = '';
+    var trNote = $('#lv-tr-note'), translators = {}, trCache = {}, trMissing = {}, detector = null, trBusy = 0;
+    var note = function (msg, bad) { trNote.textContent = msg || ''; trNote.hidden = !msg; trNote.classList.toggle('bad', !!bad); };
+    var langName = function (c) { return NAMES[c] || c; };
+    var unsupported = function () {
+      if (!window.isSecureContext) return 'Chrome only translates on https or localhost pages. Open this page as http://localhost:' + (location.port || '80') + ' after running "adb forward tcp:' + (location.port || '80') + ' tcp:' + (location.port || '80') + '", or allow this address in chrome://flags/#unsafely-treat-insecure-origin-as-secure.';
+      if (!('Translator' in self)) return 'Translation needs Chrome or Edge 138 or newer on a PC.';
+      return '';
+    };
+    var refreshNote = function () {
+      var miss = Object.keys(trMissing).filter(function (k) { return k.split('>')[1] === lang; });
+      if (!lang) note('');
+      else if (miss.length) note('This browser has no ' + langName(miss[0].split('>')[0]) + ' to ' + langName(lang) + ' translator, so some text is left as it is.', true);
+      else note('Translated on this PC by your browser. Nothing is sent anywhere.');
+    };
+
+    var getTranslator = function (src, tgt) {
+      var k = src + '>' + tgt;
+      if (!translators[k]) {
+        translators[k] = Translator.availability({ sourceLanguage: src, targetLanguage: tgt }).then(function (a) {
+          if (a === 'unavailable') { trMissing[k] = 1; return null; }
+          return Translator.create({ sourceLanguage: src, targetLanguage: tgt, monitor: function (m) {
+            m.addEventListener('downloadprogress', function (e) { note('Downloading the ' + langName(src) + ' to ' + langName(tgt) + ' language pack: ' + Math.round(e.loaded * 100) + '%'); });
+          } });
+        }).catch(function (e) { delete translators[k]; throw e; });
+      }
+      return translators[k];
+    };
+
+    // The language a text is in, or null when the detector is not sure.
+    var detect = function (text) {
+      if (!detector) return Promise.resolve(null);
+      return detector.detect(text).then(function (r) {
+        return r && r[0] && r[0].confidence >= 0.6 && r[0].detectedLanguage !== 'und' ? r[0].detectedLanguage : null;
+      }).catch(function () { return null; });
+    };
+
+    // fallback: the language of the whole canvas, for short labels the detector cannot place by themselves
+    var translateText = function (text, fallback) {
+      var key = lang + '|' + fallback + '|' + text;
+      if (trCache[key] !== undefined) return Promise.resolve(trCache[key]);
+      var tgt = lang;
+      return detect(text).then(function (src) {
+        src = src || fallback;
+        if (src === tgt) return text;
+        return getTranslator(src, tgt).then(function (tr) { return tr ? tr.translate(text) : text; });
+      }).then(function (out) { trCache[key] = out; return out; });
+    };
+
+    var widest = function (s) { return s.split('\n').reduce(function (m, l) { return Math.max(m, l.length); }, 1); };
+
+    // Puts translated lines into a <text> of the exported SVG (centred on the same point, as the exporter writes it), shrunk to the
+    // width of the original when the translation is longer.
+    var refit = function (doc, el, orig, out) {
+      if (out === orig) return;
+      var spans = el.getElementsByTagName('tspan'), size = parseFloat(el.getAttribute('font-size')) || 12;
+      var x = spans[0].getAttribute('x'), cy = parseFloat(spans[0].getAttribute('y')) + (0.6 * spans.length - 0.95) * size;
+      var lines = out.split('\n'), n = lines.length, y0 = cy - (0.6 * n - 0.95) * size;
+      while (el.firstChild) el.removeChild(el.firstChild);
+      lines.forEach(function (ln, i) {
+        var s = doc.createElementNS(el.namespaceURI, 'tspan');
+        s.setAttribute('x', x); s.setAttribute('y', (y0 + i * 1.2 * size).toFixed(2)); s.textContent = ln;
+        el.appendChild(s);
+      });
+      var w0 = widest(orig), w1 = widest(out);
+      if (w1 > w0 * 1.05) {
+        var k = Math.max(0.55, w0 * 1.05 / w1);
+        el.setAttribute('transform', ((el.getAttribute('transform') || '') + ' translate(' + x + ' ' + cy.toFixed(2) + ') scale(' + k.toFixed(3) + ') translate(-' + x + ' -' + cy.toFixed(2) + ')').trim());
+      }
+    };
+
+    // SVG text in, SVG text out with every text on the canvas translated.
+    var translateSvg = function (svg) {
+      var doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+      if (doc.getElementsByTagName('parsererror').length) return Promise.resolve(svg);
+      var els = $$('text', doc).filter(function (el) { return el.getElementsByTagName('tspan').length; });
+      var texts = els.map(function (el) { return $$('tspan', el).map(function (s) { return s.textContent; }).join('\n'); });
+      var letters = /\p{L}/u;
+      return detect(texts.join('\n')).then(function (dom) {
+        return Promise.all(texts.map(function (t) { return letters.test(t) ? translateText(t, dom || 'en') : t; }));
+      }).then(function (out) {
+        els.forEach(function (el, i) { refit(doc, el, texts[i], out[i]); });
+        return new XMLSerializer().serializeToString(doc);
+      });
+    };
+
+    var onTranslateFail = function (e) {
+      var denied = e && e.name === 'NotAllowedError';
+      lang = ''; keep('mrw-lv-lang', '');
+      note(denied ? 'The browser wants a click before it downloads a language pack: pick the language again.' : 'Translation failed: ' + ((e && e.message) || 'unknown error'), true);
+      redrawAll(); syncView();
+    };
+
+    var setLang = function (l) {
+      if (!l) { lang = ''; keep('mrw-lv-lang', ''); refreshNote(); redrawAll(); syncView(); return; }
+      var why = unsupported();
+      if (why) { note(why, true); return; }
+      lang = l; keep('mrw-lv-lang', l); trMissing = {};
+      note('Getting the ' + LANGS[l] + ' translator...');
+      syncView();
+      // started inside the click, so the browser may download a language pack
+      var ready = [getTranslator('en', l)];
+      if (!detector && 'LanguageDetector' in self) ready.push(LanguageDetector.create().then(function (d) { detector = d; }, function () {}));
+      Promise.all(ready).then(function () { if (lang === l) redrawAll(); }).catch(onTranslateFail);
+    };
+
+    var makeTile = function (f) {
+      var el = document.createElement('figure');
+      el.className = 'tile';
+      el.setAttribute('data-id', f.id);
+      el.innerHTML = '<figcaption><b></b><span class="pen">Drawing here</span></figcaption><div class="shot bg-' + lookOf(f) + '" tabindex="0" title="Show this canvas large"><img alt=""></div>';
+      var t = { el: el, name: $('b', el), shot: $('.shot', el), img: $('img', el), rev: null, want: null, bg: null, lang: '', f: f };
+      tiles[f.id] = t;
+      return t;
+    };
+
+    // The picture is loaded off screen first, so a redraw never flashes an empty frame.
+    var showPicture = function (t) {
+      var f = t.f, look = lookOf(f), tag = lang;
+      if (t.rev === f.rev && t.bg === look && t.lang === tag) return;
+      if (t.want === f.rev + look + tag) return;
+      t.want = f.rev + look + tag;
+      var want = t.want, pre = new Image();
+      pre.onload = function () {
+        if (t.want !== want) return;
+        t.img.src = pre.src; t.img.alt = f.name;
+        t.shot.className = 'shot bg-' + look;
+        var redraw = t.rev !== null && t.rev !== f.rev;
+        t.rev = f.rev; t.bg = look; t.lang = tag;
+        if (redraw) {
+          t.el.classList.add('fresh');
+          setTimeout(function () { t.el.classList.remove('fresh'); }, 900);
+        }
+      };
+      pre.onerror = function () { t.want = null; since = ''; };
+      var url = shotUrl(f);
+      if (!tag) { pre.src = url; return; }
+      // translated: the exporter's SVG is fetched, its texts are replaced, and the result is shown as a data address
+      trBusy++;
+      fetch(url, { credentials: 'same-origin' }).then(function (r) {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.text();
+      }).then(translateSvg).then(function (svg) {
+        return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      }).then(function (data) {
+        if (t.want === want) pre.src = data;
+      }, function (e) {
+        if (t.want === want) { t.want = null; if (lang === tag) onTranslateFail(e); }
+      }).then(function () { if (--trBusy === 0 && lang) refreshNote(); });
+    };
+
+    var redrawAll = function () { Object.keys(tiles).forEach(function (id) { showPicture(tiles[id]); }); };
+
+    var sectionFor = function (g) {
+      var s = sections[g.id];
+      if (!s) {
+        var el = document.createElement('section');
+        el.className = 'room';
+        el.innerHTML = '<div class="room-h">' + icon('room') + '<h2></h2><span class="tag" hidden>here now</span></div><div class="lv-grid"></div>';
+        s = sections[g.id] = { el: el, title: $('h2', el), tag: $('.tag', el), grid: $('.lv-grid', el) };
+      }
+      return s;
+    };
+
+    var place = function (parent, el, i) { if (parent.children[i] !== el) parent.insertBefore(el, parent.children[i] || null); };
+
+    var build = function (groups) {
+      var seen = {}, seenSec = {}, gi = 0;
+      order = []; total = 0;
+      groups.forEach(function (g) {
+        var s = sectionFor(g);
+        seenSec[g.id] = 1;
+        s.title.textContent = g.name;
+        place(lvBody, s.el, gi++);
+        g.frames.forEach(function (f, i) {
+          var t = tiles[f.id] || makeTile(f);
+          t.f = f; seen[f.id] = 1; total++;
+          order.push(f.id);
+          t.name.textContent = f.name;
+          place(s.grid, t.el, i);
+          showPicture(t);
+        });
+      });
+      Object.keys(tiles).forEach(function (id) { if (!seen[id]) { tiles[id].el.remove(); delete tiles[id]; } });
+      Object.keys(sections).forEach(function (id) { if (!seenSec[id]) { sections[id].el.remove(); delete sections[id]; } });
+      $('#lv-empty').hidden = total > 0;
+    };
+
+    var syncView = function () {
+      if (follow && mode === 'focus' && tiles[active]) focusId = active;
+      if (!tiles[focusId]) focusId = order[0] || '';
+      lv.setAttribute('data-mode', mode);
+      $$('#lv-mode button').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-mode') === mode); });
+      $$('#lv-bg button').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-bg') === bg); });
+      $$('#lv-lang button').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-lang') === lang); });
+      $('#lv-follow').checked = follow;
+      Object.keys(tiles).forEach(function (id) {
+        tiles[id].el.classList.toggle('active', id === active);
+        tiles[id].el.classList.toggle('cur', id === focusId);
+      });
+      Object.keys(sections).forEach(function (id) {
+        var s = sections[id];
+        s.tag.hidden = id !== here;
+        s.el.hidden = mode === 'focus' && !$('.cur', s.el);
+      });
+      var at = order.indexOf(focusId);
+      $('#lv-prev').disabled = at <= 0;
+      $('#lv-next').disabled = at < 0 || at >= order.length - 1;
+      $('#lv-cur').textContent = tiles[focusId] ? tiles[focusId].f.name : '';
+      $('#lv-stat').textContent = total === 0 ? 'No canvases' : total + (total === 1 ? ' canvas' : ' canvases') + ' · updated live';
+    };
+
+    var apply = function (j) {
+      if (docId !== j.doc.id) {
+        docId = j.doc.id; since = '';
+        Object.keys(tiles).forEach(function (id) { tiles[id].el.remove(); });
+        Object.keys(sections).forEach(function (id) { sections[id].el.remove(); });
+        tiles = {}; sections = {}; order = []; focusId = ''; firstDraw = true;
+      }
+      $('#lv-name').textContent = j.doc.name;
+      document.title = j.doc.name + ' · Live · MR Whiteboard';
+      active = j.active; here = j.here;
+      if (j.groups) build(j.groups);
+      since = j.seq;
+      syncView();
+    };
+
+    var tick = function () {
+      fetch('/api/live?since=' + encodeURIComponent(since), { credentials: 'same-origin', cache: 'no-store' }).then(function (r) {
+        if (r.status === 401) { location.href = '/login'; return null; }
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      }).then(function (j) {
+        if (!j) return;
+        lvFails = 0; setConn(true); apply(j);
+      }).catch(function () {
+        if (++lvFails > 1) setConn(false);
+      }).then(function () {
+        clearTimeout(lvTimer);
+        lvTimer = setTimeout(tick, document.hidden ? 3000 : Math.min(8000, 600 + lvFails * 1200));
+      });
+    };
+
+    var setMode = function (m) { mode = m; keep('mrw-lv-mode', m); syncView(); };
+    var step = function (d) { var at = order.indexOf(focusId) + d; if (at >= 0 && at < order.length) { focusId = order[at]; follow = false; keep('mrw-lv-follow', '0'); syncView(); } };
+
+    lv.addEventListener('click', function (e) {
+      var m = e.target.closest('#lv-mode button'), b = e.target.closest('#lv-bg button'), shot = e.target.closest('.shot'), tl = e.target.closest('#lv-lang button');
+      if (tl) setLang(tl.getAttribute('data-lang'));
+      else if (m) setMode(m.getAttribute('data-mode'));
+      else if (b) {
+        bg = b.getAttribute('data-bg'); keep('mrw-lv-bg', bg);
+        Object.keys(tiles).forEach(function (id) { showPicture(tiles[id]); });
+        syncView();
+      }
+      else if (shot && mode === 'grid') { focusId = shot.closest('.tile').getAttribute('data-id'); follow = false; keep('mrw-lv-follow', '0'); setMode('focus'); }
+      else if (e.target.closest('#lv-prev')) step(-1);
+      else if (e.target.closest('#lv-next')) step(1);
+      else if (e.target.closest('#lv-full')) {
+        if (document.fullscreenElement) document.exitFullscreen();
+        else if (lv.requestFullscreen) lv.requestFullscreen();
+      }
+    });
+    $('#lv-follow').onchange = function () { follow = this.checked; keep('mrw-lv-follow', follow ? '1' : '0'); syncView(); };
+    lv.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.classList.contains('shot') && mode === 'grid') e.target.click(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.target.closest && e.target.closest('input,textarea')) return;
+      if (e.key === 'Escape' && mode === 'focus' && !document.fullscreenElement) setMode('grid');
+      else if (mode === 'focus' && e.key === 'ArrowLeft') step(-1);
+      else if (mode === 'focus' && e.key === 'ArrowRight') step(1);
+    });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) { clearTimeout(lvTimer); tick(); } });
+    // a language kept from last time is used again if the browser can do it without a click (the pack is already downloaded)
+    if (lang) {
+      var saved = lang;
+      lang = '';
+      if (!unsupported()) {
+        Translator.availability({ sourceLanguage: 'en', targetLanguage: saved }).then(function (a) {
+          if (a !== 'available') return;
+          var ready = 'LanguageDetector' in self ? LanguageDetector.create().then(function (d) { detector = d; }, function () {}) : Promise.resolve();
+          return ready.then(function () { lang = saved; refreshNote(); syncView(); redrawAll(); });
+        }).catch(function () {});
+      }
+    }
+    syncView();
+    tick();
+  }
+
+  // ---- AI assistant: keys, models and thinking levels per provider, asking about a canvas, its suggestion layers
+  var ai = $('#ai');
+  if (ai) {
+    var st = null, aiTimer = null, aiFails = 0, built = false, canvasPick = '';
+    var provBox = $('#ai-provs');
+    var post = function (cmd, body) { return api('/api/ai/' + cmd, body); };
+    var fail = function (e) { toast(e.message, true); };
+    var curName = function (id) { var c = st.canvases.filter(function (x) { return x.id === id; })[0]; return c ? c.name : ''; };
+    var modelName = function (p) { var m = p.models.filter(function (x) { return x.id === p.model; })[0]; return m ? m.name : p.model; };
+
+    var buildProviders = function (list) {
+      provBox.innerHTML = '';
+      list.forEach(function (p) {
+        var el = document.createElement('div');
+        el.className = 'prov';
+        el.setAttribute('data-p', p.id);
+        el.innerHTML = '<div class="prov-h"><label class="use"><input type="radio" name="ai-use" value="' + esc(p.id) + '"><b>' + esc(p.name) + '</b></label>' +
+          '<span class="chip keyhint"></span><a class="get" target="_blank" rel="noopener" href="' + esc(p.keys_url) + '">Get a key</a></div>' +
+          '<div class="ai-row"><input class="field key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your ' + esc(p.name) + ' API key">' +
+          '<button class="btn" data-k="save">Save</button><button class="icon-btn danger" data-k="remove" title="Remove the key">' + icon('trash') + '</button></div>' +
+          '<div class="ai-row"><label class="sel"><span>Model</span><select class="field model"></select></label>' +
+          '<label class="sel"><span>Thinking</span><select class="field mode"></select></label>' +
+          '<button class="icon-btn" data-k="refresh" title="Fetch the model list again">' + icon('refresh') + '</button></div>' +
+          '<div class="note"></div>';
+        provBox.appendChild(el);
+      });
+      built = true;
+    };
+
+    // a <select> is only rebuilt when its options change, and never while it is open
+    var fillSelect = function (sel, opts, cur) {
+      if (document.activeElement === sel) return;
+      var sig = JSON.stringify(opts) + '|' + cur;
+      if (sel.getAttribute('data-sig') === sig) return;
+      sel.setAttribute('data-sig', sig);
+      sel.innerHTML = opts.map(function (o) { return '<option value="' + esc(o[0]) + '">' + esc(o[1]) + '</option>'; }).join('');
+      sel.value = cur;
+    };
+
+    var render = function () {
+      if (!built) buildProviders(st.providers);
+      st.providers.forEach(function (p) {
+        var el = $('.prov[data-p="' + p.id + '"]');
+        if (!el) return;
+        el.classList.toggle('on', st.provider === p.id);
+        $('input[type=radio]', el).checked = st.provider === p.id;
+        var kh = $('.keyhint', el);
+        kh.textContent = p.has_key ? 'Key ' + p.key_hint : 'No key';
+        kh.classList.toggle('here', p.has_key);
+        var models = p.models.map(function (m) { return [m.id, m.name === m.id ? m.id : m.name + ' (' + m.id + ')']; });
+        if (!models.some(function (m) { return m[0] === p.model; })) models.unshift([p.model, p.model === '' ? (p.has_key ? 'Fetch the list (button on the right)' : 'Add a key to list the models') : p.model + (p.models.length ? ' (not in the list)' : '')]);
+        fillSelect($('.model', el), models, p.model);
+        fillSelect($('.mode', el), p.modes, p.mode);
+        var note = $('.note', el);
+        note.className = 'note' + (p.error && !p.fetching ? ' bad' : '');
+        note.textContent = p.fetching ? 'Fetching the model list...' : p.error ? p.error : !p.has_key ? 'Paste a key to fetch the models.' :
+          p.exact_modes ? 'Thinking levels as ' + p.name + ' reports them for this model.' : 'Thinking levels are the documented ones for this model family; one the model refuses is left out.';
+      });
+      var cs = $('#ai-canvas');
+      var here = curName(st.target);
+      fillSelect(cs, [['', 'The one in front of you' + (here ? ' (' + here + ')' : '')]].concat(st.canvases.map(function (c) { return [c.id, c.name + ' · ' + c.items + ' items']; })), canvasPick);
+      var acts = $('#ai-acts');
+      if (!acts.childElementCount) acts.innerHTML = st.actions.map(function (a) { return '<button class="btn" data-ai="' + esc(a[0]) + '" title="' + (a[2] ? 'Draws a suggestion you accept or discard' : 'Answers in words') + '">' + esc(a[1]) + '</button>'; }).join('');
+      $$('#ai-acts .btn, #ai-send').forEach(function (b) { b.disabled = st.busy; });
+      $('#ai-picture').checked = st.picture;
+      $('#ai-note').checked = st.note;
+      var cur = st.providers.filter(function (p) { return p.id === st.provider; })[0];
+      $('#ai-stat').textContent = cur ? (cur.has_key ? cur.name + ' · ' + modelName(cur) : 'Add a ' + cur.name + ' key to start') : '';
+      var stat = $('#ai-status');
+      stat.className = 'ai-status' + (st.last && st.last.error && !st.busy ? ' bad' : '');
+      stat.innerHTML = (st.busy ? '<div class="spin"></div>' : '') + '<span>' + esc(st.status || '') + '</span>';
+      var rep = $('#ai-reply');
+      rep.hidden = !(st.last && st.last.say);
+      if (!rep.hidden) {
+        $('#ai-meta').textContent = st.last.model + ' · ' + st.last.label + (st.last.seconds ? ' · ' + st.last.seconds + ' s' : '');
+        $('#ai-say').textContent = st.last.say;
+      }
+      var lay = $('#ai-layers'), sig = JSON.stringify(st.layers);
+      if (lay.getAttribute('data-sig') !== sig) {
+        lay.setAttribute('data-sig', sig);
+        lay.innerHTML = st.layers.map(function (l) {
+          return '<div class="layer" data-f="' + esc(l.frame) + '"><div><b>Suggestion on ' + esc(l.name) + '</b><span>' + esc(l.counts) + ' · ' + esc(l.model) + ' · ' + esc(l.label) + '</span></div>' +
+            '<label class="chk"><input type="checkbox" data-l="show"' + (l.visible ? ' checked' : '') + '> Shown in the headset</label>' +
+            '<button class="btn btn-primary btn-sm" data-l="accept">' + icon('check') + ' Accept</button><button class="btn btn-sm" data-l="discard">' + icon('x') + ' Discard</button></div>';
+        }).join('');
+      }
+    };
+
+    var load = function () {
+      fetch('/api/ai/state', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) {
+        if (r.status === 401) { location.href = '/login'; return null; }
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      }).then(function (j) {
+        if (!j) return;
+        aiFails = 0; st = j; render();
+        var live = $('.live'); if (live) live.classList.remove('off');
+      }).catch(function () {
+        if (++aiFails > 1) { var live = $('.live'); if (live) live.classList.add('off'); }
+      }).then(function () {
+        clearTimeout(aiTimer);
+        var waiting = st && (st.busy || st.providers.some(function (p) { return p.fetching; }));
+        aiTimer = setTimeout(load, waiting ? 1000 : (document.hidden ? 8000 : 3000));
+      });
+    };
+    var soon = function () { clearTimeout(aiTimer); aiTimer = setTimeout(load, 250); };
+    var ask = function (action, text) {
+      post('ask', { action: action, text: text, frame: canvasPick }).then(function () { if (action === 'ask') $('#ai-q').value = ''; soon(); }).catch(function (e) { fail(e); soon(); });
+    };
+    var saveKey = function (prov) {
+      var inp = $('.key', prov), v = inp.value.trim();
+      if (!v) { inp.focus(); return; }
+      post('key', { provider: prov.getAttribute('data-p'), key: v, use: '1' }).then(function (j) { inp.value = ''; toast(j.message); soon(); }).catch(fail);
+    };
+
+    ai.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      var prov = b.closest('.prov'), p = prov && prov.getAttribute('data-p'), k = b.getAttribute('data-k');
+      if (k === 'save') saveKey(prov);
+      else if (k === 'remove') {
+        dialog({ title: 'Remove the ' + $('b', prov).textContent + ' key?', text: 'The headset forgets this API key.', ok: 'Remove', danger: true }).then(function (yes) {
+          if (yes) post('key', { provider: p, key: '' }).then(function (j) { toast(j.message); soon(); }).catch(fail);
+        });
+      }
+      else if (k === 'refresh') post('refresh', { provider: p }).then(soon).catch(fail);
+      else if (b.hasAttribute('data-ai')) ask(b.getAttribute('data-ai'), '');
+      else if (b.id === 'ai-send') { var q = $('#ai-q').value.trim(); if (!q) { $('#ai-q').focus(); return; } ask('ask', q); }
+      else if (b.id === 'ai-forget') post('forget', { frame: canvasPick }).then(function (j) { toast(j.message); soon(); }).catch(fail);
+      else if (b.hasAttribute('data-l')) post(b.getAttribute('data-l'), { frame: b.closest('.layer').getAttribute('data-f') }).then(function (j) { toast(j.message || 'Done'); soon(); }).catch(fail);
+    });
+    ai.addEventListener('change', function (e) {
+      var t = e.target, prov = t.closest('.prov'), p = prov && prov.getAttribute('data-p');
+      if (t.name === 'ai-use') post('select', { provider: p, use: true }).then(soon).catch(fail);
+      else if (t.classList.contains('model')) post('select', { provider: p, model: t.value }).then(soon).catch(fail);
+      else if (t.classList.contains('mode')) post('select', { provider: p, mode: t.value }).then(soon).catch(fail);
+      else if (t.id === 'ai-picture') post('select', { picture: t.checked }).catch(fail);
+      else if (t.id === 'ai-note') post('select', { note: t.checked }).catch(fail);
+      else if (t.id === 'ai-canvas') canvasPick = t.value;
+      else if (t.getAttribute('data-l') === 'show') post('show', { frame: t.closest('.layer').getAttribute('data-f'), visible: t.checked }).then(soon).catch(fail);
+    });
+    ai.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && e.target.classList.contains('key')) { e.preventDefault(); saveKey(e.target.closest('.prov')); }
+      else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && e.target.id === 'ai-q') { e.preventDefault(); $('#ai-send').click(); }
+    });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) soon(); });
+    load();
+  }
 
   bind();
 })();

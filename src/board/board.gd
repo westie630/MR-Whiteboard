@@ -26,7 +26,7 @@ var current_room := ""
 var room_state := "none"                   # none | searching | found | assumed (anchors not found: shown in front) | unanchored
 var _assumed := {}                         # room id -> world pose it is shown at while its anchors are not found
 var frame_nodes: Dictionary = {}           # frame id -> FrameNode
-var active_frame := ""                     # the canvas last drawn on / selected: the target of the Canvas tab
+var active_frame := ""                     # the canvas last drawn on / selected: the one Home > Canvases styles
 var selection: Array = []                  # selected item ids (all on sel_frame)
 var sel_frame := ""
 ## Where the selection's undo / redo / delete buttons were when the selection went away through a delete, undo or redo: {frame, rect,
@@ -40,6 +40,7 @@ var hand_ctl: HandController
 var ink: InkController
 var speech: SpeechController
 var texts: TextController
+var ai: AiController                       # the AI assistant (ask a language model about a canvas; its suggestion layers)
 var share: ExportServer                   # the web server that lets a PC browser view / download the canvases (off until switched on)
 var head := Transform3D(Basis.IDENTITY, Vector3(0, 1.6, 0))
 
@@ -66,13 +67,17 @@ func _init() -> void:
 	ink = InkController.new(self)
 	speech = SpeechController.new(self)
 	texts = TextController.new(self)
+	ai = AiController.new(self)
 	share = ExportServer.new()
 	share.name = "Share"
 	share.doc_source = func(): return doc
 	share.room_source = func(): return current_room
+	share.active_source = func(): return active_frame
+	share.backing_source = func(): return App.val("backing")
 	share.delete_canvas = _web_delete
 	share.rename_canvas = rename_frame
 	share.import_svg = import_svg
+	share.ai_api = func(cmd: String, data: Dictionary) -> Dictionary: return ai.api(cmd, data)
 	share.state_changed.connect(func(): changed.emit())
 	add_child(share)
 
@@ -111,6 +116,7 @@ func open(d: Document) -> void:
 	if anchors != null:
 		anchors.track(DocStore.anchors_of(doc))
 	App.put("last_doc", doc.id)
+	ai.open_doc()
 	document_opened.emit()
 	changed.emit()
 
@@ -131,6 +137,7 @@ func close_document() -> void:
 	ink.reset()
 	cancel_place()
 	_disconnect_doc()
+	ai.close_doc()
 	for a in _orphans:
 		if anchors != null:
 			anchors.erase(a)
@@ -193,6 +200,7 @@ func _make_frame_node(f: FrameData) -> FrameNode:
 func _on_frame_added(f: FrameData) -> void:
 	if not frame_nodes.has(f.id):
 		_make_frame_node(f)
+		ai.render(f.id)
 	changed.emit()
 
 
@@ -398,7 +406,7 @@ func _assume_room(room_id: String) -> void:
 	current_room = room_id
 	room_state = "assumed"
 	doc.last_room = room_id
-	toast.emit("The anchors of \"%s\" were not found, so it is shown in front of you. Rooms tab > Re-anchor room keeps it here." % str(doc.room(room_id).get("name", "the room")))
+	toast.emit("The anchors of \"%s\" were not found, so it is shown in front of you. Home > Rooms > Re-anchor keeps it here." % str(doc.room(room_id).get("name", "the room")))
 	changed.emit()
 
 
@@ -1075,6 +1083,41 @@ func apply_style_to_selection() -> void:
 		elif c.kind == Item.STROKE:
 			c.width = float(App.val("width"))
 			c.brush = str(App.val("brush"))
+		after.append(c)
+	history.do(History.op_modify(before, after))
+
+
+## Give the selected items another colour (only the colour: widths, brushes and fill strength stay). One undo step.
+func recolor_selection(col: Color) -> void:
+	var items := selected_items()
+	if items.is_empty():
+		return
+	var before: Array = []
+	var after: Array = []
+	for it in items:
+		var item: Item = it
+		before.append(item.duplicate_item(false))
+		var c := item.duplicate_item(false)
+		c.color = Color(col.r, col.g, col.b, c.color.a if c.kind != Item.TEXT else 1.0)
+		if c.kind == Item.SHAPE and c.fill.a > 0.0:
+			c.fill = Color(col.r, col.g, col.b, c.fill.a)
+		after.append(c)
+	history.do(History.op_modify(before, after))
+
+
+## Fill the selected closed shapes with their colour, or take the fill away when they are all filled. One undo step.
+func toggle_fill_selection() -> void:
+	var shapes: Array = selected_items().filter(func(it): return (it as Item).kind == Item.SHAPE and not (it as Item).is_line())
+	if shapes.is_empty():
+		return
+	var all_filled := shapes.all(func(it): return (it as Item).fill.a > 0.0)
+	var before: Array = []
+	var after: Array = []
+	for it in shapes:
+		var item: Item = it
+		before.append(item.duplicate_item(false))
+		var c := item.duplicate_item(false)
+		c.fill = Color(0, 0, 0, 0) if all_filled else Color(c.color.r, c.color.g, c.color.b, float(App.val("fill_alpha")))
 		after.append(c)
 	history.do(History.op_modify(before, after))
 

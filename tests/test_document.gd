@@ -159,5 +159,33 @@ func _ready() -> void:
 	var measured := TextLayout.measure("Hello", fit.em)
 	t.check(absf(measured.x - 0.4) < 0.1, "fitted text is about as wide as the ink: %f" % measured.x)
 
+	# Open Sans weights and italics
+	t.check(TextLayout.font(700) != TextLayout.font(400) and TextLayout.font(400, true) != TextLayout.font(400), "each weight and style is its own font")
+	t.check(TextLayout.font(700) == TextLayout.font(690), "weights snap to steps of 50 and share one font")
+	t.check(TextLayout.font(100) == TextLayout.font(300) and TextLayout.font(1000) == TextLayout.font(800), "weights are limited to 300..800")
+	t.check(TextLayout.measure("Weight", 0.1, 800).x > TextLayout.measure("Weight", 0.1, 300).x, "heavier text is wider")
+	t.eq(TextLayout.style_id(0.09, 700), "h1", "a text of Heading 1 size and weight is Heading 1")
+	t.eq(TextLayout.style_id(0.0905, 700), "", "a text scaled by hand is no longer in a style")
+	var sizes_ok := true
+	for i in TextLayout.STYLES.size() - 1:
+		sizes_ok = sizes_ok and float(TextLayout.STYLES[i][2]) > float(TextLayout.STYLES[i + 1][2])
+	t.check(sizes_ok, "the styles get smaller from Heading 1 to Small")
+	var styled := Item.make_text("", "Styled", Color.WHITE, 0.05)
+	var plain_w := styled.size.x
+	styled.weight = 700
+	styled.italic = true
+	styled.refit_text()
+	t.check(styled.size.x > plain_w, "bold text gets a wider box")
+	var reloaded := Item.from_dict(styled.to_dict())
+	t.check(reloaded.weight == 700 and reloaded.italic and absf(reloaded.size.x - styled.size.x) < 1e-4, "weight and italic survive save and load (%d %s %f vs %f)" % [reloaded.weight, reloaded.italic, reloaded.size.x, styled.size.x])
+	var normal := Item.make_text("", "Plain", Color.WHITE, 0.05).to_dict()
+	t.check(not normal.has("weight") and not normal.has("italic"), "regular upright text saves no style")
+	var styled_svg := SvgExport._text("Styled", Vector2.ZERO, 0.0, 0.05, Color.WHITE, func(p): return p, 700, true)
+	t.check(styled_svg.contains('font-weight="700"') and styled_svg.contains('font-style="italic"'), "the SVG export names weight and italic")
+	var round := SvgImport.parse('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"><text x="5" y="20" font-size="8" font-weight="bold" font-style="italic">B</text><text x="5" y="40" font-size="8" font-weight="300">L</text><text x="5" y="48" font-size="8">N</text></svg>', true)
+	var rt: Array = round.get("items", [])
+	t.check(rt.size() == 3 and (rt[0] as Item).weight == 700 and (rt[0] as Item).italic, "bold italic SVG text imports as weight 700 italic")
+	t.check(rt.size() == 3 and (rt[1] as Item).weight == 300 and not (rt[1] as Item).italic and (rt[2] as Item).weight == 400, "numeric and default SVG weights import")
+
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://test_doc.mrw"))
 	get_tree().quit(t.done())

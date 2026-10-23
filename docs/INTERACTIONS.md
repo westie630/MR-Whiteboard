@@ -151,7 +151,7 @@ not a finger). Radii are in world metres, so on a scaled canvas they stay the sa
 | **Empty canvas** | undecided: the pointer must move **2 cm** to become a **canvas carry**; if you let go first it is a **tap** that clears the selection | tap = deselect |
 | **Bar** | **carry the canvas.** The canvas follows the pinch point | the canvas stays; new anchor |
 | **Corner** | **resize**: the corner follows the pointer on the canvas plane, the opposite corner stays fixed. Minimum size 0.25 × 0.18 m | commit |
-| **Anywhere on a canvas already carried by the other hand** | joins that canvas (second hand): see 9.2 | |
+| **Anywhere on a canvas already carried by the other hand** | joins that canvas (second hand, or the stylus's front button): see 9.2 | |
 | Nothing | nothing (logged) | |
 
 - The grab is decided at the **held ray** (`press_o/d`, section 4) when pointing, and at the pinch point when touching.
@@ -161,9 +161,25 @@ not a finger). Radii are in world metres, so on a scaled canvas they stay the sa
 
 ---
 
-## 6. The menu
+## 6. The menu (the interface's panels)
 
-Code: `_update_menu()` in [xr_rig.gd](../src/xr/xr_rig.gd), pointer to mouse conversion in [xr_panel.gd](../src/xr/xr_panel.gd).
+Code: `_update_menu()` in [xr_rig.gd](../src/xr/xr_rig.gd), pointer to mouse conversion in [xr_panel.gd](../src/xr/xr_panel.gd), what shows
+when in [ui_shell.gd](../src/ui/ui_shell.gd).
+
+"The menu" is a set of small panels ([UiShell](../src/ui/ui_shell.gd)), each on its own `XrPanel` and shown only when it is needed:
+
+| Panel | Where it floats | Shown |
+|---|---|---|
+| **Dock** (tools, brush, undo / redo, Add, assistant, Home) | low in front of you (section 7); has a handle | always |
+| **Popover** (Brush, Shapes, Handwriting, Add) | standing on the dock, over the button it came from | tap the active tool again, the brush chip, or Add; drawing on a canvas closes it |
+| **Typing card** (text box + keyboard) | standing on the dock | Type, renaming, keys |
+| **Home**, **Assistant** | beside the dock (left / right), a little higher, turned to you; each has a handle | from the dock; Esc / close |
+| **Selection bar**, **ink chip**, **suggestion bar** | pinned to the canvas, 12 mm in front of it: above the selection, right of handwriting, inside the top of a canvas with an AI suggestion | while there is one; they step away while the pen draws or a hand carries something |
+| **Message** | 0.75 m ahead, a little above the eyes, following the head lazily | a few seconds |
+
+Every panel fades back while the pen draws, erases, selects or drags, or a hand carries something (setting `ui_fade`), and returns 0.35 s
+after. Only a panel's own surface catches pointers: its texture is larger (room for tooltips, for growing), and the empty part lets rays and
+pokes through to what is behind. When several panels are reached, a touch beats a ray and the nearest wins.
 
 ### 6.1 Two ways to press a menu button, the same for both tools
 
@@ -177,7 +193,7 @@ Rules for both:
 1. **Touch zone**: inside the panel's rectangle (+1 cm margin) and between **5 cm behind** and **8 cm in front** of the panel. Touch takes precedence over the ray for the same source.
 2. **Ray reach**: the ray must hit the panel within **1.4 m**, with no canvas nearer than the panel along the ray (by more than 5 cm): then the pinch belongs to the canvas.
 3. **A press must begin on the menu.** A pinch that closed on a canvas, then drags across the menu, does not turn into a menu press. A press that began on the menu stays the menu's until it opens.
-4. **At a canvas the stylus draws and grabs.** With the nib within 12 cm of a canvas the stylus is not offered the menu, by touch or by ray, so a menu behind a canvas never steals a stroke. Move the menu away, or lift the stylus.
+4. **At a canvas the stylus draws and grabs.** With the nib within 12 cm of a canvas the stylus is not offered the menu, by touch or by ray, so a menu behind a canvas never steals a stroke. Move the menu away, or lift the stylus. *Exception:* the bars pinned to the canvas (selection bar, ink chip, suggestion bar) are touched with the nib like the canvas itself, as long as the pen is not in the middle of a stroke.
 5. **One pointer at a time.** The one holding a press keeps it; then one that is pressing or touching; then the one that already had the pointer; then the first in the order *stylus, left hand, right hand*.
 6. **Capture** is by touching or pressing only. A ray that merely passes through the menu shows its ring there but the hand is still the board's.
 7. **Release outside**: if the pointer leaves the panel while pressed, it releases at (-1,-1), so no button fires.
@@ -209,7 +225,9 @@ The handle is a capsule under the panel (`HANDLE_Y` = 3 cm below it). It is a ba
 | **Pointing**: ray passes within **6 cm** of the handle (within 1.4 m) | brighter | same | follows the point with gain 1 to 6 (distance ratio from the head) | same |
 
 While held the panel turns to face the head. Handle colour: dim teal idle, bright teal hover, white held. A press that begins on the handle
-captures the pointer; merely hovering does not.
+captures the pointer; merely hovering does not. A ray that is on a panel never grabs a handle by pointing (the dock is only ~5 cm tall, so
+its handle is close to its buttons). The dock, Home and the Assistant have handles; what stands on the dock (a popover, the typing card)
+moves with it, the bars on a canvas move with the canvas.
 
 ---
 
@@ -219,13 +237,14 @@ captures the pointer; merely hovering does not.
 |---|---|---|
 | **Palm up** (either hand except the stylus hand) | palm normal Y > 0.6, hand **not pinching**, palm within **0.7 m** of the head, held **0.6 s** | the menu appears in front (below) |
 | **Stylus front button held** | **0.6 s**, nib **not** within 14 cm of a canvas (slack 0.2 m), the stylus ray **not on a canvas**, no canvas being carried, not using the menu | the menu appears in front (below); haptic tick; once per press |
-| Close button on the menu | | hides it |
 | Any printable key on a Bluetooth keyboard / Enter | | shows it and opens the text box |
+| Esc on a Bluetooth keyboard | | closes the topmost: typing card, popover, side panels, then lets go of the selection |
 | Put the headset on again (`session_focussed`) | | placed in front |
 | Menu > **2.5 m** from the head (and not being moved) | | brought back in front |
 | First frame the head is above 0.3 m | | placed in front |
 
-"In front" is the same place for all of them: **0.62 m ahead, 14 cm left, 20 cm down** of the head, turned to face it. Palm up also
+"In front" is the same place for all of them: the middle of the dock's lower edge **0.55 m ahead and 30 cm down** of the head, turned
+(and tilted) to face it, low like a keyboard so it stays out of the view; open side panels come along beside it. Palm up also
 blocks a hand from pointing (`aiming` is false when palm-up), so the summon gesture cannot click anything. Re-arm: after a palm summon
 the gesture needs the palm to be away for 2 s.
 
@@ -295,7 +314,7 @@ When one hand is carrying a canvas (bar or empty-canvas drag, not a corner) and 
 | Rotate around each other | **yaw only** (about the vertical axis) |
 | Move apart / together | **scale** by the distance ratio (ratio clamped 0.2 to 6, canvas scale 0.15 to 8) |
 
-Needs the hands > 4 cm apart to start. Letting go with one hand re-bases the other, so the canvas does not jump. A second hand on a *different* canvas is its own grab. The stylus does not join a two-hand grab.
+Needs the hands > 4 cm apart to start. Letting go with one hand re-bases the other, so the canvas does not jump. A second hand on a *different* canvas is its own grab. The stylus's **front button counts as a pinch here too**: the nib is its pinch point, so a hand plus the stylus (front button held) turn and resize a canvas exactly like two hands, in either order. The hand that holds the stylus cannot pinch, so this is the way to do it with a stylus in hand.
 
 ### 9.3 No stylus, "Draw with a pinch" on (`finger_draw`)
 
@@ -310,7 +329,7 @@ When the right hand touches or presses the menu it is captured and does not draw
 
 ## 10. Placing a canvas
 
-Menu: Canvas tab > On a wall / On a table. While placing, **the pen and hand controllers are suspended** (nothing else on the board reacts).
+Dock: Add (+) > On a wall / On a table (or Home > Canvases). While placing, **the pen and hand controllers are suspended** (nothing else on the board reacts).
 
 | | |
 |---|---|
@@ -372,12 +391,12 @@ All in [input_tuning.gd](../src/core/input_tuning.gd) (`InputTuning`). The scrip
 | Pinch | `PINCH_ON` 0.9 · `PINCH_OFF` 0.6 · `CLOSE_START` 0.35 · `CLOSE_CANCEL` 0.2 · `RISE_STEP` 0.003 · `JOINT_ON` 22 mm · `JOINT_FAR` 65 mm · `LOST_GRACE` 0.15 s · `PINCH_HISTORY_S` 0.6 · `PALM_UP_Y` 0.6 · `AIM_DOT_PROFILE` 0 · `AIM_DOT_JOINT` 0.1 |
 | Stylus | `TIP_ON` 0.035 · `TIP_OFF` 0.018 · `MID_ON` 0.09 · `MID_OFF` 0.05 · `AXIS_SAMPLES` 45 · `PRESSURE_EXP` 0.75 · `STYLUS_FILTER` (2.2, 45) |
 | Menu | `POKE_PRESS` 15 mm · `POKE_RELEASE` 30 mm · `POKE_BEHIND` 5 cm · `POKE_FRONT` 8 cm · `POKE_MARGIN` 1 cm · `MENU_RAY_REACH` 1.4 m · `HANDLE_Y` 3 cm · `HANDLE_NEAR` 7 cm · `HANDLE_RAY_R` 6 cm · `MENU_MAX_DIST` 2.5 m · `SCROLL_DEADZONE` 14 px · `SCROLL_SIDE` 1.6 · `GLOVES_OFF_NEAR` 0.2 m |
-| Bringing the menu | `SUMMON_HOLD_S` 0.6 s · `PALM_SUMMON_DIST` 0.7 m · `PALM_REARM_S` 2 s · `SUMMON_AHEAD` 0.62 · `SUMMON_RIGHT` -0.14 · `SUMMON_UP` -0.2 · `SUMMON_STYLUS_CANVAS` 0.14 m |
+| Bringing the menu | `SUMMON_HOLD_S` 0.6 s · `PALM_SUMMON_DIST` 0.7 m · `PALM_REARM_S` 2 s · `SUMMON_AHEAD` 0.55 · `SUMMON_RIGHT` 0 · `SUMMON_UP` -0.3 · `SUMMON_STYLUS_CANVAS` 0.14 m |
 | Pen on the board | `CAPTURE` 0.12 m · `SLACK` 0.6 m · `HOVER_RANGE` 0.28 m · `MIN_STEP` 0.9 mm · `HOLD_MOVE` 4 mm · `UNSNAP_MOVE` 12 mm (×2 in use) · `ERASE_R` 14 mm · `PICK_R` 13 mm · `HANDLE_HIT` 34 mm · `BTN_HIT` 28 mm · `LASSO_INSIDE` 0.6 · `SHAPE_TAP` 25 mm · `MIN_LINE` 2 cm · `hold_seconds` setting 0.55 s |
 | Grabbing | `DIRECT_NEAR` 0.12 m · `DIRECT_STAY` 1.3 · `DIRECT_REACH` 1.6 · `REACH` 2.6 · `BAR_DROP` 7 cm · `BAR_HIT_W` 20 cm · `BAR_HIT_H` 7 cm · `CORNER_HIT` 7.5 cm · `PLANE_SLACK` 20 cm · `MOVE_START` 2 cm · `MAX_GAIN` 6 · `MIN_GAIN_DIST` 0.25 m · `MIN_CANVAS` 0.25 × 0.18 m · `TWO_HAND_MIN` 4 cm · `TWO_HAND_RATIO` 0.2 to 6 · `CANVAS_SCALE` 0.15 to 8 |
 | Cursor | `CORNER_R` 14 mm · `BAR_LEN` 0.30 m · `BAR_R` 7.5 mm · `RING_R` 11 mm at 0.7 m, clamped `RING_MIN` 6 mm to `RING_MAX` 50 mm · `COL_*` colours (in `HandCursor`) |
 
-Settings that change behaviour (menu): `stylus_hand`, `finger_draw`, `haptics` (Feedback), `recognize`, `hold_seconds`, `ink_auto`, `ink_pause`, `ui_scale`, `tool`.
+Settings that change behaviour (Home > Settings and the popovers): `stylus_hand`, `finger_draw`, `haptics` (Feedback), `recognize`, `hold_seconds`, `ink_auto`, `ink_pause`, `smart_ink` (the pen notices writing), `ui_scale`, `ui_fade`, `tool`.
 
 ---
 
@@ -391,13 +410,17 @@ Settings that change behaviour (menu): `stylus_hand`, `finger_draw`, `haptics` (
 | Shift + left | front button: **grab**, by touch (the mouse is always on the canvas plane): items, the bar, corners, empty canvas |
 | Middle button | pinch (works anywhere over a canvas: `grab_anywhere`). Wheel scales the carried canvas, Q / E rotate it |
 | Right button + mouse, WASD | look, walk |
-| Ctrl+Z / Ctrl+Y | undo / redo (the menu buttons too; the back button has no key of its own) |
-| 1 to 5 | Draw, Shape, Write, Select, Erase |
-| C | place a canvas; T / Enter type text; Tab hides the menu |
+| Ctrl+Z / Ctrl+Y | undo / redo (the dock's buttons too; the back button has no key of its own) |
+| 1 to 5 | Pen, Shapes, Write, Select, Erase (the dock shows them in the order Pen, Write, Shapes, Select, Erase) |
+| C | place a canvas; T / Enter type text; B the brush; Tab hides the interface; Esc closes the topmost panel |
+
+On the PC the panels float over the 3D view the same way (dock at the bottom, Home left, Assistant right, the canvas bars projected onto
+their spot on the screen); the dock and the side panels have a grip (the dotted handle) to drag them, remembered in `panel_pos`.
 
 Not simulated on the PC: pinch stabilisation, palm-up summon, the menu handle, poke, the second hand, grabbing from a distance, hand cursors, click sounds.
 `res://tools/dev/sim_draw.tscn` drives this rig with synthetic mouse events; `tests/test_hand_input.gd` covers the pinch state machine, `tests/test_board.gd`
-the touch / point grabs of hands and stylus and the back button, `tests/test_xr_rig.gd` the menu rules (capture, touch, handle, summon).
+the touch / point grabs of hands and stylus and the back button, `tests/test_xr_rig.gd` the menu rules (capture, touch, handle, summon, several panels, the nib on a canvas bar), `tests/test_xr_panel.gd`
+the panels' pointer mapping and see-through margins, `tests/test_ui_smoke.gd` the panels' flow rules.
 
 ---
 

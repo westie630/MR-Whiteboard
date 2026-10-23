@@ -179,9 +179,78 @@ static func draw(ci: CanvasItem, id: String, r: Rect2, col: Color) -> void:
 			ci.draw_line(P.call(0.5, 0.35), P.call(0.5, 0.82), col, w, true)
 			ci.draw_arc(P.call(0.5, 0.6), s * 0.3, 0.1 * PI, 0.9 * PI, 16, col, w, true)
 			ci.draw_line(P.call(0.36, 0.46), P.call(0.64, 0.46), col, w, true)
+		"ai":
+			# a four-pointed spark with a small one beside it: the AI assistant
+			var big := PackedVector2Array()
+			for k in 8:
+				var ang := TAU * float(k) / 8.0 - PI * 0.5
+				var rad := 0.36 if k % 2 == 0 else 0.1
+				big.append(P.call(0.44 + cos(ang) * rad, 0.56 + sin(ang) * rad))
+			ci.draw_colored_polygon(big, col)
+			var small_spark := PackedVector2Array()
+			for k in 8:
+				var ang2 := TAU * float(k) / 8.0 - PI * 0.5
+				var rad2 := 0.15 if k % 2 == 0 else 0.045
+				small_spark.append(P.call(0.78 + cos(ang2) * rad2, 0.2 + sin(ang2) * rad2))
+			ci.draw_colored_polygon(small_spark, col)
 		"pin":
 			ci.draw_circle(P.call(0.5, 0.36), s * 0.2, col)
 			ci.draw_colored_polygon(PackedVector2Array([P.call(0.4, 0.5), P.call(0.6, 0.5), P.call(0.5, 0.88)]), col)
+		"menu":
+			for k in 3:
+				var my := 0.3 + float(k) * 0.2
+				ci.draw_line(P.call(0.2, my), P.call(0.8 - float(k % 2) * 0.16, my), col, w * 1.15, true)
+		"more":
+			for k in 3:
+				ci.draw_circle(P.call(0.26 + float(k) * 0.24, 0.5), s * 0.065, col)
+		"eye", "eye_off":
+			var lid := PackedVector2Array()
+			for k in range(0, 17):
+				var t5 := float(k) / 16.0
+				lid.append(P.call(0.12 + t5 * 0.76, 0.5 - sin(t5 * PI) * 0.24))
+			for k in range(15, 0, -1):
+				var t6 := float(k) / 16.0
+				lid.append(P.call(0.12 + t6 * 0.76, 0.5 + sin(t6 * PI) * 0.24))
+			lid.append(lid[0])
+			ci.draw_polyline(lid, col, w, true)
+			ci.draw_circle(P.call(0.5, 0.5), s * 0.1, col)
+			if id == "eye_off":
+				ci.draw_line(P.call(0.18, 0.82), P.call(0.82, 0.18), col, w * 1.2, true)
+		"bold":
+			ci.draw_string(UITheme.font(800), P.call(0.24, 0.78), "B", HORIZONTAL_ALIGNMENT_LEFT, -1, int(s * 0.74), col)
+		"italic":
+			ci.draw_string(TextLayout.font(500, true), P.call(0.32, 0.78), "I", HORIZONTAL_ALIGNMENT_LEFT, -1, int(s * 0.74), col)
+		"aa":
+			ci.draw_string(UITheme.font(600), P.call(0.08, 0.76), "Aa", HORIZONTAL_ALIGNMENT_LEFT, -1, int(s * 0.62), col)
+		"wifi":
+			for k in 3:
+				var rad3 := s * (0.14 + 0.15 * float(k))
+				ci.draw_arc(P.call(0.5, 0.78), rad3, -PI * 0.78, -PI * 0.22, 18, col, w, true)
+			ci.draw_circle(P.call(0.5, 0.78), s * 0.06, col)
+		"power":
+			ci.draw_arc(P.call(0.5, 0.54), s * 0.3, -PI * 0.32, PI * 1.32, 28, col, w * 1.1, true)
+			ci.draw_line(P.call(0.5, 0.14), P.call(0.5, 0.5), col, w * 1.1, true)
+		"help":
+			ci.draw_arc(P.call(0.5, 0.5), s * 0.38, 0.0, TAU, 36, col, w, true)
+			ci.draw_arc(P.call(0.5, 0.4), s * 0.12, -PI, PI * 0.45, 16, col, w, true)
+			ci.draw_line(P.call(0.53, 0.51), P.call(0.5, 0.6), col, w, true)
+			ci.draw_circle(P.call(0.5, 0.72), s * 0.045, col)
+		"palette":
+			# a hue ring: any colour
+			var segs := 36
+			for k in segs:
+				var a0 := TAU * float(k) / segs
+				ci.draw_arc(P.call(0.5, 0.5), s * 0.3, a0, a0 + TAU / segs + 0.02, 3, Color.from_hsv(float(k) / segs, 0.75, 1.0), s * 0.16, true)
+			ci.draw_circle(P.call(0.5, 0.5), s * 0.13, Color(col.r, col.g, col.b, 0.9))
+		"send":
+			# a paper plane
+			var plane := PackedVector2Array([P.call(0.14, 0.48), P.call(0.86, 0.18), P.call(0.6, 0.86), P.call(0.46, 0.56)])
+			ci.draw_polyline(plane + PackedVector2Array([plane[0]]), col, w, true)
+			ci.draw_line(P.call(0.46, 0.56), P.call(0.86, 0.18), col, w, true)
+		"layers":
+			for k in 2:
+				var ly := 0.38 + float(k) * 0.2
+				ci.draw_polyline(PackedVector2Array([P.call(0.14, ly), P.call(0.5, ly - 0.16), P.call(0.86, ly), P.call(0.5, ly + 0.16), P.call(0.14, ly)]), Color(col.r, col.g, col.b, 1.0 - float(k) * 0.45), w, true)
 		_:
 			if Shapes.STENCILS.any(func(st): return st.id == id):
 				_stencil(ci, id, o, s, col, w)

@@ -4,8 +4,10 @@ extends Node3D
 ##  - OpenXR start-up, passthrough, render quality (sharp: no foveation, 4x MSAA, supersampled)
 ##  - hand tracking -> HandInput (pinch, pointing ray) for moving canvases and for the menu
 ##  - the stylus -> PenState (see StylusInput); a pinch draws instead when no stylus is present (setting)
-##  - the menu floats in the room: poke it with the stylus tip or a fingertip, point and pinch (stylus: front button) from a distance,
-##    grab its bar to move it (touching it, or pointing at it), open your palm facing up to bring it to you
+##  - the interface floats in the room as small panels (UiShell): the dock low in front of you, popovers above it, Home and the
+##    assistant beside it, the bars that belong to a selection or to handwriting pinned to the canvas. Poke them with the stylus tip or
+##    a fingertip, point and pinch (stylus: front button) from a distance, grab the bar under the dock or a side panel to move it,
+##    open your palm facing up to bring the dock to you
 ##  - spatial anchors (MetaAnchors) and the room scan (MetaScene)
 
 const HAND_JOINTS := 26
@@ -39,8 +41,9 @@ var camera: XRCamera3D
 var stylus: StylusInput
 var anchors: MetaAnchors
 var scene: MetaScene
-var menu: MenuPanel
-var panel: XrPanel
+var ui: UiShell
+var panel: XrPanel                         # the dock's panel (the one that is summoned)
+var panels := {}                           # surface id -> XrPanel
 var hands := {"left": HandInput.new("left"), "right": HandInput.new("right")}
 var passthrough_on := false
 
@@ -57,7 +60,10 @@ var _profiles := {}                        # side -> the interaction profile las
 var _menu_hits := {}                       # side -> {point, poke}: where each hand's ray (or fingertip) is on the menu this frame
 var _ui_src := ""                          # which source currently holds the menu pointer: "pen" | "left" | "right" | ""
 var _ui_pressed := false
-var _grab_src := ""                        # which source holds the menu's handle...
+var _ui_panel: XrPanel                     # ...and on which panel
+var _grab_src := ""                        # which source holds a panel's handle...
+var _grab_panel: XrPanel
+var _toast_placed := false
 var _grab_origin := Vector3.ZERO           # ...where the menu was, where that source's point was, and how much further the menu moves
 var _grab_p0 := Vector3.ZERO
 var _grab_gain := 1.0
@@ -142,8 +148,9 @@ func _apply_quality() -> void:
 func _on_setting(key: String) -> void:
 	if key == "xr_quality":
 		_apply_quality()
-	elif key == "ui_scale" and panel != null:
-		panel.set_ui_scale(float(App.val("ui_scale")))
+	elif key == "ui_scale":
+		for xp in panels.values():
+			(xp as XrPanel).set_ui_scale(float(App.val("ui_scale")))
 
 
 ## Track hands and the stylus at the same time (XR_META_simultaneous_hands_and_controllers): without it Horizon OS switches hand
@@ -211,33 +218,124 @@ func _keep_passthrough(delta: float) -> void:
 # ------------------------------------------------------------------------------------------------ menu
 
 func _build_menu() -> void:
-	menu = MenuPanel.new()
-	menu.setup(board)
-	panel = XrPanel.new()
-	add_child(panel)
-	# drawn in the 3D scene (not on a compositor layer, which the headset always puts over everything): the gloves and the stylus can
-	# then be in front of the menu
-	panel.setup(menu, MenuPanel.DESIGN_SIZE, 1450.0, false)
-	panel.set_ui_scale(float(App.val("ui_scale")))
-	panel.visible = false
-	menu.hide_requested.connect(func():
-		panel.visible = false
-		board.toast.emit("Menu hidden. Open your palm facing up to bring it back."))
+	ui = UiShell.new()
+	ui.name = "UiShell"
+	add_child(ui)
+	ui.setup(board)
+	# each surface on its own panel, drawn in the 3D scene (not on a compositor layer, which the headset always puts over everything):
+	# the gloves and the stylus can then be in front of them
+	for p in ui.panels:
+		var fp := p as FloatPanel
+		var xp := XrPanel.new()
+		xp.name = "Panel_" + fp.id
+		xp.pivot = fp.pivot
+		add_child(xp)
+		xp.setup(fp, fp.max_size, fp.ppm, false)
+		xp.set_ui_scale(float(App.val("ui_scale")))
+		xp.visible = false
+		panels[fp.id] = xp
+	panel = panels["dock"]
+	ui.opened.connect(_on_ui_opened)
 
 
+## The dock comes low in front of you, tilted towards your eyes; side panels that are open come along beside it.
 func _place_panel_front() -> void:
 	var h := camera.global_transform
 	var fwd := Vector3(-h.basis.z.x, 0.0, -h.basis.z.z).normalized()
 	var right := fwd.cross(Vector3.UP)
 	var pos := h.origin + fwd * InputTuning.SUMMON_AHEAD + right * InputTuning.SUMMON_RIGHT + Vector3(0, InputTuning.SUMMON_UP, 0)
-	_face_head(pos)
+	panel.global_transform = _facing(pos)
 	panel.visible = true
+	for id in ["home", "assistant"]:
+		if ui.is_side_open(id):
+			_place_side(id)
+
+
+## A pose at `pos` that faces the head.
+func _facing(pos: Vector3) -> Transform3D:
+	var to := pos - camera.global_transform.origin
+	if to.length() < 0.05:
+		return Transform3D(Basis.IDENTITY, pos)
+	return Transform3D(Basis.looking_at(to, Vector3.UP), pos)
 
 
 func _face_head(pos: Vector3) -> void:
-	var h := camera.global_transform.origin
-	var yaw := atan2(h.x - pos.x, h.z - pos.z)
-	panel.global_transform = Transform3D(Basis(Vector3.UP, yaw), pos)
+	panel.global_transform = _facing(pos)
+
+
+## A side panel beside the dock: Home on the left, the assistant on the right, a little higher, turned towards you.
+func _place_side(id: String) -> void:
+	var xp: XrPanel = panels[id]
+	var fp: FloatPanel = ui.home if id == "home" else ui.assistant
+	var d := panel.global_transform
+	var dock_w := ui.dock.size.x * panel.mpp()
+	var w := fp.size.x * xp.mpp()
+	var pos := d.origin + d.basis.x.normalized() * float(fp.side) * (dock_w * 0.5 + w * 0.5 + 0.03) + Vector3.UP * (fp.size.y * xp.mpp() * 0.5 + 0.06)
+	xp.global_transform = _facing(pos)
+
+
+func _on_ui_opened(id: String) -> void:
+	if id == "home" or id == "assistant":
+		_place_side(id)
+
+
+## Every frame: which panels show, and where the ones that follow something go.
+func _place_ui(delta: float) -> void:
+	var head := camera.global_transform
+	for id in panels:
+		var xp: XrPanel = panels[id]
+		var fp := xp.widget as FloatPanel
+		var want: bool = fp.visible and (str(id) != "dock" or _panel_placed)
+		if xp.visible != want:
+			xp.visible = want
+			if want:
+				xp.request_update()
+		xp.set_pivot(fp.pivot)
+	var d := panel.global_transform
+	var up := d.basis.y.normalized()
+	var dock_top := ui.dock.size.y * panel.mpp()
+	# a popover and the typing card stand on the dock (a popover over the button it came from)
+	for id in ["popover", "compose"]:
+		var xp2: XrPanel = panels[id]
+		if not xp2.visible:
+			continue
+		var x := 0.0
+		if id == "popover":
+			x = (ui.dock.button_x(ui.popover_id) - ui.dock.size.x * 0.5) * panel.mpp()
+			ui.popover.source_x = ui.popover.size.x * 0.5
+		var pos := d.origin + d.basis.x.normalized() * x + up * (dock_top + 0.03)
+		xp2.global_transform = _facing(pos)
+	# bars pinned to a canvas, just in front of it
+	for id in ["context", "ink", "suggestion"]:
+		var xp3: XrPanel = panels[id]
+		var fp3: FloatPanel = xp3.widget as FloatPanel
+		if not xp3.visible or fp3.anchor.is_empty():
+			continue
+		var fn: FrameNode = board.frame_nodes.get(str(fp3.anchor.frame))
+		if fn == null:
+			xp3.visible = false
+			continue
+		var fxf := fn.global_transform
+		var b := fxf.basis.orthonormalized()
+		var a: Vector2 = fp3.anchor.pos
+		xp3.global_transform = Transform3D(b, fxf * Vector3(a.x, a.y, 0.0) + b.z * float(fp3.anchor.get("lift", 0.012)))
+	# messages: a little above the middle of the view, following the head lazily
+	var tp: XrPanel = panels["toast"]
+	if tp.visible:
+		var fwd := -head.basis.z
+		var goal := head.origin + fwd * 0.75 + head.basis.y * 0.16
+		if not _toast_placed:
+			tp.global_transform = _facing(goal)
+			_toast_placed = true
+		else:
+			tp.global_transform = _facing(tp.global_position.lerp(goal, clampf(delta * 3.0, 0.0, 1.0)))
+	else:
+		_toast_placed = false
+	# side panels that were left far behind come back
+	for id in ["home", "assistant"]:
+		var xs: XrPanel = panels[id]
+		if xs.visible and xs.global_position.distance_to(head.origin) > MENU_MAX_DIST and _grab_panel != xs:
+			_place_side(id)
 
 
 # ------------------------------------------------------------------------------------------------ physical keyboard
@@ -246,11 +344,11 @@ func _face_head(pos: Vector3) -> void:
 ## to the field being edited there. With no field open, editing shortcuts work (Ctrl+Z, Delete ...), Enter edits the selected text or
 ## shape, and any character starts a new text.
 func _input(e: InputEvent) -> void:
-	if not (e is InputEventKey) or menu == null or panel == null or board == null or board.doc == null:
+	if not (e is InputEventKey) or ui == null or panel == null or board == null or board.doc == null:
 		return
 	var k := e as InputEventKey
-	if menu.is_typing():
-		panel.viewport.push_input(k, false)
+	if ui.is_typing():
+		(panels["compose"] as XrPanel).viewport.push_input(k, false)
 		get_viewport().set_input_as_handled()
 		return
 	if not k.pressed:
@@ -264,10 +362,15 @@ func _input(e: InputEvent) -> void:
 			board.ink.convert_ink()
 		get_viewport().set_input_as_handled()
 		return
+	if k.keycode == KEY_ESCAPE:
+		ui.back()
+		get_viewport().set_input_as_handled()
+		return
 	if enter or Shortcuts.is_printable(k):
 		_show_menu()
-		if menu.open_text_entry() and not enter:
-			panel.viewport.push_input(k, false)            # the character that started the typing is the first one typed
+		if ui.open_text_entry() and not enter:
+			ui.compose.snap_fade()
+			(panels["compose"] as XrPanel).viewport.push_input(k, false)    # the character that started the typing is the first one typed
 		get_viewport().set_input_as_handled()
 
 
@@ -348,7 +451,7 @@ func _update_gloves(pen: PenState, stylus_here: bool) -> void:
 		var push := Vector3.ZERO
 		var m: Dictionary = _menu_hits.get(side, {})
 		if bool(m.get("poke", false)) and float(m.get("depth", 1.0)) < 0.0:
-			push = panel.global_transform.basis.z.normalized() * -float(m.depth)
+			push = (m.normal as Vector3) * -float(m.depth)
 		g.global_position = (g.get_parent() as Node3D).global_position + push
 
 
@@ -421,6 +524,7 @@ func _process(delta: float) -> void:
 		(hands[side] as HandInput).feed(delta, head, _read_hand(side))
 	var pen := stylus.pen
 	var stylus_here := pen.tracked and stylus.active != ""
+	_place_ui(delta)
 	var captured := _update_menu(pen)
 	_summon_gesture(delta, stylus_here)
 	_stylus_summon(delta, pen, stylus_here)
@@ -477,26 +581,62 @@ func _process(delta: float) -> void:
 
 # ------------------------------------------------------------------------------------------------ menu interaction
 
-## For the log: the button (or other control) under a point of the menu.
-func _control_at(_uv: Vector2) -> String:
-	var c := panel.viewport.gui_get_hovered_control()
+## For the log: the button (or other control) under a point of a panel.
+func _control_at(xp: XrPanel) -> String:
+	var c := xp.viewport.gui_get_hovered_control() if xp != null else null
 	if c == null:
 		return "nothing"
 	if c is Btn:
-		return "button \"%s\"" % ((c as Btn).text if (c as Btn).text != "" else (c as Btn).icon)
-	return c.get_class()
+		return "button \"%s\" on %s" % [(c as Btn).text if (c as Btn).text != "" else (c as Btn).icon, xp.name]
+	return "%s on %s" % [c.get_class(), xp.name]
 
 
-## Pokes, rays and the grab bar. Returns which sources are busy with the menu ({pen, left, right}: true) so the board ignores them.
+## The panels that are showing and can be pointed at.
+func _live_panels() -> Array:
+	var out: Array = []
+	for xp in panels.values():
+		var p := xp as XrPanel
+		if p.visible and p.widget.visible and p.widget.mouse_filter != Control.MOUSE_FILTER_IGNORE:
+			out.append(p)
+	return out
+
+
+func _ray_on_panel(s: Dictionary) -> bool:
+	for xp in _live_panels():
+		if bool((xp as XrPanel).raycast(s.ray_o, s.ray_d).hit):
+			return true
+	return false
+
+
+func _is_canvas_panel(xp: XrPanel) -> bool:
+	return (xp.widget as FloatPanel).kind == "canvas"
+
+
+func _release_ui() -> void:
+	if _ui_panel != null and is_instance_valid(_ui_panel):
+		if _ui_pressed:
+			_ui_panel.pointer_release(Vector2(-1, -1))
+		_ui_panel.pointer_leave()
+	_ui_pressed = false
+	_ui_src = ""
+	_ui_panel = null
+
+
+## Pokes, rays and the grab bars. Returns which sources are busy with the interface ({pen, left, right}: true) so the board ignores them.
 ## One model for hands and stylus: TOUCH a button (fingertip or nib within the poke zone), or POINT at it and press (hand: pinch, stylus:
-## front button). At a canvas the stylus draws and grabs instead, so it is not offered the menu there. A source is busy only while it
-## touches the menu or is pressing it: a ray that merely crosses the menu, or a pinch that began on a canvas, is still the board's.
+## front button). At a canvas the stylus draws and grabs instead, so it is not offered the panels there, except the bars pinned to the
+## canvas itself (touching one with the nib presses it, as long as the pen is not in the middle of a stroke). A source is busy only while
+## it touches a panel or is pressing it: a ray that merely crosses a panel, or a pinch that began on a canvas, is still the board's.
+## Of all the panels a source reaches, a touch beats a ray and the nearest wins; one source at a time drives one panel.
 func _update_menu(pen: PenState) -> Dictionary:
 	var busy := {}
 	_menu_hits = {}
 	var front_edge := pen.front and not _pen_front
 	_pen_front = pen.front
-	if panel == null or not panel.visible:
+	var live := _live_panels()
+	if live.is_empty():
+		if _ui_src != "":
+			_release_ui()
 		return busy
 	var sources: Array = []
 	if pen.tracked and stylus.active != "":
@@ -508,41 +648,55 @@ func _update_menu(pen: PenState) -> Dictionary:
 		if h.tracked and not (pen.tracked and side == stylus.active):
 			sources.append({"id": side, "tip": h.tip, "point": h.pinch_point, "ray_o": h.aim_o, "ray_d": h.aim_d, "ray_press": h.pinching, "ray_down": h.pinch_down,
 				"holding": h.pinching, "touch": true, "aiming": h.aiming})
-	# the grab bar below the panel
+	# the grab bars below the dock and the side panels
 	_update_handle(sources, busy)
+	var pen_idle := board.pen_ctl.state == PenController.S.IDLE
 	var best_uv := Vector2(-1, -1)
 	var best_src := ""
 	var best_rank := -1
+	var best_panel: XrPanel = null
 	var press := false
 	for s in sources:
 		var id: String = s.id
 		if _grab_src == id:
 			busy[id] = true
 			continue
-		var holds_ui := _ui_src == id and _ui_pressed
-		var info := panel.touch_info(s.tip, InputTuning.POKE_MARGIN)
-		var uv := Vector2(-1, -1)
-		var pressed := false
-		var near := false
-		var engaged := false                       # touching or pressing: the board does not get this source
-		if bool(s.touch) and info.inside and info.depth > -InputTuning.POKE_BEHIND and info.depth < InputTuning.POKE_FRONT:
-			near = true
-			engaged = true
-			uv = info.uv
-			_menu_hits[id] = {"point": panel.global_transform * Vector3((uv.x - 0.5) * panel.size_m.x, (0.5 - uv.y) * panel.size_m.y, 0.0), "poke": true, "depth": float(info.depth)}
-			var limit := POKE_RELEASE if holds_ui else POKE_PRESS
-			pressed = info.depth < limit
-		elif bool(s.aiming) or holds_ui:
-			# pointing: hovering shows where the ray is (ring and highlight); a press that begins here clicks
-			var rc := panel.raycast(s.ray_o, s.ray_d)
-			if rc.hit and rc.t < InputTuning.MENU_RAY_REACH and (holds_ui or not _canvas_in_front(s, rc.t)):
-				near = true
-				uv = rc.uv
-				pressed = bool(s.ray_press) and (bool(s.ray_down) or holds_ui)
-				engaged = pressed or holds_ui
-				_menu_hits[id] = {"point": rc.point, "poke": false}
-		if not near:
+		var holds_ui := _ui_src == id and _ui_pressed and _ui_panel != null
+		var cands: Array = [_ui_panel] if holds_ui else live
+		var hit := {}
+		# touching: the panel the tip is nearest to
+		for c in cands:
+			var xp := c as XrPanel
+			var touch_ok := bool(s.touch) or (id == "pen" and pen_idle and _is_canvas_panel(xp))
+			if not touch_ok:
+				continue
+			var info := xp.touch_info(s.tip, InputTuning.POKE_MARGIN)
+			if info.inside and info.depth > -InputTuning.POKE_BEHIND and info.depth < InputTuning.POKE_FRONT:
+				if hit.is_empty() or absf(float(info.depth)) < absf(float(hit.depth)):
+					hit = {"panel": xp, "uv": info.uv, "poke": true, "depth": float(info.depth)}
+		# pointing: hovering shows where the ray is (ring and highlight); a press that begins here clicks
+		if hit.is_empty() and (bool(s.aiming) or holds_ui):
+			var best_t := INF
+			for c in cands:
+				var xp2 := c as XrPanel
+				var rc := xp2.raycast(s.ray_o, s.ray_d)
+				if rc.hit and float(rc.t) < InputTuning.MENU_RAY_REACH and float(rc.t) < best_t and (holds_ui or not _canvas_in_front(s, rc.t)):
+					best_t = float(rc.t)
+					hit = {"panel": xp2, "uv": rc.uv, "poke": false, "point": rc.point}
+		if hit.is_empty():
 			continue
+		var hp: XrPanel = hit.panel
+		var uv: Vector2 = hit.uv
+		var pressed := false
+		var engaged := false                       # touching or pressing: the board does not get this source
+		if bool(hit.poke):
+			engaged = true
+			pressed = float(hit.depth) < (POKE_RELEASE if holds_ui else POKE_PRESS)
+			_menu_hits[id] = {"point": hp.point_at(uv), "poke": true, "depth": float(hit.depth), "normal": hp.global_transform.basis.z.normalized()}
+		else:
+			pressed = bool(s.ray_press) and (bool(s.ray_down) or holds_ui)
+			engaged = pressed or holds_ui
+			_menu_hits[id] = {"point": hit.point, "poke": false, "normal": hp.global_transform.basis.z.normalized()}
 		if engaged:
 			busy[id] = true
 		var rank := 3 if holds_ui else 2 if pressed else 1 if id == _ui_src else 0
@@ -550,27 +704,31 @@ func _update_menu(pen: PenState) -> Dictionary:
 			best_rank = rank
 			best_src = id
 			best_uv = uv
+			best_panel = hp
 			press = pressed
-	# one pointer drives the panel
+	# one pointer drives one panel
 	if best_src != "":
+		if best_panel != _ui_panel:
+			if _ui_panel != null and is_instance_valid(_ui_panel):
+				if _ui_pressed:
+					_ui_panel.pointer_release(Vector2(-1, -1))
+				_ui_panel.pointer_leave()
+			_ui_pressed = false
+			_ui_panel = best_panel
 		_ui_src = best_src
-		panel.pointer_move(best_uv)
+		_ui_panel.pointer_move(best_uv)
 		if press and not _ui_pressed:
-			panel.pointer_press(best_uv)
+			_ui_panel.pointer_press(best_uv)
 			_ui_pressed = true
-			print("[menu] press by %s at %s on %s" % [best_src, str(best_uv), _control_at(best_uv)])
+			print("[menu] press by %s at %s on %s" % [best_src, str(best_uv), _control_at(_ui_panel)])
 			if best_src == "pen":
 				pen.tick(0.25, 0.015)
 		elif not press and _ui_pressed:
-			panel.pointer_release(best_uv)
+			_ui_panel.pointer_release(best_uv)
 			_ui_pressed = false
-			print("[menu] release by %s at %s on %s" % [best_src, str(best_uv), _control_at(best_uv)])
+			print("[menu] release by %s at %s on %s" % [best_src, str(best_uv), _control_at(_ui_panel)])
 	elif _ui_src != "":
-		if _ui_pressed:
-			panel.pointer_release(Vector2(-1, -1))
-		panel.pointer_leave()
-		_ui_pressed = false
-		_ui_src = ""
+		_release_ui()
 	return busy
 
 
@@ -588,42 +746,55 @@ static func _ray_miss(o: Vector3, d: Vector3, p: Vector3) -> float:
 	return (o + d * t).distance_to(p)
 
 
-## The menu's handle moves it like a canvas bar: within reach of the pinch point (nib) it follows 1:1; pointing at it from a distance, the
-## menu moves further than the hand by the ratio of their distances from the head. Pinch (stylus: front button) starts, letting go drops.
+## A panel's handle (under the dock and the side panels) moves it like a canvas bar: within reach of the pinch point (nib) it follows
+## 1:1; pointing at it from a distance, the panel moves further than the hand by the ratio of their distances from the head. Pinch
+## (stylus: front button) starts, letting go drops. What stands on the dock (a popover, the typing card) goes with it.
 func _update_handle(sources: Array, busy: Dictionary) -> void:
-	var hp := panel.handle_world()
 	if _grab_src != "":
 		for s in sources:
-			if s.id != _grab_src or not bool(s.holding):
+			if s.id != _grab_src or not bool(s.holding) or _grab_panel == null:
 				continue
-			_face_head(_grab_origin + ((s.point as Vector3) - _grab_p0) * _grab_gain)
+			_grab_panel.global_transform = _facing(_grab_origin + ((s.point as Vector3) - _grab_p0) * _grab_gain)
 			busy[s.id] = true
-			panel.set_handle_state(true, true)
+			_grab_panel.set_handle_state(true, true)
 			return
 		_grab_src = ""
-		panel.set_handle_state(false, false)
+		if _grab_panel != null:
+			_grab_panel.set_handle_state(false, false)
+		_grab_panel = null
 		return
-	var hover := false
-	for s in sources:
-		var pt: Vector3 = s.point
-		var touching := pt.distance_to(hp) < InputTuning.HANDLE_NEAR
-		var pointing := not touching and bool(s.aiming) and _ray_miss(s.ray_o, s.ray_d, hp) < InputTuning.HANDLE_RAY_R
-		if not (touching or pointing):
+	for xp in panels.values():
+		var p := xp as XrPanel
+		if not (p.widget as FloatPanel).movable:
+			p.handle.visible = false
 			continue
-		hover = true
-		if bool(s.ray_down):
-			busy[s.id] = true
-			_grab_src = s.id
-			_grab_origin = panel.global_position
-			_grab_p0 = pt
-			_grab_gain = 1.0 if touching else InputTuning.carry_gain(camera.global_position, panel.global_position, pt)
-			break
-	panel.set_handle_state(hover, _grab_src != "")
+		p.handle.visible = p.visible
+		if not p.visible:
+			continue
+		var hp := p.handle_world()
+		var hover := false
+		for s in sources:
+			var pt: Vector3 = s.point
+			var touching := pt.distance_to(hp) < InputTuning.HANDLE_NEAR
+			# (a ray that is on a panel is pressing a button there: the handle of a slim panel like the dock is close by)
+			var pointing := not touching and bool(s.aiming) and _ray_miss(s.ray_o, s.ray_d, hp) < InputTuning.HANDLE_RAY_R and not _ray_on_panel(s)
+			if not (touching or pointing):
+				continue
+			hover = true
+			if bool(s.ray_down) and _grab_src == "":
+				busy[s.id] = true
+				_grab_src = s.id
+				_grab_panel = p
+				_grab_origin = p.global_position
+				_grab_p0 = pt
+				_grab_gain = 1.0 if touching else InputTuning.carry_gain(camera.global_position, p.global_position, pt)
+				break
+		p.set_handle_state(hover, _grab_panel == p)
 
 
 ## Holding the stylus's front button with nothing to grab (the nib away from every canvas, and not pointing at one): the menu comes.
 func _stylus_summon(delta: float, pen: PenState, stylus_here: bool) -> void:
-	if not stylus_here or not pen.front or board.hand_ctl.is_holding() or not board.grabs.is_empty() or _ui_src == "pen" or _grab_src == "pen" \
+	if panel == null or not stylus_here or not pen.front or board.hand_ctl.is_holding() or not board.grabs.is_empty() or _ui_src == "pen" or _grab_src == "pen" \
 			or not board.pen_target(pen.tip, InputTuning.SUMMON_STYLUS_CANVAS, 0.2).is_empty() \
 			or not board.hand_ctl.ray_target(pen.tip, pen.dir).is_empty():
 		_front_t = 0.0

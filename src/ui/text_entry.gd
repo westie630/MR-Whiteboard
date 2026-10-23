@@ -22,13 +22,15 @@ var _ok: Btn
 
 
 func _init() -> void:
-	add_theme_stylebox_override("panel", UITheme.box(UITheme.PANEL, 16, UITheme.ACCENT, 2))
+	add_theme_stylebox_override("panel", StyleBoxEmpty.new())          # the compose card around it is the surface
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 8)
+	v.add_theme_constant_override("separation", 10)
 	add_child(v)
 	title = Label.new()
-	title.add_theme_font_size_override("font_size", UITheme.FONT)
+	title.add_theme_font_size_override("font_size", UITheme.FONT_SMALL)
+	title.add_theme_font_override("font", UITheme.font(600))
+	title.add_theme_color_override("font_color", UITheme.TEXT_DIM)
 	title.clip_text = true
 	v.add_child(title)
 	_line = LineEdit.new()
@@ -51,6 +53,7 @@ func _init() -> void:
 	var h := HBoxContainer.new()
 	v.add_child(h)
 	_ok = Btn.new("check", "OK")
+	_ok.on = true
 	_ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_ok.pressed.connect(_accept)
 	h.add_child(_ok)
@@ -75,9 +78,10 @@ func _setup_field(f: Control) -> void:
 
 
 ## Show the box. `multiline` is for text (several lines), otherwise for a name (one line).
-func open(heading: String, text: String, multiline: bool, recognize: Callable, language: String, empty_ok: bool = false) -> void:
+func open(heading: String, text: String, multiline: bool, recognize: Callable, language: String, empty_ok: bool = false, secret: bool = false) -> void:
 	title.text = heading
 	allow_empty = empty_ok
+	_line.secret = secret
 	_multiline = multiline
 	_line.visible = not multiline
 	_area.visible = multiline

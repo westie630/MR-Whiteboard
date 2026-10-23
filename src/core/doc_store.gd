@@ -10,6 +10,11 @@ static func path_for(id: String) -> String:
 	return "%s/%s.%s" % [dir(), id, Document.EXT]
 
 
+## The AI assistant's file of a document: its suggestion layers and the questions asked, kept apart from the document itself.
+static func ai_path(id: String) -> String:
+	return "%s/%s.ai.json" % [dir(), id]
+
+
 ## Summaries of every saved document, newest first: [{id, name, modified, frames, items, path}].
 static func list() -> Array:
 	var out: Array = []
@@ -97,6 +102,8 @@ static func delete(id: String) -> Array:
 	var p := path_for(id)
 	DirAccess.remove_absolute(p)
 	DirAccess.remove_absolute(p + ".bak")
+	if FileAccess.file_exists(ai_path(id)):
+		DirAccess.remove_absolute(ai_path(id))
 	var shared := {}
 	for s in list():
 		var other := open(str(s.id))

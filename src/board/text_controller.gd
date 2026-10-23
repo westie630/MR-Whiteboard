@@ -4,7 +4,6 @@ extends RefCounted
 ## looking at, below any text already there, and is selected so it can be moved or corrected; editing an item keeps its size and place.
 ## Both are single undo steps.
 
-const EM := 0.045                          # size of new text (m)
 const WRAP_CHARS := 30                     # lines are broken at about this many characters
 
 var board: Board
@@ -30,7 +29,8 @@ func place(text: String) -> Item:
 		return null
 	var frame_id: String = s.frame
 	var col: Color = App.val("color")
-	var t := Item.make_text(frame_id, wrap_text(text, WRAP_CHARS), Color(col.r, col.g, col.b, 1.0), EM)
+	var st := TextLayout.style(str(App.val("text_style")))
+	var t := Item.make_text(frame_id, wrap_text(text, WRAP_CHARS), Color(col.r, col.g, col.b, 1.0), float(st[2]), int(st[3]))
 	t.center = _clear_spot(frame_id, s.center, t.size)
 	board.history.do(History.op_add([t]))
 	board.select_items([t.id], frame_id)
@@ -45,6 +45,48 @@ func edit(item_id: String, text: String) -> bool:
 		return false
 	board.ink.set_text(item_id, text)
 	return true
+
+
+## Set the weight and/or italic (null = leave as is) of every selected text item: one undo step. The boxes are re-measured, since the
+## letters get wider or narrower.
+func set_style(weight: Variant, italic: Variant, em: Variant = null) -> bool:
+	var before: Array = []
+	var after: Array = []
+	for it in selected_texts():
+		var t := it as Item
+		var upd := t.duplicate_item(false)
+		if weight != null:
+			upd.weight = clampi(int(weight), TextLayout.MIN_WEIGHT, TextLayout.MAX_WEIGHT)
+		if italic != null:
+			upd.italic = bool(italic)
+		if em != null:
+			upd.font_size = float(em)
+		if upd.weight == t.weight and upd.italic == t.italic and is_equal_approx(upd.font_size, t.font_size):
+			continue
+		upd.refit_text()
+		before.append(t)
+		after.append(upd)
+	if before.is_empty():
+		return false
+	board.history.do(History.op_modify(before, after))
+	return true
+
+
+## Give the selected text the size and weight of a style (Heading 1, Body, ...), and make it the style of new text.
+func apply_style(style_id: String) -> bool:
+	var st := TextLayout.style(style_id)
+	App.put("text_style", st[0])
+	return set_style(int(st[3]), null, float(st[2]))
+
+
+## The selected text items.
+func selected_texts() -> Array:
+	var out: Array = []
+	if board.doc != null:
+		for it in board.selected_items():
+			if (it as Item).kind == Item.TEXT:
+				out.append(it)
+	return out
 
 
 ## The selected text item when exactly one text item is selected.

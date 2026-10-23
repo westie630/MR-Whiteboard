@@ -10,7 +10,7 @@ func name_of() -> String:
 
 ## True when the provider can be used right now (for the online one: a token is set). `why` explains what is missing.
 func ready_reason() -> String:
-	return "Speech to text is switched off (More tab)."
+	return "Speech to text is switched off (Home > Settings)."
 
 
 func transcribe(_pcm: PackedByteArray, _rate: int, done: Callable) -> void:

@@ -1,8 +1,14 @@
 class_name InkController
 extends RefCounted
 ## Handwriting to text. In Write mode the strokes stay on the canvas as ink; once the pen has rested for a moment (or Convert is
-## pressed) they are grouped into lines, sent to the recogniser, and each line is replaced by a text item with the same size and
-## position as the handwriting. Ink written inside a box becomes that box's label. The original ink comes back with Undo.
+## pressed) they are grouped into lines, sent to the recogniser, and each line is replaced by a text item in the chosen text style
+## (Body, Heading 1, ...: the size of typed text, not of the handwriting), centred where the handwriting was. Ink written inside a box becomes that box's label. The original ink comes back with Undo.
+##
+## Predicted, so the tool rarely has to be switched (WritingDetector decides from the shape of the ink):
+##  - in Write mode a line, an underline, an arrow or a box drawn among the words is kept as a drawing, not read as text;
+##  - with the Pen, strokes that look like words are watched: once the pen rests, `suggestion` offers them for conversion (InkChip),
+##    or converts them at once when the setting says so;
+##  - right after a conversion, the new text is `recent_text()` for a few seconds, so its other readings can be offered beside it.
 
 const PX_PER_LINE := 150.0                 # the recogniser sees a line of handwriting about this many units tall
 
@@ -14,6 +20,22 @@ var last_error := ""
 
 var _idle := 0.0
 var _provider: InkRecognizer
+
+const WATCH_GAP_S := 4.0                   # a pen stroke this long after the last one starts a new group
+const WATCH_REST_S := 0.6                  # the pen rests this long before a group is judged
+const RECENT_S := 9.0                      # converted text offers its other readings this long
+
+## Pen strokes that look like writing, offered for conversion: {frame, ids, rect (canvas units), score}, or {}.
+var suggestion: Dictionary = {}
+var _watch: Array = []                     # [{id, frame, t0, t1, at}] pen strokes drawn one after the other, close together
+var _watch_idle := 0.0
+var _watch_sig := ""
+var _dismissed := {}                       # stroke ids the user said are a drawing
+var _marks: Array = []                     # Write mode: recent strokes kept as drawings [{frame, a, b, len, at}] (m)
+var _told_marks := false
+var _recent_text := ""
+var _recent_t := 0.0
+var _clock := 0.0
 
 
 func _init(b: Board) -> void:
@@ -27,13 +49,161 @@ func provider() -> InkRecognizer:
 	return _provider
 
 
-func add(item: Item, times: PackedFloat32Array) -> void:
+## A stroke written in Write mode. False when it is not writing (a line, a box, an arrow among the words): it stays a drawing.
+func add(item: Item, times: PackedFloat32Array) -> bool:
+	var scale := _scale(item.frame)
+	var f := WritingDetector.features(item, scale)
+	if WritingDetector.is_mark(f, _letter_height(item.frame, scale)) or _after_mark(item.frame, f):
+		_marks.append({"frame": item.frame, "a": f.a, "b": f.b, "len": float(f.length), "at": _clock})
+		if not _told_marks:
+			_told_marks = true
+			board.toast.emit("Kept as a drawing: lines, boxes and arrows are not read as text")
+		return false
 	var t0 := times[0] if times.size() > 0 else 0.0
 	var t1 := times[times.size() - 1] if times.size() > 0 else t0 + 0.2
 	pending.append({"id": item.id, "frame": item.frame, "t0": t0, "t1": maxf(t1, t0 + 0.05)})
 	failed = false
 	_idle = 0.0
 	board.changed.emit()
+	return true
+
+
+func _scale(frame_id: String) -> float:
+	var fd: FrameData = board.doc.frames.get(frame_id) if board.doc != null else null
+	return fd.scale if fd != null else 1.0
+
+
+## The height of the handwriting waiting on a canvas (m), 0 with none.
+func _letter_height(frame_id: String, scale: float) -> float:
+	var fs: Array = []
+	for p in pending:
+		if p.frame == frame_id and board.doc.items.has(p.id):
+			fs.append(WritingDetector.features(board.doc.items[p.id], scale))
+	return WritingDetector.letter_height(fs)
+
+
+func _after_mark(frame_id: String, f: Dictionary) -> bool:
+	for m in _marks:
+		if m.frame == frame_id and _clock - float(m.at) < 2.5 and WritingDetector.attached(f, m.a, m.b, float(m.len)):
+			return true
+	return false
+
+
+# ------------------------------------------------------------------------------------------------ the pen notices writing
+
+## A stroke drawn with the Pen tool: watched, in case it is part of words.
+func observe(item: Item, times: PackedFloat32Array) -> void:
+	if str(App.val("smart_ink")) == "off" or str(App.val("ink_provider")) == "none" or item.kind != Item.STROKE:
+		return
+	if not _watch.is_empty():
+		var last: Dictionary = _watch[_watch.size() - 1]
+		if last.frame != item.frame or _clock - float(last.at) > WATCH_GAP_S or not _near_watch(item):
+			_watch.clear()
+	var t0 := times[0] if times.size() > 0 else 0.0
+	var t1 := times[times.size() - 1] if times.size() > 0 else t0 + 0.2
+	_watch.append({"id": item.id, "frame": item.frame, "t0": t0, "t1": maxf(t1, t0 + 0.05), "at": _clock})
+	if _watch.size() > 80:
+		_watch.pop_front()
+	_watch_idle = 0.0
+	if not suggestion.is_empty():
+		suggestion = {}
+		board.changed.emit()
+
+
+func _watched_items() -> Array:
+	var out: Array = []
+	for w in _watch:
+		var it: Item = board.doc.items.get(w.id) if board.doc != null else null
+		if it != null and it.kind == Item.STROKE and not _dismissed.has(w.id):
+			out.append(it)
+	return out
+
+
+## Is a new stroke next to the group being watched (on its line, or the line under it)?
+func _near_watch(item: Item) -> bool:
+	var items := _watched_items()
+	if items.is_empty():
+		return true
+	var r := (items[0] as Item).bounds()
+	for it in items:
+		r = r.merge((it as Item).bounds())
+	var fs: Array = items.map(func(x): return WritingDetector.features(x, 1.0))
+	var h := maxf(WritingDetector.letter_height(fs), 0.01)
+	return r.grow_individual(h * 2.5, h * 2.6, h * 2.5, h * 1.2).intersects(item.bounds())
+
+
+func _update_watch(dt: float) -> void:
+	if _watch.is_empty() or board.doc == null:
+		return
+	if board.pen_ctl.state == PenController.S.DRAWING:
+		_watch_idle = 0.0
+		return
+	if not suggestion.is_empty():
+		for id in suggestion.ids:
+			if not board.doc.items.has(id):
+				suggestion = {}
+				_watch.clear()
+				board.changed.emit()
+				return
+		return
+	_watch_idle += dt
+	if _watch_idle < WATCH_REST_S:
+		return
+	var items := _watched_items()
+	var sig := ",".join(PackedStringArray(items.map(func(x): return (x as Item).id)))
+	if sig == _watch_sig or items.is_empty():
+		return
+	_watch_sig = sig
+	var frame_id: String = (items[0] as Item).frame
+	var score := WritingDetector.group_score(items, _scale(frame_id))
+	if score < WritingDetector.SUGGEST:
+		return
+	var r := (items[0] as Item).bounds()
+	for it in items:
+		r = r.merge((it as Item).bounds())
+	suggestion = {"frame": frame_id, "ids": items.map(func(x): return (x as Item).id), "rect": r, "score": score}
+	if str(App.val("smart_ink")) == "auto" and score >= WritingDetector.AUTO and not busy:
+		accept_suggestion()
+	else:
+		board.changed.emit()
+
+
+## Turn the strokes the pen offered into text.
+func accept_suggestion() -> void:
+	if suggestion.is_empty() or busy:
+		return
+	var ids: Array = suggestion.ids
+	var fid: String = suggestion.frame
+	pending = pending.filter(func(p): return p.frame == fid)
+	for w in _watch:
+		if ids.has(w.id):
+			pending.append({"id": w.id, "frame": w.frame, "t0": w.t0, "t1": w.t1})
+	_watch.clear()
+	suggestion = {}
+	failed = false
+	convert_ink()
+
+
+## The strokes the pen offered are a drawing after all: they are not offered again.
+func dismiss_suggestion() -> void:
+	for id in suggestion.get("ids", []):
+		_dismissed[id] = true
+	_watch.clear()
+	suggestion = {}
+	board.changed.emit()
+
+
+## Text made from handwriting a moment ago (its other readings are offered beside it), or null.
+func recent_text() -> Item:
+	if _recent_text == "" or board.doc == null:
+		return null
+	return board.doc.items.get(_recent_text)
+
+
+func clear_recent() -> void:
+	if _recent_text != "":
+		_recent_text = ""
+		board.changed.emit()
 
 
 func forget(id: String) -> void:
@@ -46,6 +216,11 @@ func reset() -> void:
 	pending.clear()
 	busy = false
 	failed = false
+	suggestion = {}
+	_watch.clear()
+	_marks.clear()
+	_dismissed.clear()
+	_recent_text = ""
 
 
 func has_pending() -> bool:
@@ -53,6 +228,12 @@ func has_pending() -> bool:
 
 
 func update(dt: float) -> void:
+	_clock += dt
+	if _recent_text != "":
+		_recent_t += dt
+		if _recent_t > RECENT_S or board.pen_ctl.state == PenController.S.DRAWING:
+			clear_recent()
+	_update_watch(dt)
 	if pending.is_empty() or busy or failed or not bool(App.val("ink_auto")):
 		_idle = 0.0
 		return
@@ -163,9 +344,9 @@ func _on_line_result(lines: Array, idx: int, res: Dictionary) -> void:
 		upd.label = text
 		h.do(History.op_modify([container], [upd]))
 	else:
-		var fit := TextLayout.fit_ink(text, bb)
-		var t := Item.make_text(frame_id, text, Color(col.r, col.g, col.b, 1.0), fit.em)
-		t.center = fit.center
+		var st := TextLayout.style(str(App.val("text_style")))
+		var t := Item.make_text(frame_id, text, Color(col.r, col.g, col.b, 1.0), float(st[2]), int(st[3]))
+		t.center = bb.get_center()
 		for src in items:
 			t.ink.append((src as Item).to_dict())
 		var alts := PackedStringArray()
@@ -174,6 +355,8 @@ func _on_line_result(lines: Array, idx: int, res: Dictionary) -> void:
 				alts.append(cands[i])
 		t.alternatives = alts
 		h.do(History.op_add([t]))
+		_recent_text = t.id
+		_recent_t = 0.0
 	h.end_group()
 	for e in line.entries:
 		forget((e.item as Item).id)

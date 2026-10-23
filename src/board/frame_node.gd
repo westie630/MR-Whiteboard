@@ -5,6 +5,7 @@ extends Node3D
 
 const GRID_SHADER := "res://shaders/grid.gdshader"
 const MARGIN := 0.12                       # content margin that keeps the grid around what has been drawn (infinite canvas feel)
+const AI_COLOR := Color(0.72, 0.62, 1.0, 0.95)
 
 var data: FrameData
 var doc: Document
@@ -25,6 +26,11 @@ var _bounds := Rect2()
 var _bounds_dirty := true
 var _extra: Callable = Callable()          # extra overlay drawing (selection, handles, cursor) set by the Board
 var _overlay_dirty := true
+var _ai: Node3D                            # the AI assistant's suggestion layer (items not in the document), drawn over the canvas
+var _ai_items: Array = []
+var _ai_hidden: Array = []                 # ids of document items the suggestion replaces: hidden while it is shown
+var _ai_marks: Array = []                  # [{rect, kind: new | removed}] outlines drawn in the overlay
+var _ai_tag: Label3D
 
 
 func setup(d: FrameData, document: Document) -> void:
@@ -62,6 +68,24 @@ func setup(d: FrameData, document: Document) -> void:
 	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_title.double_sided = true
 	add_child(_title)
+	_ai = Node3D.new()
+	_ai.name = "AiLayer"
+	_ai.position = Vector3(0, 0, 0.0006)
+	add_child(_ai)
+	_ai_tag = Label3D.new()
+	_ai_tag.font = TextLayout.font(600)
+	_ai_tag.font_size = 64
+	_ai_tag.pixel_size = 0.024 / 64.0
+	_ai_tag.shaded = false
+	_ai_tag.no_depth_test = true
+	_ai_tag.render_priority = 125
+	_ai_tag.modulate = AI_COLOR
+	_ai_tag.outline_size = 0
+	_ai_tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_ai_tag.double_sided = true
+	_ai_tag.text = "AI suggestion: Accept or Discard above the canvas"
+	_ai_tag.visible = false
+	add_child(_ai_tag)
 	for it in doc.items_of(d.id):
 		add_view(it)
 	apply_style()
@@ -79,6 +103,7 @@ func add_view(it: Item) -> ItemView:
 	var v := ItemView.new()
 	_items.add_child(v)
 	v.setup(it, not is_canvas)
+	v.visible = not _ai_hidden.has(it.id)
 	views[it.id] = v
 	_bounds_dirty = true
 	return v
@@ -127,6 +152,8 @@ func bounds() -> Rect2:
 		var nominal := Rect2(data.offset - data.size * 0.5, data.size)
 		var cb := content_bounds()
 		_bounds = nominal.merge(cb.grow(MARGIN)) if cb.size != Vector2.ZERO or cb.position != Vector2.ZERO else nominal
+		for it in _ai_items:
+			_bounds = _bounds.merge((it as Item).bounds().grow(MARGIN))
 		_bounds_dirty = false
 	return _bounds
 
@@ -239,6 +266,55 @@ func _redraw_overlay() -> void:
 			var cb := content_bounds()
 			if cb.size != Vector2.ZERO:
 				_draw.rect(cb.grow(0.03), 0.002, Color(0.65, 1.0, 0.95, 0.4 * hover))
+	_draw_ai_marks()
 	if _extra.is_valid():
 		_extra.call(_draw)
 	_draw.build(_overlay_mesh)
+
+
+# ------------------------------------------------------------------------------------------------ AI suggestion layer
+
+## Show the AI assistant's suggestion over the canvas: `items` drawn as they would be, the document items in `hidden` (the ones the
+## suggestion changes) hidden meanwhile, and `marks` outlined ({rect, kind: new | removed}). Empty lists clear it.
+func show_ai(items: Array, hidden: Array, marks: Array) -> void:
+	for c in _ai.get_children():
+		c.queue_free()
+	for id in _ai_hidden:
+		if views.has(id):
+			(views[id] as ItemView).visible = true
+	_ai_items = items.duplicate()
+	_ai_hidden = hidden.duplicate()
+	_ai_marks = marks.duplicate()
+	for it in _ai_items:
+		var v := ItemView.new()
+		_ai.add_child(v)
+		v.setup(it, not is_canvas)
+	for id in _ai_hidden:
+		if views.has(id):
+			(views[id] as ItemView).visible = false
+	var r := Rect2()
+	var first := true
+	for m in _ai_marks:
+		r = m.rect if first else r.merge(m.rect)
+		first = false
+	_ai_tag.visible = not first
+	if not first:
+		_ai_tag.position = Vector3(r.position.x, r.end.y + 0.045, 0.001)
+	_bounds_dirty = true
+	refresh_frame()
+
+
+func ai_shown() -> bool:
+	return not _ai_marks.is_empty()
+
+
+func _draw_ai_marks() -> void:
+	for m in _ai_marks:
+		var r: Rect2 = (m.rect as Rect2).grow(0.012)
+		if str(m.kind) == "removed":
+			var red := Color(1.0, 0.36, 0.45, 0.85)
+			_draw.rect(r, 0.003, red)
+			_draw.segment(r.position, r.end, 0.003, red)
+			_draw.segment(Vector2(r.position.x, r.end.y), Vector2(r.end.x, r.position.y), 0.003, red)
+		else:
+			_draw.rect(r, 0.0022, Color(AI_COLOR.r, AI_COLOR.g, AI_COLOR.b, 0.55))

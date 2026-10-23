@@ -22,7 +22,7 @@ const MIN_POINT_GAP := 0.0004             # strokes drop points closer than this
 const NONE := Color(0, 0, 0, -1)          # "no paint"
 const SKIP_TAGS := ["defs", "symbol", "clipPath", "mask", "marker", "pattern", "linearGradient", "radialGradient", "style", "title", "desc",
 	"metadata", "filter", "script", "namedview", "stop", "font", "glyph", "view", "animate", "set"]
-const INHERITED := ["fill", "stroke", "stroke-width", "fill-opacity", "stroke-opacity", "font-size", "text-anchor", "color", "visibility"]
+const INHERITED := ["fill", "stroke", "stroke-width", "fill-opacity", "stroke-opacity", "font-size", "text-anchor", "color", "visibility", "font-weight", "font-style"]
 const CSS_NAMES := {"green": "#008000", "gray": "#808080", "grey": "#808080", "maroon": "#800000", "purple": "#800080", "lime": "#00ff00"}
 
 
@@ -306,14 +306,14 @@ static func _parse_decls(text: String) -> Dictionary:
 # ------------------------------------------------------------------------------------------------ style
 
 func _base_style() -> Dictionary:
-	return {"fill": "black", "stroke": "none", "stroke-width": "1", "fill-opacity": "1", "stroke-opacity": "1", "font-size": "16",
+	return {"fill": "black", "stroke": "none", "stroke-width": "1", "fill-opacity": "1", "stroke-opacity": "1", "font-size": "16", "font-weight": "normal", "font-style": "normal",
 		"text-anchor": "start", "color": "black", "visibility": "visible", "_op": 1.0}
 
 
 ## The properties an element sets itself: presentation attributes, then style sheet rules, then its style attribute.
 func _decls(el: El) -> Dictionary:
 	var d := {}
-	for key in ["fill", "stroke", "stroke-width", "fill-opacity", "stroke-opacity", "opacity", "font-size", "text-anchor", "color", "display", "visibility", "stop-color", "stop-opacity"]:
+	for key in ["fill", "stroke", "stroke-width", "fill-opacity", "stroke-opacity", "opacity", "font-size", "font-weight", "font-style", "text-anchor", "color", "display", "visibility", "stop-color", "stop-opacity"]:
 		if el.attrs.has(key):
 			d[key] = String(el.attrs[key]).strip_edges()
 	var classes := String(el.attrs.get("class", "")).split(" ", false)
@@ -873,7 +873,17 @@ func _text(el: El, xf: Transform2D, st: Dictionary) -> void:
 	var y := 0.0 if is_nan(state.y) else float(state.y)
 	var em := _to_px(String(st["font-size"]), 16.0, 16.0) * _scale_of(xf)
 	_prims.append({"k": "text", "lines": cleaned, "pos": xf * Vector2(x, y), "em": em, "anchor": String(st["text-anchor"]),
-		"rot": xf.get_rotation(), "color": color})
+		"rot": xf.get_rotation(), "color": color, "weight": _font_weight(String(st["font-weight"])), "italic": ["italic", "oblique"].has(String(st["font-style"]))})
+
+
+## CSS font-weight (keyword or number) as an Open Sans weight.
+static func _font_weight(v: String) -> int:
+	match v.strip_edges():
+		"bold", "bolder":
+			return 700
+		"normal", "lighter", "":
+			return TextLayout.REGULAR
+	return clampi(roundi(float(v) / 50.0) * 50, TextLayout.MIN_WEIGHT, TextLayout.MAX_WEIGHT) if v.is_valid_float() else TextLayout.REGULAR
 
 
 func _collect_text(el: El, lines: Array, state: Dictionary, is_root: bool) -> void:
@@ -988,6 +998,9 @@ func _item(p: Dictionary, k: float, c: Vector2) -> Item:
 			var em := clampf(float(p.em) * k, 0.004, 0.6)
 			var text := "\n".join(PackedStringArray(p.lines))
 			var it4 := Item.make_text("", text, p.color, em)
+			it4.weight = int(p.weight)
+			it4.italic = bool(p.italic)
+			it4.refit_text()
 			var base: Vector2 = conv.call(p.pos)
 			var rot := -float(p.rot)
 			var off_x := 0.0

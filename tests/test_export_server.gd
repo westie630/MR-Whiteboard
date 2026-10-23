@@ -46,6 +46,7 @@ func _ready() -> void:
 	_files()
 	_auth()
 	await _changes(doc, canvas, other)
+	_live(doc, canvas, other, room2)
 	await _sockets(canvas)
 	_clean_files()
 	get_tree().quit(t.done())
@@ -135,6 +136,8 @@ func _auth() -> void:
 	t.check(r.status == 303 and str(r.headers[0]) == "Location: /login", "a page without sign-in redirects to the login")
 	t.eq(srv.handle("GET", "/api/rev", {}, none, "pc").status, 401, "the API answers 401 without sign-in")
 	t.eq(srv.handle("GET", "/svg/x.svg", {}, none, "pc").status, 303, "svg needs sign-in too")
+	t.eq(srv.handle("GET", "/api/live", {}, none, "pc").status, 401, "the live feed needs sign-in")
+	t.eq(srv.handle("GET", "/live", {}, none, "pc").status, 303, "... and so does the live page")
 	t.eq(srv.handle("GET", "/login", {}, none, "pc").status, 200, "the login page is open")
 	t.eq(srv.handle("GET", "/assets/app.css", {}, none, "pc").status, 200, "assets are open")
 	var login_page := _body(srv.handle("GET", "/login", {}, none, "pc"))
@@ -244,6 +247,154 @@ func _changes(doc: Document, canvas: FrameData, other: FrameData) -> void:
 	t.check(not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(FILES + "/Share")), "an emptied folder goes too")
 	t.eq(_post("/api/files/delete", {"names": ["top.glb"]}).status, 404, "deleting a deleted file is 404")
 	await get_tree().process_frame
+
+
+# ------------------------------------------------------------------------------------------------ live view
+
+func _feed(since: String = "") -> Dictionary:
+	var res := srv.route("/api/live?since=%s" % since.uri_encode())
+	var parsed: Variant = JSON.parse_string(_body(res))
+	return parsed if parsed is Dictionary else {}
+
+
+## The version of a canvas in a feed answer ("" when it is not listed).
+func _rev_in(feed: Dictionary, fid: String) -> String:
+	for g in feed.get("groups", []):
+		for f in g.frames:
+			if f.id == fid:
+				return str(f.rev)
+	return ""
+
+
+func _look_in(feed: Dictionary, fid: String) -> String:
+	for g in feed.get("groups", []):
+		for f in g.frames:
+			if f.id == fid:
+				return str(f.look)
+	return ""
+
+
+func _live(doc: Document, canvas: FrameData, other: FrameData, room2: Dictionary) -> void:
+	var page := _body(srv.route("/live"))
+	t.check(srv.route("/live").status == 200 and page.contains("id=lv") and page.contains("data-page='live'") and page.contains("Share &lt;test&gt;"), "the live page is served, with the name escaped")
+	t.check(not page.contains("data-act=") and not page.contains("<input type=file"), "... and has nothing to change the document with")
+	t.check(_body(srv.route("/")).contains("href='/live'"), "the index links to it")
+	t.check(_body(srv.handle("GET", "/assets/app.js", {}, PackedByteArray(), "x")).contains("/api/live?since="), "the script polls the feed")
+	t.check(page.contains("data-lang=es") and page.contains("data-lang=eu") and page.contains("data-lang=fr"), "the live page offers Spanish, Basque and French")
+	var js := _body(srv.handle("GET", "/assets/app.js", {}, PackedByteArray(), "x"))
+	t.check(js.contains("Translator.create") and js.contains("LanguageDetector"), "... translated by the browser's own on-device translator")
+	t.check(not js.contains("translate.googleapis") and not js.contains("api-free.deepl"), "... with no online service behind it")
+
+	var first := _feed()
+	t.check(first.ok and first.doc.id == doc.id and first.doc.name == doc.name and str(first.seq) != "", "the feed names the document")
+	var ids := []
+	for g in first.groups:
+		for f in g.frames:
+			ids.append(f.id)
+	t.check(ids.has(canvas.id) and ids.has(other.id) and first.groups[0].here, "it lists every canvas by room, this room first")
+	var shown: Dictionary = first.groups[0].frames[0]
+	t.check(shown.has("rev") and shown.has("items") and float(shown.w) > 0.0 and float(shown.h) > 0.0, "each canvas has a version, an item count and a size")
+	srv.backing_source = func(): return "glass"
+	var plain_backing := canvas.backing
+	canvas.backing = "white"
+	var white_look := _look_in(_feed(), canvas.id)
+	canvas.backing = ""
+	var glass_look := _look_in(_feed(), canvas.id)
+	canvas.backing = plain_backing
+	t.check(white_look == "white" and glass_look == "dark", "each canvas says which background shows it as it looks in the headset: white backing white, glass dark (%s, %s)" % [white_look, glass_look])
+	var again := _feed(str(first.seq))
+	t.check(not again.has("groups") and again.seq == first.seq, "asking again with nothing changed gets only the small header")
+
+	srv.active_source = func(): return canvas.id
+	var drawing := _feed(str(first.seq))
+	t.check(drawing.active == canvas.id and not drawing.has("groups"), "who is drawing is told without resending the list")
+
+	# a stroke on one canvas: only that canvas gets a new version
+	var rev_canvas := _rev_in(first, canvas.id)
+	var rev_other := _rev_in(first, other.id)
+	var pts := PackedFloat32Array([0.0, 0.0, 0.0, 0.5, 0.2, 0.1, 0.0, 0.6, 0.4, 0.0, 0.0, 0.7])
+	var stroke := Item.make_stroke(other.id, pts, Color.RED, 0.004, "pen")
+	doc.add_item(stroke)
+	var after := _feed(str(first.seq))
+	t.check(after.has("groups") and _rev_in(after, other.id) != rev_other, "a new stroke gives its canvas a new version")
+	t.eq(_rev_in(after, canvas.id), rev_canvas, "... and the other canvases keep theirs")
+	var count := 0
+	for g in after.groups:
+		for f in g.frames:
+			if f.id == other.id:
+				count = int(f.items)
+	t.eq(count, 1, "the item count follows")
+
+	# its picture: drawn once, handed out again while nothing changed, new after a change
+	var p1 := srv.route("/svg/%s.svg?v=%s" % [other.id, _rev_in(after, other.id)])
+	t.check(p1.status == 200 and str(p1.cache).begins_with("private") and _body(p1) == SvgExport.canvas(doc, other.id, {"background": "white", "grid": false}), "the live picture is the exporter's own and may be cached by the browser")
+	t.check(_body(p1).contains("#ff0000"), "... with the stroke in it")
+	var p2 := srv.route("/svg/%s.svg?v=%s" % [other.id, _rev_in(after, other.id)])
+	t.check(p2.body == p1.body, "a second viewer gets the same picture")
+	t.eq(srv.route("/svg/%s.svg" % other.id).get("cache", "no-store"), "no-store", "the plain svg is still never cached")
+	stroke.color = Color.BLUE
+	doc.item_touched(stroke)
+	var edited := _feed(str(after.seq))
+	var p3 := srv.route("/svg/%s.svg?v=%s" % [other.id, _rev_in(edited, other.id)])
+	t.check(_rev_in(edited, other.id) != _rev_in(after, other.id) and _body(p3).contains("#0000ff") and not _body(p3).contains("#ff0000"), "an edit gives a new version and a new picture")
+	var dark := srv.route("/svg/%s.svg?v=1&bg=dark" % other.id)
+	t.check(_body(dark).contains("#14181f") and not _body(p3).contains("#14181f"), "each background is drawn on its own")
+
+	# an item moved to another canvas changes both
+	var r_other := _rev_in(edited, other.id)
+	var r_canvas := _rev_in(edited, canvas.id)
+	stroke.frame = canvas.id
+	doc.item_touched(stroke)
+	var moved := _feed(str(edited.seq))
+	t.check(_rev_in(moved, other.id) != r_other and _rev_in(moved, canvas.id) != r_canvas, "an item moved between canvases changes both")
+	doc.remove_item(stroke.id)
+	var gone := _feed(str(moved.seq))
+	t.check(_rev_in(gone, canvas.id) != _rev_in(moved, canvas.id), "removing an item changes its canvas")
+
+	# canvases coming and going, names, rooms
+	var extra := FrameData.make(FrameData.CANVAS, canvas.room, Transform3D.IDENTITY, "Extra")
+	doc.add_frame(extra)
+	var with_extra := _feed(str(gone.seq))
+	t.check(_rev_in(with_extra, extra.id) != "", "a new canvas is listed")
+	var old_name := canvas.name
+	canvas.name = "Renamed"
+	doc.frame_touched(canvas)
+	var renamed := _feed(str(with_extra.seq))
+	var shown_name := ""
+	for g in renamed.groups:
+		for f in g.frames:
+			if f.id == canvas.id:
+				shown_name = f.name
+	t.check(renamed.has("groups") and shown_name == "Renamed" and _rev_in(renamed, canvas.id) == _rev_in(with_extra, canvas.id), "a rename reaches the list and leaves the picture alone")
+	canvas.name = old_name
+	doc.frame_touched(canvas)
+	doc.remove_frame(extra.id)
+	t.eq(_rev_in(_feed(str(renamed.seq)), extra.id), "", "a deleted canvas leaves the list")
+	var here_before := board.current_room
+	var cur := _feed()
+	board.current_room = str(room2.id)
+	var moved_room := _feed(str(cur.seq))
+	t.check(moved_room.has("groups") and moved_room.here == str(room2.id) and moved_room.groups[0].id == str(room2.id), "walking into another room puts that room first")
+	board.current_room = here_before
+
+	# another document opened in the headset
+	var holder := {"doc": Document.create("One")}
+	var solo := ExportServer.new()
+	solo.doc_source = func(): return holder.doc
+	var f1 := FrameData.make(FrameData.CANVAS, "", Transform3D.IDENTITY, "A")
+	(holder.doc as Document).add_frame(f1)
+	var one: Dictionary = JSON.parse_string(_body(solo.route("/api/live")))
+	var old_doc: Document = holder.doc
+	holder.doc = Document.create("Two")
+	var two: Dictionary = JSON.parse_string(_body(solo.route("/api/live?since=%s" % str(one.seq).uri_encode())))
+	t.check(one.doc.name == "One" and two.doc.name == "Two" and two.doc.id != one.doc.id and two.has("groups") and (two.groups as Array).is_empty(), "opening another document replaces the list")
+	t.eq(old_doc.item_added.get_connections().size(), 0, "the old document is no longer followed")
+	t.eq(solo.route("/svg/%s.svg?v=1" % f1.id).status, 404, "a canvas of the old document is gone")
+	solo.free()
+	var none_open := ExportServer.new()
+	var nope := none_open.route("/api/live")
+	t.check(nope.status == 503 and str(nope.type).begins_with("application/json"), "with nothing open the feed says so in JSON")
+	none_open.free()
 
 
 # ------------------------------------------------------------------------------------------------ sockets

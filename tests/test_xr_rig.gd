@@ -22,13 +22,15 @@ func _ready() -> void:
 	board.open(DocStore.create_new("XR rig smoke"))
 	for i in 90:
 		await get_tree().process_frame
-	t.check(rig.menu != null and rig.panel != null, "the menu panel is built")
+	t.check(rig.ui != null and rig.panel != null and rig.panels.size() == rig.ui.panels.size(), "every surface of the interface has its panel")
 	t.check(not rig.stylus.pen.tracked, "no stylus is reported without a headset")
 	# the rig placed the menu once the (fake) head is above the floor
 	rig.camera.position = Vector3(0, 1.6, 0)
 	for i in 30:
 		await get_tree().process_frame
-	t.check(rig.panel.visible, "the menu appears in front of the user")
+	t.check(rig.panel.visible, "the dock appears in front of the user")
+	t.check(rig.panel.global_position.y < rig.camera.global_position.y - 0.15, "...low, out of the way of the view")
+	t.check(not (rig.panels["home"] as XrPanel).visible and not (rig.panels["popover"] as XrPanel).visible, "...and nothing else shows yet")
 	# the board runs with a pinch pen when there is no stylus: simulate the right hand pinching in the air
 	var hand: HandInput = rig.hands["right"]
 	hand.tracked = true
@@ -65,15 +67,90 @@ func _ready() -> void:
 	var spare_node: FrameNode = board.frame_nodes[spare.id]
 	spare_node.visible = false
 	_menu_rules(t, rig, board, cv, spare_node)
+	await _panel_rules(t, rig, board, cv)
 	DocStore.delete(board.doc.id)
 	get_tree().quit(t.done())
 
 
 ## The menu's rules for hands and the stylus, run by calling the rig's own functions on simulated input. Nothing here awaits: the rig's
 ## per-frame update would otherwise replace the simulated hands with the (absent) real ones.
+## Several panels: a side panel opened from the dock stands beside it and takes the pointer where it is; the bar beside a selection
+## stands just in front of the canvas, and the nib touching it presses it (but not in the middle of a stroke).
+func _panel_rules(t: TestCase, rig: XrRig, board: Board, cv: FrameData) -> void:
+	rig.camera.position = Vector3(0, 1.6, 0)
+	rig._place_panel_front()
+	rig.ui.open_side("home")
+	var box := Item.new()
+	box.id = U.uid("i")
+	box.kind = Item.SHAPE
+	box.shape = "rect"
+	box.frame = cv.id
+	box.center = Vector2(0.0, -0.1)
+	box.size = Vector2(0.2, 0.12)
+	board.history.do(History.op_add([box]))
+	board.select_items([box.id], cv.id)
+	for i in 40:
+		await get_tree().process_frame
+	var p := rig.panel
+	var hp: XrPanel = rig.panels["home"]
+	t.check(hp.visible, "Home opens on its own panel")
+	var rel := p.global_transform.affine_inverse() * hp.global_position
+	t.check(rel.x < -0.2 and rel.y > 0.1, "...beside the dock, on the left and higher up (%s)" % str(rel))
+	var cp: XrPanel = rig.panels["context"]
+	t.check(cp.visible, "the bar for the selection shows")
+	var fn: FrameNode = board.frame_nodes[cv.id]
+	var lz := fn.to_local_point(cp.widget_center()).z * cv.scale
+	t.check(lz > 0.005 and lz < 0.03, "...just in front of the canvas (%.3f m)" % lz)
+	t.check(fn.to_local_point(cp.global_position).y > box.center.y + box.size.y * 0.5, "...above the selection")
+	# no awaiting from here: the rig's frame would replace the simulated hands with the real (absent) ones
+	var pen := PenState.new()
+	var rh: HandInput = rig.hands["right"]
+	rh.tracked = true
+	rh.aiming = true
+	rh.pinching = false
+	rh.pinch_down = false
+	rh.pinch_up = false
+	rh.palm_up = false
+	rh.aim_o = rig.camera.global_position + Vector3(0.0, -0.25, -0.05)
+	rh.tip = rh.aim_o
+	rh.pinch_point = rh.tip
+	rh.aim_d = (hp.widget_center() - rh.aim_o).normalized()
+	rig._update_menu(pen)
+	t.check(rig._ui_panel == hp and not rig._ui_pressed, "a ray on Home hovers Home")
+	rh.aim_d = (p.widget_center() - rh.aim_o).normalized()
+	rig._update_menu(pen)
+	t.check(rig._ui_panel == p, "...and on the dock, the dock")
+	rh.tracked = false
+	rig._update_menu(pen)
+	t.check(rig._ui_panel == null and rig._ui_src == "", "a hand that goes away leaves the panels")
+	# the nib on the bar pinned to the canvas presses it, even though the nib is at the canvas
+	var n := fn.global_transform.basis.z.normalized()
+	rig.stylus.active = "right"
+	pen.tracked = true
+	pen.tip = cp.widget_center() - n * 0.004
+	pen.dir = -n
+	var busy := rig._update_menu(pen)
+	t.check(not board.pen_target(pen.tip, Board.CAPTURE).is_empty(), "(the nib is at the canvas)")
+	t.check(rig._ui_pressed and busy.has("pen") and rig._ui_panel == cp, "the nib at the canvas presses the bar pinned to it")
+	pen.tip = cp.widget_center() + n * 0.2
+	rig._update_menu(pen)
+	t.check(not rig._ui_pressed, "...and lets go when it is drawn back")
+	board.pen_ctl.state = PenController.S.DRAWING
+	pen.tip = cp.widget_center() - n * 0.004
+	busy = rig._update_menu(pen)
+	t.check(not busy.has("pen") and not rig._ui_pressed, "in the middle of a stroke the nib goes past the bar")
+	board.pen_ctl.state = PenController.S.IDLE
+	pen.tracked = false
+	rig.stylus.active = ""
+	rig._update_menu(pen)
+	rig.ui.close_side("home")
+	board.clear_selection()
+
+
 func _menu_rules(t: TestCase, rig: XrRig, board: Board, cv: FrameData, spare: FrameNode) -> void:
 	var p := rig.panel
 	p.global_transform = Transform3D(Basis.IDENTITY, Vector3(0.0, 1.4, -0.6))
+	p.global_position += Vector3(0.0, 1.4, -0.6) - p.widget_center()      # the middle of the dock where the rules below point
 	p.visible = true
 	var pen := PenState.new()
 	pen.tracked = false

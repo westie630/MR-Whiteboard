@@ -31,7 +31,7 @@ func rebuild() -> void:
 		Item.SHAPE:
 			_build_shape()
 		Item.TEXT:
-			_build_text(item.text, item.center, item.rot, item.font_size, item.color, Brushes.priority("pen", item.z) + 1)
+			_build_text(item.text, item.center, item.rot, item.font_size, item.color, Brushes.priority("pen", item.z) + 1, item.weight, item.italic)
 
 
 func set_preview(t: Transform3D) -> void:
@@ -117,10 +117,10 @@ func _add_ribbon(pts: PackedVector2Array, closed: bool, col: Color, mat: Materia
 
 # ------------------------------------------------------------------------------------------------ text
 
-func _build_text(txt: String, center: Vector2, rot: float, em: float, col: Color, prio: int) -> void:
+func _build_text(txt: String, center: Vector2, rot: float, em: float, col: Color, prio: int, weight: int = TextLayout.REGULAR, italic: bool = false) -> void:
 	var l := Label3D.new()
 	l.text = txt
-	l.font = TextLayout.font()
+	l.font = TextLayout.font(weight, italic)
 	l.font_size = 64
 	l.pixel_size = em / 64.0
 	l.modulate = col

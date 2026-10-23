@@ -2,19 +2,20 @@ class_name DesktopRig
 extends Node3D
 ## The PC build, for trying everything without a headset. The mouse (or a graphics tablet with pressure) is the stylus; the camera is
 ## your head. A simulated room (floor, wall, table) stands in for the real one, and spatial anchors are simulated too (Rooms tab).
-## The 3D world is shown in its own viewport beside the menu, so the menu never covers the scene.
+## The 3D world fills the window; the interface (UiShell) floats over it: the dock at the bottom, popovers above their button, Home on
+## the left, the assistant on the right, the bars that belong to a selection or to handwriting pinned to their spot on the canvas.
 ##
 ##   Left mouse      draw / use the current tool on the canvas under the pointer
 ##   Shift + left    the stylus front button: grab what is under the pointer (an item, the canvas bar, a corner, empty canvas to carry it)
 ##   Middle mouse    pinch: carry a canvas (mouse wheel scales it, Q / E turn it)
 ##   Right mouse     look around;  W A S D  walk,  Shift  faster,  wheel  dolly
-##   Ctrl+Z / Ctrl+Y undo / redo,  Delete,  Ctrl+D duplicate,  Ctrl+S save,  1-5 tools,  C new canvas,  Tab menu on/off,  Esc cancel
+##   Ctrl+Z / Ctrl+Y undo / redo,  Delete,  Ctrl+D duplicate,  Ctrl+S save,  1-5 tools,  B brush,  T type,  C new canvas,  Tab hide the interface,  Esc close / let go
 
 const MOVE_SPEED := 1.6
 const LOOK_SENS := 0.0032
 
 var board: Board
-var menu: MenuPanel
+var ui: UiShell
 var camera: Camera3D
 var view: SubViewport                      # the 3D world
 var view_container: SubViewportContainer
@@ -33,7 +34,9 @@ var _air_depth := 0.85
 var _hand_depth := 1.0
 var _mouse_window := Vector2.ZERO          # last mouse position in the window
 var _layer: CanvasLayer
-var _hint: Label
+var _ui_root: Control
+var _offsets := {}                         # panel id -> where it was dragged to (from its home position)
+const MARGIN := 18.0
 
 
 func setup(b: Board) -> void:
@@ -71,43 +74,137 @@ func setup(b: Board) -> void:
 	view.add_child(board)
 	board.head_provider = func(): return camera.global_transform
 	board.surface_hit = _surface_hit
-	menu = MenuPanel.new()
-	_layer.add_child(menu)
-	menu.setup(board)
-	menu.hide_requested.connect(func():
-		menu.visible = false
-		_layout())
-	_hint = Label.new()
-	_hint.add_theme_font_size_override("font_size", 15)
-	_hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
-	_hint.text = "Mouse = stylus  |  right mouse: look, WASD: walk  |  middle mouse: carry a canvas  |  Shift+click: grab  |  Tab: menu"
-	_layer.add_child(_hint)
+	_ui_root = Control.new()
+	_ui_root.name = "Interface"
+	_ui_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ui_root.theme = UITheme.theme()
+	_layer.add_child(_ui_root)
+	ui = UiShell.new()
+	ui.name = "UiShell"
+	add_child(ui)
+	ui.setup(board)
+	for p in ui.panels:
+		_ui_root.add_child(p)
+	var saved: Variant = App.val("panel_pos")
+	if saved is Dictionary:
+		for k in saved:
+			if saved[k] is Array and (saved[k] as Array).size() == 2:
+				_offsets[k] = Vector2(float(saved[k][0]), float(saved[k][1]))
+	ui.dock.grip.dragged.connect(_drag.bind("dock"))
+	ui.home.grip.dragged.connect(_drag.bind("home"))
+	ui.assistant.grip.dragged.connect(_drag.bind("assistant"))
 	get_window().size_changed.connect(_layout)
-	App.setting_changed.connect(func(k):
-		if k == "ui_scale":
-			_layout())
 	_layout()
+	ui.show_toast("Mouse = stylus.  Right mouse: look, WASD: walk.  Middle mouse: carry a canvas.  Tab hides the interface.")
 	hands = [_hand]
 	board.hand_ctl.grab_anywhere = true            # the mouse has no bar to point at: the middle button picks a canvas up wherever it is
 
 
 func _layout() -> void:
 	var win := Vector2(get_window().size)
-	var fit := minf((win.y - 24.0) / MenuPanel.DESIGN_SIZE.y, 1.6)
-	var sc := minf(float(App.val("ui_scale")), maxf(fit, 0.55))
-	menu.scale = Vector2(sc, sc)
-	menu.size = Vector2(MenuPanel.DESIGN_SIZE.x, maxf(MenuPanel.DESIGN_SIZE.y, (win.y - 24.0) / sc))   # tall windows: the panel fills the height
-	menu.position = Vector2(12, 12)
-	var left := 0.0
-	if menu.visible:
-		left = MenuPanel.DESIGN_SIZE.x * sc + 24.0
-	view_container.position = Vector2(left, 0)
-	view_container.size = Vector2(maxf(win.x - left, 64.0), win.y)
-	_hint.position = Vector2(left + 14.0, win.y - 28.0)
+	view_container.position = Vector2.ZERO
+	view_container.size = win
+	_ui_root.size = win
 
 
+## The interface scale: the setting, made smaller when the window is too small for the dock.
+func ui_scale() -> float:
+	var win := Vector2(get_window().size)
+	var fit := minf((win.x - 2.0 * MARGIN) / maxf(ui.dock.size.x, 1.0), (win.y - 40.0) / 560.0)
+	return clampf(minf(float(App.val("ui_scale")), fit), 0.5, 1.8)
+
+
+## Put every surface where it belongs this frame.
+func _place_ui() -> void:
+	var win := Vector2(get_window().size)
+	var sc := ui_scale()
+	for p in ui.panels:
+		(p as FloatPanel).scale = Vector2(sc, sc)
+	# the dock: bottom centre
+	var d := ui.dock
+	var dpos := Vector2((win.x - d.size.x * sc) * 0.5, win.y - MARGIN - d.size.y * sc) + _offset("dock")
+	d.position = _clamp(dpos, d.size * sc, win)
+	var dock_top := d.position.y
+	# a popover: above its button
+	var pop := ui.popover
+	if pop.visible:
+		var bx := d.position.x + d.button_x(ui.popover_id) * sc
+		var pw := pop.size.x * sc
+		var px := clampf(bx - pw * 0.5, MARGIN, win.x - MARGIN - pw)
+		pop.position = Vector2(px, maxf(dock_top - 14.0 - pop.size.y * sc, MARGIN))
+		pop.source_x = (bx - px) / sc
+		pop.queue_redraw()
+	# the typing card: above the dock, in the middle
+	var cp := ui.compose
+	if cp.visible:
+		cp.position = Vector2((win.x - cp.size.x * sc) * 0.5, maxf(dock_top - 14.0 - cp.size.y * sc, MARGIN))
+	# Home on the left, the assistant on the right, as tall as there is room above the dock
+	var avail := (dock_top - 2.0 * MARGIN) / sc
+	for sp in [ui.home, ui.assistant]:
+		var side := sp as FloatPanel
+		var h := clampf(avail, 380.0, 760.0)
+		side.custom_minimum_size.y = h
+		side.size = Vector2(side.custom_minimum_size.x, h)
+		var x := MARGIN if side.side < 0 else win.x - MARGIN - side.size.x * sc
+		side.position = _clamp(Vector2(x, MARGIN) + _offset(side.id), side.size * sc, win)
+	# messages: top centre of the room left between the side panels
+	var lo := 0.0
+	var hi := win.x
+	if ui.home.visible:
+		lo = ui.home.position.x + ui.home.size.x * sc
+	if ui.assistant.visible:
+		hi = ui.assistant.position.x
+	var t := ui.toast
+	t.max_width = maxf((hi - lo - 2.0 * MARGIN) / sc, 260.0)
+	t.position = Vector2(clampf((lo + hi - t.size.x * sc) * 0.5, MARGIN, maxf(win.x - MARGIN - t.size.x * sc, MARGIN)), MARGIN + 6.0)
+	# bars pinned to the canvas: where their spot is on the screen
+	for cp2 in [ui.context, ui.ink_chip, ui.suggestion]:
+		var c := cp2 as FloatPanel
+		if not c.visible or c.anchor.is_empty():
+			continue
+		var fn: FrameNode = board.frame_nodes.get(str(c.anchor.frame))
+		if fn == null:
+			continue
+		var pos2: Vector2 = c.anchor.pos
+		var world := fn.global_transform * Vector3(pos2.x, pos2.y, 0.0)
+		if camera.is_position_behind(world):
+			c.position = Vector2(-10000, -10000)
+			continue
+		var sp2 := camera.unproject_position(world) + view_container.position
+		var off := Vector2(0, -10) if c.pivot.y > 0.9 else (Vector2(10, 0) if c.pivot.x < 0.1 else Vector2(0, 10))
+		var cpos := _clamp(sp2 - c.size * sc * c.pivot + off, c.size * sc, Vector2(win.x, dock_top - 8.0))
+		cpos.x = clampf(cpos.x, lo + MARGIN * 0.5, maxf(hi - MARGIN * 0.5 - c.size.x * sc, lo + MARGIN * 0.5))   # not under a side panel
+		if t.visible:
+			cpos.y = maxf(cpos.y, t.position.y + t.size.y * sc + 8.0)                                             # nor under a message
+		c.position = cpos
+
+
+func _offset(id: String) -> Vector2:
+	return _offsets.get(id, Vector2.ZERO)
+
+
+func _clamp(pos: Vector2, size: Vector2, win: Vector2) -> Vector2:
+	return Vector2(clampf(pos.x, MARGIN * 0.5, maxf(win.x - size.x - MARGIN * 0.5, MARGIN * 0.5)), clampf(pos.y, MARGIN * 0.5, maxf(win.y - size.y - MARGIN * 0.5, MARGIN * 0.5)))
+
+
+## A panel's grip was dragged: it stays where it is put (also next time).
+func _drag(rel: Vector2, id: String) -> void:
+	_offsets[id] = _offset(id) + rel
+	var save := {}
+	for k in _offsets:
+		save[k] = [(_offsets[k] as Vector2).x, (_offsets[k] as Vector2).y]
+	App.put("panel_pos", save)
+
+
+## Inside the 3D view and not on a surface of the interface: the mouse is the stylus there.
 func _in_view(window_pos: Vector2) -> bool:
-	return view_container.get_global_rect().has_point(window_pos)
+	if not view_container.get_global_rect().has_point(window_pos):
+		return false
+	for p in ui.panels:
+		var fp := p as FloatPanel
+		if fp.visible and fp.modulate.a > 0.05 and fp.mouse_filter != Control.MOUSE_FILTER_IGNORE and fp.get_global_rect().has_point(window_pos):
+			return false
+	return true
 
 
 ## Where the mouse is in the 3D viewport.
@@ -232,15 +329,21 @@ func _wheel(dir: float, mb: InputEventMouseButton) -> void:
 
 
 func _key(k: InputEventKey) -> void:
-	if menu.is_typing():
+	if ui.is_typing():
 		return
+	if k.keycode == KEY_ESCAPE:
+		if ui.back():
+			get_viewport().set_input_as_handled()
+			return
 	if Shortcuts.edit_key(board, k):
 		return
 	match k.keycode:
 		KEY_TAB:
-			menu.visible = not menu.visible
-			_layout()
+			ui.hidden = not ui.hidden
 			get_viewport().set_input_as_handled()
+		KEY_B:
+			if not k.ctrl_pressed:
+				ui.toggle_popover("brush")
 		KEY_T:
 			if not k.ctrl_pressed:
 				_type_text()
@@ -271,12 +374,10 @@ func _key(k: InputEventKey) -> void:
 				g.xf = xf
 
 
-## T (or Enter on selected text): the typing box, showing the menu if it was hidden.
+## T (or Enter on selected text): the typing box, showing the interface if it was hidden.
 func _type_text() -> void:
-	if not menu.visible:
-		menu.visible = true
-		_layout()
-	menu.open_text_entry()
+	ui.hidden = false
+	ui.open_text_entry()
 
 
 func _apply_look() -> void:
@@ -293,7 +394,7 @@ func _process(delta: float) -> void:
 		_mmb = false
 	var v := Vector3.ZERO
 	var b := camera.global_transform.basis
-	var typing := menu.is_typing()
+	var typing := ui.is_typing()
 	if not typing:
 		if Input.is_key_pressed(KEY_W):
 			v += -b.z
@@ -307,6 +408,7 @@ func _process(delta: float) -> void:
 		camera.position += v.normalized() * MOVE_SPEED * delta * (3.0 if Input.is_key_pressed(KEY_SHIFT) else 1.0)
 	_update_pen()
 	board.tick(pen, hands, delta)
+	_place_ui()
 
 
 ## Turn the mouse into the stylus: the pointer ray meets a canvas (then the nib is on its plane) or floats at a fixed depth (nothing to draw on there).

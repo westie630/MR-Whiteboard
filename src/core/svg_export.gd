@@ -48,7 +48,7 @@ static func canvas(doc: Document, frame_id: String, opts: Dictionary = {}) -> St
 			Item.SHAPE:
 				out.append(_shape(item, tx))
 			Item.TEXT:
-				out.append(_text(item.text, item.center, item.rot, item.font_size, item.color, tx))
+				out.append(_text(item.text, item.center, item.rot, item.font_size, item.color, tx, item.weight, item.italic))
 	out.append('</svg>')
 	return "\n".join(out)
 
@@ -189,7 +189,7 @@ static func _head(tip: Vector2, dir: Vector2, it: Item, tx: Callable) -> String:
 	return '<polygon points="%s" fill="%s" stroke="%s" stroke-width="%s" stroke-linejoin="round"/>' % [" ".join(pts), _hex(it.color), _hex(it.color), _n(it.width * MM * 0.5)]
 
 
-static func _text(txt: String, center: Vector2, rot: float, em: float, col: Color, tx: Callable) -> String:
+static func _text(txt: String, center: Vector2, rot: float, em: float, col: Color, tx: Callable, weight: int = TextLayout.REGULAR, italic: bool = false) -> String:
 	var lines := txt.split("\n")
 	var c: Vector2 = tx.call(center)
 	var size := em * MM
@@ -199,7 +199,8 @@ static func _text(txt: String, center: Vector2, rot: float, em: float, col: Colo
 	for i in lines.size():
 		s.append('<tspan x="%s" y="%s">%s</tspan>' % [_n(c.x), _n(y0 + float(i) * size * 1.2), _esc(lines[i])])
 	var tr := ' transform="rotate(%s %s %s)"' % [_n(-rad_to_deg(rot)), _n(c.x), _n(c.y)] if absf(rot) > 1e-4 else ""
-	return '<text font-family="%s" font-size="%s" fill="%s" text-anchor="middle"%s>%s</text>' % [FONT, _n(size), _hex(col), tr, "".join(s)]
+	var style := (' font-weight="%d"' % weight if weight != TextLayout.REGULAR else "") + (' font-style="italic"' if italic else "")
+	return '<text font-family="%s"%s font-size="%s" fill="%s" text-anchor="middle"%s>%s</text>' % [FONT, style, _n(size), _hex(col), tr, "".join(s)]
 
 
 static func _grid(bb: Rect2, dark: bool) -> String:
