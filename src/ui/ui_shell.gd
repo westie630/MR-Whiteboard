@@ -11,6 +11,7 @@ extends Node
 ##   Assistant     the AI assistant (opened from the dock)
 ##   Compose       the typing card with its keyboard
 ##   SurfaceCard   finding the desk with the stylus nib (stands on the dock like the typing card)
+##   PlaceCard     pointing at a canvas to put a text down on (the AI's text; Board.begin_place_text)
 ##   AlignCard     touching the two points a session lines up on with the stylus nib (the same)
 ##   Toast         short messages
 ## While the pen draws or a hand carries something, the surfaces fade back and the ones on the canvas step away, so the interface
@@ -34,6 +35,7 @@ var assistant: AssistantPanel
 var compose: ComposePanel
 var surface_card: SurfaceCard
 var align_card: AlignCard
+var place_card: PlaceCard
 var toast: ToastView
 var panels: Array = []                     # every surface, back to front
 var popover_id := ""
@@ -60,8 +62,9 @@ func setup(b: Board) -> void:
 	compose = ComposePanel.new()
 	surface_card = SurfaceCard.new()
 	align_card = AlignCard.new()
+	place_card = PlaceCard.new()
 	toast = ToastView.new()
-	panels = [context, ink_chip, suggestion, pdf_bar, dock, home, assistant, popover, compose, surface_card, align_card, toast]
+	panels = [context, ink_chip, suggestion, pdf_bar, dock, home, assistant, popover, compose, surface_card, align_card, place_card, toast]
 	for p in panels:
 		(p as FloatPanel).shell = self
 	compose.entry.accepted.connect(_entry_ok)
@@ -87,7 +90,7 @@ func _process(delta: float) -> void:
 func engaged() -> bool:
 	if board == null:
 		return false
-	return board.pen_ctl.state != PenController.S.IDLE or board.hand_ctl.is_holding() or not board.grabs.is_empty() or not board.placing.is_empty()
+	return board.pen_ctl.state != PenController.S.IDLE or board.hand_ctl.is_holding() or not board.grabs.is_empty() or not board.placing.is_empty() or not board.placing_text.is_empty()
 
 
 func update(delta: float) -> void:
@@ -113,6 +116,7 @@ func update(delta: float) -> void:
 	compose.wanted = typing
 	surface_card.wanted = board.surface.finding() and not hidden and not typing
 	align_card.wanted = board.session.aligning() and not hidden and not typing
+	place_card.wanted = not board.placing_text.is_empty() and not hidden and not typing
 	var on_canvas := not hidden and calm and has_doc and not typing
 	var sel_sig := ",".join(PackedStringArray(board.selection))
 	if sel_sig != _sel_sig:
@@ -227,6 +231,9 @@ func back() -> bool:
 	if entry_open():
 		close_entry()
 		return true
+	if not board.placing_text.is_empty():
+		board.cancel_place_text()
+		return true
 	if board.surface.finding():
 		board.surface.cancel()
 		return true
@@ -294,6 +301,12 @@ func open_text_entry() -> bool:
 		return false
 	open_entry("New text on the canvas", "", true, func(t: String): board.texts.place(t))
 	return true
+
+
+## AI text: the typing card (with its microphone) asks what the text should be about; the AI writes it and the placement tool puts it
+## on a canvas.
+func open_ai_text() -> void:
+	open_entry("AI text: what should it say?", "", true, func(t: String): board.ai.write(t))
 
 
 func ask_name(title: String, current: String, cb: Callable) -> void:

@@ -145,6 +145,9 @@ func _place_ui() -> void:
 	var ac := ui.align_card
 	if ac.visible:
 		ac.position = Vector2(win.x - MARGIN - ac.size.x * sc, maxf(dock_top - 14.0 - ac.size.y * sc, MARGIN))
+	var pc := ui.place_card
+	if pc.visible:
+		pc.position = Vector2(win.x - MARGIN - pc.size.x * sc, maxf(dock_top - 14.0 - pc.size.y * sc, MARGIN))
 	# Home on the left, the assistant on the right, as tall as there is room above the dock
 	var avail := (dock_top - 2.0 * MARGIN) / sc
 	for sp in [ui.home, ui.assistant]:

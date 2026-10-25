@@ -31,6 +31,7 @@ var _bounds_dirty := true
 var _extra: Callable = Callable()          # extra overlay drawing (selection, handles, cursor) set by the Board
 var _overlay_dirty := true
 var _ai: Node3D                            # the AI assistant's suggestion layer (items not in the document), drawn over the canvas
+var _ghost: ItemView                       # the text being placed (Board.begin_place_text), drawn over the canvas but not part of it
 var _ai_items: Array = []
 var _ai_hidden: Array = []                 # ids of document items the suggestion replaces: hidden while it is shown
 var _ai_marks: Array = []                  # [{rect, kind: new | removed}] outlines drawn in the overlay
@@ -445,6 +446,23 @@ func show_ai(items: Array, hidden: Array, marks: Array) -> void:
 		_ai_tag.position = Vector3(r.position.x, r.end.y + 0.045, 0.001)
 	_bounds_dirty = true
 	refresh_frame()
+
+
+## Show `it` (a text item not in the document, its centre at the origin) with its middle at `center` as a ghost; null clears it.
+## Not part of the canvas's extent: it only follows the pointer.
+func show_ghost(it: Item, center: Vector2) -> void:
+	if it == null:
+		if _ghost != null:
+			_ghost.queue_free()
+			_ghost = null
+		return
+	if _ghost == null or _ghost.item != it:
+		if _ghost != null:
+			_ghost.queue_free()
+		_ghost = ItemView.new()
+		add_child(_ghost)
+		_ghost.setup(it, false)
+	_ghost.set_preview(Transform3D(Basis.IDENTITY, Vector3(center.x, center.y, 0.0012)))
 
 
 func ai_shown() -> bool:

@@ -53,6 +53,7 @@ var sel_frame := ""
 var bar_ghost: Dictionary = {}
 var stencil := "rect"
 var placing: Dictionary = {}               # canvas placement in progress: {kind, ghost, size}
+var placing_text: Dictionary = {}          # text placement in progress: {text, wrap, frame, item (the ghost), center}; see begin_place_text()
 var grabs: Dictionary = {}                 # frame id -> {xf: Transform3D (world), scale: float} while a hand holds it
 var remote_grabs: Dictionary = {}          # frame id -> {xf: Transform3D (in its room), scale} while somebody else of the session carries it (LivePreview)
 var pen_ctl: PenController
@@ -611,7 +612,7 @@ func _pick_room(present: Array, dt: float) -> String:
 	if tracking_live:
 		_pick_t += dt
 	var pick := current_room
-	if grabs.is_empty() and placing.is_empty() and pen_ctl.state == PenController.S.IDLE and not surface.finding():
+	if grabs.is_empty() and placing.is_empty() and placing_text.is_empty() and pen_ctl.state == PenController.S.IDLE and not surface.finding():
 		var near := _nearest_room(present)
 		if near == session.resume_room() or _room_dist(near) + ROOM_NEARER_M < _room_dist(current_room):
 			pick = near
@@ -1513,6 +1514,143 @@ func _update_placing(pen: PenState, hands: Array, _dt: float) -> void:
 		confirm_place()
 
 
+# ------------------------------------------------------------------------------------------------ text placement
+
+## The placement tool for words (the AI's text): a ghost of the text follows the pen / hand ray over the canvas it points at; tap
+## with the stylus tip or pinch to put it down there (one undo step, selected so it can be moved), the back button cancels.
+func begin_place_text(text: String, wrap: int = TextController.AI_WRAP) -> void:
+	if doc == null or text.strip_edges() == "":
+		return
+	cancel_place()
+	cancel_place_text()
+	surface.cancel()
+	placing_text = {"text": text.strip_edges(), "wrap": wrap, "frame": "", "item": null, "center": Vector2.ZERO}
+	toast.emit("Point at a canvas and tap with the stylus or pinch to put the text down. Back cancels.")
+	changed.emit()
+
+
+func cancel_place_text() -> void:
+	if placing_text.is_empty():
+		return
+	_clear_text_ghost()
+	placing_text = {}
+	changed.emit()
+
+
+## Put the text down where the ghost is (on the canvas pointed at). Returns the new item, or null when no canvas is pointed at.
+func confirm_place_text() -> Item:
+	if placing_text.is_empty():
+		return null
+	if str(placing_text.frame) == "":
+		toast.emit("Point at a canvas first.")
+		return null
+	var t: Item = texts.place_at(str(placing_text.text), str(placing_text.frame), placing_text.center, int(placing_text.wrap))
+	if t == null:
+		toast.emit("That canvas cannot take the text (it is locked).")
+		return null
+	cancel_place_text()
+	toast.emit("Text placed (undo takes it back).")
+	return t
+
+
+## No pointing needed: put the text on the canvas you are looking at, below the text already there.
+func place_text_here() -> Item:
+	if placing_text.is_empty():
+		return null
+	var text := str(placing_text.text)
+	var wrap := int(placing_text.wrap)
+	var spot := dictation_spot()
+	if spot.is_empty():
+		toast.emit("Place a canvas first, then put the text on it.")
+		return null
+	cancel_place_text()
+	return texts.place_at(text, str(spot.frame), spot.center, wrap, true)
+
+
+## The canvas a ray from `o` along `d` hits first: {fn, local (frame metres)} or {} (locked canvases and the ones behind are skipped).
+func ray_canvas(o: Vector3, d: Vector3) -> Dictionary:
+	var best := {}
+	var best_t := INF
+	for fn in visible_frames(FrameData.CANVAS):
+		var n := fn as FrameNode
+		if n.data.locked:
+			continue
+		var lo := n.to_local_point(o)
+		var ld := n.global_transform.basis.inverse() * d
+		if absf(ld.z) < 0.02:
+			continue
+		var t := -lo.z / ld.z
+		if t <= 0.0 or t >= best_t:
+			continue
+		var g := lo + ld * t
+		if n.bounds().has_point(Vector2(g.x, g.y)):
+			best_t = t
+			best = {"fn": n, "local": Vector2(g.x, g.y)}
+	return best
+
+
+func _clear_text_ghost() -> void:
+	var fn: FrameNode = frame_nodes.get(str(placing_text.get("frame", "")))
+	if fn != null:
+		fn.show_ghost(null, Vector2.ZERO)
+
+
+func _update_placing_text(pen: PenState, hands: Array) -> void:
+	var o := Vector3.ZERO
+	var d := Vector3.FORWARD
+	var have := false
+	if pen.tracked and pen.source != "none":
+		o = pen.tip
+		d = pen.dir
+		have = true
+	else:
+		for h in hands:
+			var hi := h as HandInput
+			if hi.tracked and hi.aiming:
+				o = hi.aim_o
+				d = hi.aim_d
+				have = true
+				break
+	if have:
+		var hit := ray_canvas(o, d)
+		var old := str(placing_text.frame)
+		var fid := "" if hit.is_empty() else (hit.fn as FrameNode).data.id
+		if fid != old:
+			_clear_text_ghost()
+			placing_text.frame = fid
+			placing_text.item = null
+			changed.emit()                                  # the card names the canvas pointed at
+		if fid != "":
+			if placing_text.item == null:
+				var g := texts.make(str(placing_text.text), fid, int(placing_text.wrap))
+				g.color = Color(g.color.r, g.color.g, g.color.b, 0.65)
+				g.center = Vector2.ZERO
+				placing_text.item = g
+			placing_text.center = _text_centre(hit.local, (placing_text.item as Item).size, hit.fn)
+			(hit.fn as FrameNode).show_ghost(placing_text.item, placing_text.center)
+	var confirm := false
+	if pen.tracked and pen.down and not _was_down:
+		confirm = true
+	for h in hands:
+		if (h as HandInput).pinch_down:
+			confirm = true
+	_was_down = pen.down
+	if pen.back and not _was_back:
+		cancel_place_text()
+		return
+	_was_back = pen.back
+	if confirm and have:
+		confirm_place_text()
+
+
+## The pointed-at spot as the text's middle, kept so the whole text stays on the canvas's drawn area where it fits.
+func _text_centre(p: Vector2, size: Vector2, fn: FrameNode) -> Vector2:
+	var r := fn.bounds()
+	var lo := r.position + size * 0.5
+	var hi := r.end - size * 0.5
+	return Vector2(clampf(p.x, lo.x, maxf(lo.x, hi.x)) if hi.x >= lo.x else r.get_center().x, clampf(p.y, lo.y, maxf(lo.y, hi.y)) if hi.y >= lo.y else r.get_center().y)
+
+
 # ------------------------------------------------------------------------------------------------ selection and editing
 
 func select_items(ids: Array, frame_id: String) -> void:
@@ -1902,6 +2040,8 @@ func tick(pen: PenState, hands: Array, dt: float) -> void:
 	session.tick(pen, hands, dt)
 	if not placing.is_empty():
 		_update_placing(pen, hands, dt)
+	elif not placing_text.is_empty():
+		_update_placing_text(pen, hands)
 	elif surface.finding():
 		surface.update(pen, dt)                       # the nib is feeling for the desk: it neither draws nor grabs meanwhile
 	elif session.aligning():

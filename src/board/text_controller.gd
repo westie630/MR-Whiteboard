@@ -5,6 +5,7 @@ extends RefCounted
 ## Both are single undo steps.
 
 const WRAP_CHARS := 30                     # lines are broken at about this many characters
+const AI_WRAP := 40                        # the same for text written by the AI (longer than a typed line)
 
 var board: Board
 
@@ -28,10 +29,28 @@ func place(text: String) -> Item:
 		board.toast.emit("Place a canvas first, then add text. Your text: \"%s\"" % text.left(60))
 		return null
 	var frame_id: String = s.frame
+	var t := make(text, frame_id, WRAP_CHARS)
+	t.center = _clear_spot(frame_id, s.center, t.size)
+	board.history.do(History.op_add([t]))
+	board.select_items([t.id], frame_id)
+	return t
+
+
+## A text item in the current colour and text style, not in the document yet (the placement tool shows it as a ghost first).
+func make(text: String, frame_id: String, wrap: int = WRAP_CHARS) -> Item:
 	var col: Color = App.val("color")
 	var st := TextLayout.style(str(App.val("text_style")))
-	var t := Item.make_text(frame_id, wrap_text(text, WRAP_CHARS), Color(col.r, col.g, col.b, 1.0), float(st[2]), int(st[3]))
-	t.center = _clear_spot(frame_id, s.center, t.size)
+	return Item.make_text(frame_id, wrap_text(text.strip_edges(), wrap), Color(col.r, col.g, col.b, 1.0), float(st[2]), int(st[3]))
+
+
+## Put text on an existing canvas with its middle at `center` (frame coordinates): one undo step, selected afterwards so it can be
+## moved. With `clear` it is moved down until it does not sit on other text. Null when the canvas is gone, locked or the text is empty.
+func place_at(text: String, frame_id: String, center: Vector2, wrap: int = WRAP_CHARS, clear: bool = false) -> Item:
+	var fd: FrameData = board.doc.frames.get(frame_id) if board.doc != null else null
+	if fd == null or fd.kind != FrameData.CANVAS or fd.locked or text.strip_edges() == "":
+		return null
+	var t := make(text, frame_id, wrap)
+	t.center = _clear_spot(frame_id, center, t.size) if clear else center
 	board.history.do(History.op_add([t]))
 	board.select_items([t.id], frame_id)
 	return t

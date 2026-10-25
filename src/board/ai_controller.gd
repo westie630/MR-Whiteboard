@@ -241,7 +241,9 @@ func ready_reason() -> String:
 
 
 ## Ask about a canvas. `action` is an AiPrompts action id, or "ask" with your own `question`. Returns false when it could not start.
-func ask(action: String, question: String = "", frame_id: String = "") -> bool:
+## `note` false keeps the answer in the assistant's conversation (the chat never writes onto the canvas by itself: see `write` and
+## the Place button for that); true follows the "Answers also as a note" setting (the web page).
+func ask(action: String, question: String = "", frame_id: String = "", note: bool = true) -> bool:
 	var why := ready_reason()
 	if why == "" and action == "ask" and question.strip_edges() == "":
 		why = "Type or say a question first."
@@ -265,7 +267,7 @@ func ask(action: String, question: String = "", frame_id: String = "") -> bool:
 	var history: Array = (chat.get(fid, []) as Array).slice(-HISTORY_TURNS)
 	var m := model(p)
 	busy = true
-	asking = {"frame": fid, "label": label, "action": action}
+	asking = {"frame": fid, "label": label, "action": action, "note": note}
 	status = "%s is thinking about \"%s\"..." % [model_name(p), label.left(60)]
 	board.changed.emit()
 	var started := Time.get_ticks_msec()
@@ -274,7 +276,49 @@ func ask(action: String, question: String = "", frame_id: String = "") -> bool:
 	return true
 
 
+## AI text: have the model write words for a canvas ("a short agenda for a stand-up", typed or spoken). The words come back as a
+## pending text on the board's placement tool: point at a canvas and tap to put them down, back to throw them away. Returns false
+## when it could not start.
+func write(prompt: String) -> bool:
+	var why := ready_reason()
+	if why == "" and prompt.strip_edges() == "":
+		why = "Type or say what the text should be about."
+	if why == "" and board.doc == null:
+		why = "Open a document first."
+	if why != "":
+		status = why
+		board.toast.emit(why)
+		board.changed.emit()
+		return false
+	var p := provider()
+	var m := model(p)
+	var label := prompt.strip_edges()
+	busy = true
+	asking = {"frame": "", "label": label, "action": "write", "note": false}
+	status = "%s is writing \"%s\"..." % [model_name(p), label.left(60)]
+	board.changed.emit()
+	client.chat(p, key(p), m, mode(p), AiPrompts.TEXT_SYSTEM, [], label, PackedByteArray(), func(res: Dictionary):
+		busy = false
+		asking = {}
+		if not bool(res.ok):
+			status = str(res.error)
+			board.toast.emit(status)
+			board.changed.emit()
+			return
+		var words := AiPrompts.clean_text(str(res.text))
+		if words == "":
+			status = "The model sent no text."
+			board.toast.emit(status)
+			board.changed.emit()
+			return
+		status = "%s wrote the text: point at a canvas and tap to place it." % model_name(p)
+		board.begin_place_text(words)
+		board.changed.emit())
+	return true
+
+
 func _on_answer(res: Dictionary, fid: String, action: String, label: String, brief: CanvasBrief, p: String, m: String, started: int) -> void:
+	var note_wanted := bool(asking.get("note", true))
 	busy = false
 	asking = {}
 	var secs := float(Time.get_ticks_msec() - started) / 1000.0
@@ -316,7 +360,7 @@ func _on_answer(res: Dictionary, fid: String, action: String, label: String, bri
 		status = "%s suggests %s on \"%s\": Accept or Discard." % [model_name(p), _counts(layer[fid]), _frame_name(fid)]
 	else:
 		status = "%s answered (%.0f s)." % [model_name(p), secs]
-		if say != "" and bool(App.val("ai_note")):
+		if say != "" and note_wanted and bool(App.val("ai_note")):
 			var note := place_note(fid, say)
 			if note != null:
 				last["note"] = note.id

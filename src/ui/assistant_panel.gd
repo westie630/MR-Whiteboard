@@ -101,6 +101,12 @@ func _init() -> void:
 		c.tint = UITheme.AI
 		chips.add_child(c)
 		_chips.append(c)
+	var write := UiKit.chip("AI text", func(): shell.open_ai_text(), "text", 38.0)
+	write.variant = "ghost"
+	write.accent = UITheme.AI
+	write.tint = UITheme.AI
+	write.hint = "Say or type what to write, then place the text on a canvas"
+	chips.add_child(write)
 
 	# the box to write in
 	var comp := PanelContainer.new()
@@ -134,7 +140,7 @@ func _init() -> void:
 		composer.text_submitted.connect(func(_t: String): _send_text())
 		composer.text_changed.connect(func(_t: String): _sync_send())
 		cr.add_child(composer)
-	_mic = UiKit.tool("mic", "Ask by voice", func(): shell.board.speech.toggle(func(t: String): shell.board.ai.ask("ask", t)), 46.0)
+	_mic = UiKit.tool("mic", "Ask by voice (the answer stays in this chat)", func(): shell.board.speech.toggle(func(t: String): _ask_in_chat(t)), 46.0)
 	cr.add_child(_mic)
 	_send = UiKit.tool("send", "Send", func():
 		if composer != null and composer.text.strip_edges() != "":
@@ -157,7 +163,6 @@ func _build_settings(p: VBoxContainer) -> void:
 	c.add_child(_key_btn)
 	_key_note = UiKit.note(c, "")
 	_kit.switch(c, "Send a picture of the canvas", "ai_picture")
-	_kit.switch(c, "Answers also as a note on the canvas", "ai_note")
 
 
 func _set_key() -> void:
@@ -166,21 +171,26 @@ func _set_key() -> void:
 	shell.ask_secret("%s API key" % LlmApi.name_of(pv), func(t: String): ai.set_key(pv, t.strip_edges()))
 
 
+## Everything asked here is answered here: the chat never writes onto the canvas by itself (Place on canvas and AI text do that).
 func _ask(action: String) -> void:
-	shell.board.ai.ask(action)
+	shell.board.ai.ask(action, "", "", false)
+
+
+func _ask_in_chat(text: String) -> bool:
+	return shell.board.ai.ask("ask", text, "", false)
 
 
 func _send_text() -> void:
 	var t := composer.text.strip_edges()
 	if t == "":
 		return
-	if shell.board.ai.ask("ask", t):
+	if _ask_in_chat(t):
 		composer.text = ""
 		_sync_send()
 
 
 func _type_in_card() -> void:
-	shell.open_entry("Message the assistant", "", true, func(t: String): shell.board.ai.ask("ask", t))
+	shell.open_entry("Message the assistant", "", true, func(t: String): _ask_in_chat(t))
 
 
 func _sync_send() -> void:
@@ -270,6 +280,8 @@ func _refresh_thread(fid: String) -> void:
 		else:
 			var bub := Bubble.new(_assistant_text(turn), false, str(turn.get("model", "")))
 			_thread.add_child(bub)
+			if str(turn.get("say", "")).strip_edges() != "":
+				bub.body.add_child(UiKit.chip("Place on canvas", func(): shell.board.begin_place_text(str(turn.say)), "pin", 36.0))
 			if i == last_draw and not lay.is_empty():
 				bub.body.add_child(_suggestion_card(fid, lay))
 			elif str(turn.get("draws", "")) != "":

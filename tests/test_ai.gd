@@ -315,6 +315,66 @@ func _controller(board: Board, fid: String) -> void:
 	t.eq(board.ai.status, fake.fail, "an error is shown")
 	t.check(not board.ai.busy, "and the assistant is free again")
 	fake.fail = ""
+
+	# the chat keeps its answers to itself (the setting for notes stays on): no text object on the canvas
+	App.put("ai_note", true)
+	var items_before := board.doc.items_of(fid).size()
+	fake.answer = JSON.stringify({"say": "Only in the chat.", "add": [], "change": [], "remove": []})
+	t.check(board.ai.ask("ask", "What is this?", fid, false), "asked from the chat")
+	t.eq(board.doc.items_of(fid).size(), items_before, "the answer is in the conversation, not on the canvas")
+	t.check(str((board.ai.chat[fid] as Array)[-1].say).contains("Only in the chat."), "... where it is kept")
+	board.ai.ask("ask", "And on the web page?", fid)
+	t.eq(board.doc.items_of(fid).size(), items_before + 1, "the web page still gets its note when that setting is on")
+	board.undo()
+	board.ai.forget(fid)
+
+	# AI text: written from a prompt, then put down with the placement tool on the canvas pointed at
+	var written := FakeClient.new()
+	board.ai.client = written
+	written.answer = "```" + "\n" + "## Agenda" + "\n" + "**Welcome** and news" + "\n" + "* Plans" + "\n" + "```"
+	t.check(board.ai.write("an agenda"), "AI text starts")
+	t.eq(str(written.asked[0][3]), AiPrompts.TEXT_SYSTEM, "it asks for the text itself, not the assistant's JSON")
+	t.eq((written.asked[0][4] as Array).size(), 0, "... without the conversation")
+	t.eq(int(written.asked[0][6]), 0, "... or a picture")
+	t.check(not board.placing_text.is_empty(), "the words wait on the placement tool")
+	t.eq(str(board.placing_text.text).split("\n"), PackedStringArray(["Agenda", "Welcome and news", "- Plans"]), "markdown is tidied away")
+	t.check(not board.ai.busy, "the assistant is free again")
+	var pen := PenState.new()
+	for _i in 20:
+		board.tick(pen, [], 0.1)                        # the reopened canvases settle into their room first
+	var fnode: FrameNode = board.frame_nodes[fid]
+	var aim := fnode.bounds().get_center()
+	pen.tracked = true
+	pen.source = "mouse"
+	pen.tip = fnode.to_world_point(Vector3(aim.x, aim.y, 0.5))
+	pen.dir = -fnode.global_transform.basis.z
+	board.tick(pen, [], 0.016)
+	t.eq(str(board.placing_text.frame), fid, "pointing at a canvas picks it")
+	var placed_before := board.doc.items_of(fid).size()
+	pen.down = true
+	board.tick(pen, [], 0.016)
+	t.check(board.placing_text.is_empty(), "a tap puts the text down")
+	t.eq(board.doc.items_of(fid).size(), placed_before + 1, "it is on the canvas")
+	var put: Item = board.doc.items.get(board.selection[0])
+	t.check(put != null and put.kind == Item.TEXT and put.text.contains("Welcome and news"), "the text item holds the words")
+	t.check(put.center.distance_to(aim) < 0.6, "it is where it was pointed")
+	board.undo()
+	t.eq(board.doc.items_of(fid).size(), placed_before, "one undo takes it back")
+	# cancelling, and no canvas pointed at
+	pen.down = false
+	board.begin_place_text("Never placed")
+	pen.tip = Vector3(40, 40, 40)
+	board.tick(pen, [], 0.016)
+	t.eq(str(board.placing_text.frame), "", "pointing at nothing picks no canvas")
+	t.check(board.confirm_place_text() == null and not board.placing_text.is_empty(), "so a tap has nothing to put it on")
+	board.cancel_place_text()
+	t.check(board.placing_text.is_empty() and board.doc.items_of(fid).size() == placed_before, "cancelled: nothing was placed")
+	# no pointing: the canvas being looked at
+	board.begin_place_text("Where I look")
+	t.check(board.place_text_here() != null and board.placing_text.is_empty(), "Where I look puts it on the canvas in view")
+	board.undo()
+	t.check(not board.ai.write("  "), "an empty prompt is not sent")
+	board.ai.client = fake
 	await get_tree().process_frame
 
 
