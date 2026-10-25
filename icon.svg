@@ -12,14 +12,14 @@
   <rect width="512" height="512" fill="url(#tile)"/>
 </g>
 
-  <!-- canvas frame: four corner brackets, the way AR marks out a surface -->
-  <g fill="none" stroke="#2dd4bf" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M104 168 V134 Q104 104 134 104 H168"/>
-    <path d="M344 104 H378 Q408 104 408 134 V168"/>
-    <path d="M408 344 V378 Q408 408 378 408 H344"/>
-    <path d="M168 408 H134 Q104 408 104 378 V344"/>
-  </g>
-  <!-- M, written as one pen stroke -->
-  <path d="M164 340 V172 L256 286 L348 172 V340" fill="none" stroke="#f8fafc" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- the board -->
+  <rect x="80" y="116" width="352" height="246" rx="24" fill="#f8fafc"/>
+  <!-- ink: one stroke, plus a line of writing under it -->
+  <path d="M134 266 C 180 168, 228 168, 258 236 S 334 308, 378 196" fill="none" stroke="#14b8a6" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M134 322 H236" fill="none" stroke="#94a3b8" stroke-width="14" stroke-linecap="round"/>
+  <!-- marker tray with a marker lying in it -->
+  <rect x="128" y="376" width="256" height="20" rx="10" fill="#94a3b8"/>
+  <rect x="268" y="352" width="84" height="24" rx="12" fill="#14b8a6"/>
+  <rect x="268" y="352" width="26" height="24" rx="12" fill="#0f766e"/>
 
 </svg>
