@@ -98,7 +98,9 @@ func refresh() -> void:
 	session_btn.on = shell.is_side_open("home") and shell.home.tab == "session"
 	session_btn.accent = UITheme.GOOD
 	session_btn.hint = ("Your session: %d here" % maxi(cs.peers.size(), 1)) if cs.phase == "live" else cs.phase_text()
-	session_btn.badge = UITheme.WARN if cs.is_client() and cs.phase != "live" else (UITheme.GOOD if cs.phase == "live" else Color(0, 0, 0, 0))
+	if cs.needs_attention():
+		session_btn.hint += ". " + cs.align_text()
+	session_btn.badge = UITheme.WARN if (cs.is_client() and cs.phase != "live") or cs.needs_attention() else (UITheme.GOOD if cs.phase == "live" else Color(0, 0, 0, 0))
 	grip.visible = not App.xr_active
 
 

@@ -12,6 +12,7 @@ var id := ""
 var kind := STROKE
 var frame := ""
 var z := 0                                # drawing order, higher is on top
+var page := 0                             # on a canvas that shows a PDF: the page this was drawn on (0 = not on a PDF page)
 
 # style
 var color := Color.WHITE
@@ -220,6 +221,8 @@ func apply_xform3(t: Transform3D) -> void:
 
 func to_dict() -> Dictionary:
 	var d := {"id": id, "kind": kind, "frame": frame, "z": z, "color": U.color_to_str(color), "width": snappedf(width, 1e-5), "brush": brush}
+	if page != 0:
+		d["page"] = page
 	match kind:
 		STROKE:
 			d["pts"] = U.pack_floats(pts)
@@ -273,6 +276,7 @@ static func from_dict(d: Dictionary) -> Item:
 	it.kind = str(d.get("kind", STROKE))
 	it.frame = str(d.get("frame", ""))
 	it.z = int(d.get("z", 0))
+	it.page = int(d.get("page", 0))
 	it.color = U.color_from(d.get("color"))
 	it.width = float(d.get("width", 0.004))
 	it.brush = str(d.get("brush", "pen"))

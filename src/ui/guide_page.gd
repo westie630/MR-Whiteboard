@@ -139,12 +139,25 @@ const TOPICS := [
 		]],
 		["try", [["doc", "Documents", "tab:docs"], ["wifi", "Share with a PC", "tab:share"]]],
 	]},
+	{"id": "pdf", "icon": "pdf", "title": "Read a PDF", "sum": "Upload one from your PC, turn the pages, draw on them", "blocks": [
+		["steps", [
+			"On a PC on the same Wi-Fi: Home, Share, switch on the web page, open its address and type the code. Drop a PDF on the page: the headset keeps it and puts it in front of you.",
+			"A PDF the headset has already: Add (+), PDF, then tap it. Or Home, Docs, PDF documents.",
+			"Turn the pages with the bar under the page: the arrows, or slide over all of them. With a keyboard: Page Up and Page Down, Home and End.",
+			"It is a canvas like any other: carry it by the bar under it, resize it at a corner, or use both hands. The text and the drawings in it are vectors, so they stay sharp however near you come.",
+			"Draw on it with the stylus. A drawing belongs to the page it was drawn on and is there when you come back to that page.",
+			"In a session every headset is given the PDF by the owner, once. The owner's page turns are everybody's. A guest who may not move canvases looks at other pages for themselves; a button on the bar takes them back to the owner's page.",
+			"A Quest 2 draws a lighter page than a Quest 3 and takes smaller files (48 MB, against 64 MB). If it cannot, the page says why.",
+		]],
+		["try", [["pdf", "My PDFs", "tab:docs"], ["wifi", "Share with a PC", "tab:share"]]],
+	]},
 	{"id": "session", "icon": "session", "title": "Running a session", "sum": "One owner, many guests, the same canvases", "blocks": [
 		["steps", [
 			"Owner: Home, Session, Start a session. Tell the guests the four-digit code.",
 			"Guests: Home, Session, pick the session from the list (or Join by address) and type the code.",
 			"Everybody sees and edits the same canvases. The owner decides whether guests may draw, and whether they may move canvases (not at first).",
-			"Align with the room: everyone touches the same two real places, in the same order, with the stylus tip or a pinch. Then canvases stand in the same real spot for everybody.",
+			"Guests choose where they are. In the owner's room: touch the same two real places as the owner, in the same order, with the stylus tip or a pinch (the owner touches them too). Then every canvas stands on the same real spot for all of you, and nothing shows until you have.",
+			"Somewhere else: the board is put in front of you, wherever you are. Everything on it, and everyone's pointer, is the same; only where it stands in the room is yours.",
 			"Only one stylus? The others point and arrange, and can draw with their fingers: Home, Settings, Draw with a pinch.",
 		]],
 		["try", [["session", "Open Session", "tab:session"]]],

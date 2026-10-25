@@ -6,7 +6,7 @@ This document is the reference: what is sent, who decides what, every number. Ho
 Code: `src/net/` (`Session`, `SessionNet`, `DocSync`, `SharedSpace`, `LanDiscovery`, `LiveOut`), `src/board/peer_avatars.gd`,
 `src/board/live_preview.gd`, `src/ui/session_page.gd` and `src/ui/align_card.gd`. Tests: `test_session` (an owner and two guests as three real
 boards over real local connections), `test_live_preview` (the real pen controller drives strokes, drags, resizes, stencils, the eraser and a
-carried canvas, and the others show them), `test_doc_sync`, `test_session_net`, `test_shared_space`, `test_lan_discovery`. To look at it with your
+carried canvas, and the others show them), `test_session_modes` (in the owner's room and elsewhere, §6), `test_doc_sync`, `test_session_net`, `test_shared_space`, `test_lan_discovery`. To look at it with your
 own eyes: `tools/dev/sim_session.tscn` runs an owner that draws a slow stroke and a guest that photographs it half way (its header says how).
 
 ## 1. Who is who
@@ -25,7 +25,7 @@ Nothing in a session needs every person to have a stylus: there is one MX Ink, t
    itself on UDP **8191**, and shows a **four-digit code** (optional).
 2. A guest's Home > Session lists the sessions it hears (beacon once a second; a session leaves the list 4.5 s after its last beacon), or
    *Join by address* takes `192.168.1.23` or `192.168.1.23:8190`. The code is asked for if the session has one.
-3. `hello {version, name, code, device}` → `welcome {you, session, host, doc, room, can_edit, epoch}` → the guest sends `ready` → the host sends
+3. `hello {version, name, code, device, place}` → `welcome {you, session, host, doc, room, can_edit, epoch}` → the guest sends `ready` → the host sends
    the snapshot (`snap` + `chunk`s) and `space`, and a `roster` to everybody. The guest's board then shows the copy, with the board put
    in front of them (§6).
 
@@ -38,15 +38,16 @@ encrypted). Use a network you trust, and *Closed to new guests* once everybody i
 
 ## 3. The wire (`SessionNet`: ENet over UDP)
 
-Three channels, so that a big thing in flight never holds up a small one:
+Four channels, so that a big thing in flight never holds up a small one:
 
 | Channel | Carries |
 |---|---|
 | **control** (0) | `hello welcome refuse ready roster space ping pong status kicked ended` |
 | **data** (1) | `snap chunk` (the document), `ops` (edits), `ack` |
+| **file** (3) | `pdf? pdf pdfc pdf_no pdf_stop`: PDFs (below, §4) |
 | **live** (2) | where everybody is looking and pointing: **10 Hz**, a compact binary packet (`0x50` one person's pose to the host, `0x51` everybody's to everybody, 58 bytes a person); and what everybody is in the middle of doing to the canvases (`0x60` a guest's to the host, `0x61` the host's, or one it passes on, to everybody: §5) |
 
-All three are reliable. Live is too on purpose: ENet's congestion control throws unreliable packets away by the dozen even on an idle link
+All four are reliable. Live is too on purpose: ENet's congestion control throws unreliable packets away by the dozen even on an idle link
 (measured: 60 % lost within seconds on loopback), and a late pose does no harm because only the newest per person is used.
 Messages are dictionaries (`var_to_bytes`, **no objects**: a packet cannot carry a script); anything else, anything shorter than a value, anything
 without a text `t` is dropped before the rest of the app sees it. A document is gzipped JSON in chunks of **96 KB**, at most **256 MB** unpacked.
@@ -78,6 +79,28 @@ half-and-half), and every headset agrees which (tested).
 | *Closed to new guests* | nobody else can join; those in stay |
 
 A refused edit is taken back: the host's answer carries the true state of those ids, the guest's board shows it again, and says why (at most every 4 s).
+
+### PDFs: files and pages
+
+A canvas that shows a PDF is an ordinary canvas that also says *which* PDF (`FrameData.pdf`, the first 32 hex digits of the SHA-256 of the file), *which page*
+(`page`), how many pages it has (`pdf_pages`, so every headset can say "3 / 12" before it has the file) and how wide the page is put down (`pdf_width`).
+Drawings on it carry the page they were drawn on (`Item.page`). All of that travels like everything else (frames and items as state), so the
+document of a session never contains a PDF. The file itself goes on the **file channel**, once, to the headsets that need it (`PdfShare`):
+
+1. A guest's board shows a canvas whose PDF it does not have: `PdfLibrary.want` → `pdf? {id}`.
+2. The owner answers only for an id that a canvas **of the shared room** shows (else `pdf_no`: *not part of the session*), one transfer at a time per guest:
+   `pdf {id, n, size, name}`, then `pdfc {id, i, d}` in pieces of 96 KB, paced at 6 MB/s per guest.
+3. The guest refuses a file bigger than its own limit **before** taking it (`pdf_stop`): a Quest 2 takes 48 MB, a Quest 3 64 MB, and the canvas on that headset
+   says *This PDF is too big for this headset*. It checks that the bytes are the file whose id it asked for (a damaged or swapped file is dropped), keeps it with its
+   PDFs (marked as a session copy: the newest six are kept when a session ends) and makes the pages itself.
+
+Every headset therefore draws the page from the same file at its **own budget** (`PdfBudget`: a Quest 2 flattens curves coarser, keeps smaller pictures and makes
+no page ahead; the page looks the same, with fewer triangles). The pages themselves are never sent.
+
+**Turning pages.** The owner's turn is the frame's `page`, so it reaches everybody and everybody who follows shows it (and its drawings). A guest who may not move canvases
+turns pages **for themselves** (`Document.view_pages`, never saved, never sent): their drawings take the page they are looking at, a chip on the page bar ("Back to the owner's
+page") returns them, and the owner's later turns do not pull them away. A guest allowed to move canvases turns the page for everybody. Undo never turns a page back
+(`History` keeps the page the canvas is on).
 
 ## 5. Presence
 
@@ -127,6 +150,27 @@ Every headset has its own tracking space, so they disagree about where a canvas 
 and shown as `F * …`. The host's `room_p` is re-sent when it moves by more than **2 mm or 0.15°** (checked 4 times a second).
 F only turns about *up* and slides (a headset's floor is level), so the floors agree whatever each headset thinks the floor height is.
 
+### Two places to be in: `together` and `apart`
+
+Each guest says where they are (`place`, sent in `hello` and in `status`, listed in the `roster`, remembered in the setting `session_place` and in
+`session_resume`). The owner needs no choice: it is the room. Both can be in one session, and a guest can change their mind at any time
+(`Session.set_place`). What is shared is the same in both (§4, §5); what differs is **where the board is for that guest**:
+
+| | `together`: in the owner's real room | `apart`: somewhere else |
+|---|---|---|
+| `align_mode` | `none` until lined up, then `points` | `here` from the moment the document is in |
+| The canvases | **Not shown** (`room_world()` is null, the board says `searching`) until the guest has touched the owner's two places **and** the owner has (`peers[1].align == "points"`), so a canvas is never drawn off its real spot | In front of the guest at once, 1.1 m away, facing them |
+| Joining | The card for touching the two places comes up by itself (`_start_lining_up`) | Nothing to do |
+| Presence | Nothing is sent or drawn while there is no shared space (`in_shared_space()`): a pose in the wrong frame would put the person in the wrong place. Afterwards: tag and pointer (they are the real person) | Orb with a gaze, tag and pointer |
+| The owner aligns again | A guest lined up on the old epoch is asked to check (same two points: nothing to do) | The board **stays where it is**: `F` is re-based (`F' = F * room_p_old * room_p_new⁻¹`) so the owner touching points for somebody else never moves it |
+| The owner goes back to the room's own space | Waits (nothing shown) until the owner lines up again | Stays where it is |
+
+Touching the two places (`_set_align("points")`) means being in the owner's room, so it sets `place = together`; *Board in front of me* (`use_here`)
+sets `apart`. `place` is therefore never out of step with `align_mode` (`together`: `none | points`; `apart`: `here`). The owner is told when
+somebody joins or switches to `together` while they are not lined up (a toast, and the dock's session button turns amber: `needs_attention()`).
+The host sends the new space before the roster that says the owner is lined up (`align_point`, `align_reset`), so a guest never sees one without the other.
+Only a guest's own claim is taken (`together | apart`; anything else is `apart`); it grants nothing: it changes only what that guest sees.
+
 **points** (lined up on the real room): everybody touches the **same two real places, in the same order** (two corners of a table), with the stylus
 tip (held **0.12 s**, averaged) or by pinching on them (held **0.35 s**, averaged). The frame those two points make (origin at the first, x along
 the floor to the second, y up) is the same physical frame for everybody, so each headset's F is that frame as seen from its own tracking
@@ -137,7 +181,7 @@ Until the owner aligns to points, the owner's F is the **shared room's own frame
 tracking space: so the owner recentring, re-localising or restarting changes nothing on the wire and moves nobody's board.
 If the owner aligns again the session gets a new `epoch`; guests lined up on the old one are told to check (same two points: nothing to do).
 
-**here** (not in the same room, or not aligned yet, the default on joining): F stands the session's main canvas **1.1 m** in front of the guest's
+**here** (`apart`, the default on joining): F stands the session's main canvas **1.1 m** in front of the guest's
 head, facing them (a flat canvas facing away from the side they stand on, so it reads upright); heights are kept. With no canvas yet the
 guest stands where the owner stands. *Board in front of me* does it again. That F is held by a spatial anchor too, so the board stays
 where it was put in the guest's room when the headset recentres or is taken off; a reconnect (or the owner sharing the same room again)
@@ -148,11 +192,16 @@ it when the session is ended or left on purpose. At the next start the owner's h
 room and starts the session again with the same id, code, permissions and `epoch`; if it was aligned to points, it tells nobody where the room is
 until the anchor of the two points is found (15 s, else it goes back to the room's own frame and the guests who aligned by points are asked
 to align again). A guest's headset joins the session again (same address and code) and, if the session, its epoch and its room are the same,
-takes back its alignment from its anchor (15 s, else the board is put in front of them). Guests who are still running simply reconnect.
+takes back its alignment from its anchor (15 s, else the board is put in front of them, or, for somebody in the owner's room, nothing is shown until
+they touch the two places again). Guests who are still running simply reconnect.
 *Keep a copy* gives the copy a room anchor of the guest's own where the board was, so it opens there later.
 
 Tested: two headsets with different tracking spaces, aligned on two points, see every canvas on the same real place (within 2 mm) and a
-stylus pointing at a real spot shows up on that spot for each of them.
+stylus pointing at a real spot shows up on that spot for each of them (`test_session`). `test_session_modes`: an owner with two guests in the
+room (one with a stylus, one with pinches) and one elsewhere, all in different tracking spaces: nothing shown to a guest in the room until
+both have lined up (either may go first), then the same real spot within 2 mm for both; the guest elsewhere's board does not move by
+a millimetre while the owner lines up, goes back and lines up again; people in the room are drawn as people, those elsewhere as orbs;
+switching in both directions; a cancelled card never shows the board in the wrong place.
 
 ## 7. Discovery (`LanDiscovery`)
 
@@ -177,7 +226,9 @@ works, and if that does not either, the network is blocking it.
 Everything above runs and is tested on a PC (three boards in one process, and three copies of the app on one machine). **Not run on a headset:**
 that Horizon OS lets the app listen on UDP 8190 and receive broadcasts on 8191, what a Quest 2 does with the rest of the app, the anchor that holds F,
 and how well two touched points line two real headsets up (the maths is exact; the nib and the hand tracking are not). First things to check:
-a guest can join by typed address; the two aligned headsets agree on a real corner within a centimetre or two; the log lines `[session]` say what happened;
+a guest can join by typed address; the two aligned headsets agree on a real corner within a centimetre or two (and a guest in the owner's room, who sees
+nothing until both have lined up, finds that clear rather than broken: the card, the amber session button and the toast are what tell them);
+a guest elsewhere finds the board comfortably in front of them (1.1 m is a walk from a drawing arm's length); the log lines `[session]` say what happened;
 after restarting the owner's app (and then a guest's) the session comes back with every board where it was.
 
 Not built: Meta's *shared spatial anchors* (would line the headsets up without touching points, and

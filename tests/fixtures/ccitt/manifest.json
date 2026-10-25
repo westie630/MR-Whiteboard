@@ -1,0 +1,290 @@
+{
+ "black_g3": {
+  "align": false,
+  "bytes": 80,
+  "columns": 64,
+  "eol": true,
+  "k": 0,
+  "rows": 16
+ },
+ "black_g32d": {
+  "align": false,
+  "bytes": 56,
+  "columns": 64,
+  "eol": true,
+  "k": 4,
+  "rows": 16
+ },
+ "black_g32dfill": {
+  "align": false,
+  "bytes": 65,
+  "columns": 64,
+  "eol": true,
+  "k": 4,
+  "rows": 16
+ },
+ "black_g3fill": {
+  "align": false,
+  "bytes": 81,
+  "columns": 64,
+  "eol": true,
+  "k": 0,
+  "rows": 16
+ },
+ "black_g4": {
+  "align": false,
+  "bytes": 11,
+  "columns": 64,
+  "eol": false,
+  "k": -1,
+  "rows": 16
+ },
+ "black_mh": {
+  "align": true,
+  "bytes": 64,
+  "columns": 64,
+  "eol": false,
+  "k": 0,
+  "rows": 16
+ },
+ "blank_g3": {
+  "align": false,
+  "bytes": 50,
+  "columns": 64,
+  "eol": true,
+  "k": 0,
+  "rows": 16
+ },
+ "blank_g32d": {
+  "align": false,
+  "bytes": 40,
+  "columns": 64,
+  "eol": true,
+  "k": 4,
+  "rows": 16
+ },
+ "blank_g32dfill": {
+  "align": false,
+  "bytes": 49,
+  "columns": 64,
+  "eol": true,
+  "k": 4,
+  "rows": 16
+ },
+ "blank_g3fill": {
+  "align": false,
+  "bytes": 64,
+  "columns": 64,
+  "eol": true,
+  "k": 0,
+  "rows": 16
+ },
+ "blank_g4": {
+  "align": false,
+  "bytes": 5,
+  "columns": 64,
+  "eol": false,
+  "k": -1,
+  "rows": 16
+ },
+ "blank_mh": {
+  "align": true,
+  "bytes": 32,
+  "columns": 64,
+  "eol": false,
+  "k": 0,
+  "rows": 16
+ },
+ "lines_g3": {
+  "align": false,
+  "bytes": 827,
+  "columns": 160,
+  "eol": true,
+  "k": 0,
+  "rows": 100
+ },
+ "lines_g32d": {
+  "align": false,
+  "bytes": 684,
+  "columns": 160,
+  "eol": true,
+  "k": 4,
+  "rows": 100
+ },
+ "lines_g32dfill": {
+  "align": false,
+  "bytes": 725,
+  "columns": 160,
+  "eol": true,
+  "k": 4,
+  "rows": 100
+ },
+ "lines_g3fill": {
+  "align": false,
+  "bytes": 873,
+  "columns": 160,
+  "eol": true,
+  "k": 0,
+  "rows": 100
+ },
+ "lines_g4": {
+  "align": false,
+  "bytes": 372,
+  "columns": 160,
+  "eol": false,
+  "k": -1,
+  "rows": 100
+ },
+ "lines_mh": {
+  "align": true,
+  "bytes": 720,
+  "columns": 160,
+  "eol": false,
+  "k": 0,
+  "rows": 100
+ },
+ "noise_g3": {
+  "align": false,
+  "bytes": 1620,
+  "columns": 96,
+  "eol": true,
+  "k": 0,
+  "rows": 64
+ },
+ "noise_g32d": {
+  "align": false,
+  "bytes": 1681,
+  "columns": 96,
+  "eol": true,
+  "k": 4,
+  "rows": 64
+ },
+ "noise_g32dfill": {
+  "align": false,
+  "bytes": 1706,
+  "columns": 96,
+  "eol": true,
+  "k": 4,
+  "rows": 64
+ },
+ "noise_g3fill": {
+  "align": false,
+  "bytes": 1651,
+  "columns": 96,
+  "eol": true,
+  "k": 0,
+  "rows": 64
+ },
+ "noise_g4": {
+  "align": false,
+  "bytes": 1621,
+  "columns": 96,
+  "eol": false,
+  "k": -1,
+  "rows": 64
+ },
+ "noise_mh": {
+  "align": true,
+  "bytes": 1549,
+  "columns": 96,
+  "eol": false,
+  "k": 0,
+  "rows": 64
+ },
+ "text_g3": {
+  "align": false,
+  "bytes": 1892,
+  "columns": 203,
+  "eol": true,
+  "k": 0,
+  "rows": 120
+ },
+ "text_g32d": {
+  "align": false,
+  "bytes": 1665,
+  "columns": 203,
+  "eol": true,
+  "k": 4,
+  "rows": 120
+ },
+ "text_g32dfill": {
+  "align": false,
+  "bytes": 1704,
+  "columns": 203,
+  "eol": true,
+  "k": 4,
+  "rows": 120
+ },
+ "text_g3fill": {
+  "align": false,
+  "bytes": 1932,
+  "columns": 203,
+  "eol": true,
+  "k": 0,
+  "rows": 120
+ },
+ "text_g4": {
+  "align": false,
+  "bytes": 1237,
+  "columns": 203,
+  "eol": false,
+  "k": -1,
+  "rows": 120
+ },
+ "text_mh": {
+  "align": true,
+  "bytes": 1769,
+  "columns": 203,
+  "eol": false,
+  "k": 0,
+  "rows": 120
+ },
+ "wide_g3": {
+  "align": false,
+  "bytes": 689,
+  "columns": 3100,
+  "eol": true,
+  "k": 0,
+  "rows": 40
+ },
+ "wide_g32d": {
+  "align": false,
+  "bytes": 461,
+  "columns": 3100,
+  "eol": true,
+  "k": 4,
+  "rows": 40
+ },
+ "wide_g32dfill": {
+  "align": false,
+  "bytes": 470,
+  "columns": 3100,
+  "eol": true,
+  "k": 4,
+  "rows": 40
+ },
+ "wide_g3fill": {
+  "align": false,
+  "bytes": 702,
+  "columns": 3100,
+  "eol": true,
+  "k": 0,
+  "rows": 40
+ },
+ "wide_g4": {
+  "align": false,
+  "bytes": 148,
+  "columns": 3100,
+  "eol": false,
+  "k": -1,
+  "rows": 40
+ },
+ "wide_mh": {
+  "align": true,
+  "bytes": 647,
+  "columns": 3100,
+  "eol": false,
+  "k": 0,
+  "rows": 40
+ }
+}

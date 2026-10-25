@@ -26,6 +26,7 @@ var next_z := 1
 var last_room := ""
 var path := ""
 var transient := false                    # a copy that belongs to a shared session (DocSync): never written to the documents folder
+var view_pages: Dictionary = {}           # frame id -> the page of a PDF canvas this headset looks at (not saved, not shared: see page_of)
 
 var _by_frame: Dictionary = {}            # frame id -> Array of item ids (kept in z order lazily)
 var _dirty_index := true
@@ -116,9 +117,9 @@ func add_frame(f: FrameData) -> void:
 
 
 func remove_frame(frame_id: String) -> Array:
-	## Removes a frame and its items; returns the removed items (for undo).
+	## Removes a frame and its items (of every page); returns the removed items (for undo).
 	var removed: Array = []
-	for it in items_of(frame_id):
+	for it in items_all_of(frame_id):
 		removed.append(it)
 		remove_item(it.id)
 	if frames.has(frame_id):
@@ -166,6 +167,10 @@ func _next_frame_name(kind: String) -> String:
 # ------------------------------------------------------------------------------------------------ items
 
 func add_item(it: Item) -> void:
+	if it.page == 0:
+		var pf: FrameData = frames.get(it.frame)
+		if pf != null and pf.pdf != "":
+			it.page = page_of(pf.id)                           # drawn on a PDF canvas: it belongs to the page that is shown
 	if it.z == 0:
 		it.z = next_z
 	next_z = maxi(next_z, it.z + 1)
@@ -201,7 +206,29 @@ func item_touched(it: Item) -> void:
 	_touch()
 
 
+## The page of a PDF canvas this headset is looking at: the one the owner shows (the frame's page) unless it was turned away from it.
+func page_of(frame_id: String) -> int:
+	var f: FrameData = frames.get(frame_id)
+	if f == null or f.pdf == "":
+		return 0
+	return int(view_pages.get(frame_id, f.page))
+
+
+## The items of a frame: on a PDF canvas, those of the page being looked at. (items_all_of has every page's.)
 func items_of(frame_id: String) -> Array:
+	var all := items_all_of(frame_id)
+	var f: FrameData = frames.get(frame_id)
+	if f == null or f.pdf == "":
+		return all
+	var pg := page_of(frame_id)
+	var out: Array = []
+	for it in all:
+		if (it as Item).page == pg:
+			out.append(it)
+	return out
+
+
+func items_all_of(frame_id: String) -> Array:
 	if _dirty_index:
 		_by_frame.clear()
 		for it in items.values():

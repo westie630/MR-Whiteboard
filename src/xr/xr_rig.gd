@@ -367,7 +367,7 @@ func _place_ui(delta: float) -> void:
 		var pos := d.origin + d.basis.x.normalized() * x + up * (dock_top + 0.03)
 		xp2.global_transform = _facing(pos)
 	# bars pinned to a canvas, just in front of it
-	for id in ["context", "ink", "suggestion"]:
+	for id in ["context", "ink", "suggestion", "pdf"]:
 		var xp3: XrPanel = panels[id]
 		var fp3: FloatPanel = xp3.widget as FloatPanel
 		if not xp3.visible or fp3.anchor.is_empty():

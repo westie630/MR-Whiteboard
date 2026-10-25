@@ -20,6 +20,7 @@ var _quit_armed := 0.0
 var _confirm := ""
 var _lists_sig := ""
 var _docs_list: VBoxContainer
+var _pdf_list: VBoxContainer
 var _canvas_list: VBoxContainer
 var _canvas_style: VBoxContainer
 var _rooms_list: VBoxContainer
@@ -135,6 +136,12 @@ func scroll_to_top() -> void:
 	_scroll.scroll_vertical = 0
 
 
+## The end of the Docs page, where the PDFs are listed.
+func scroll_to_bottom() -> void:
+	await get_tree().process_frame
+	_scroll.scroll_vertical = int(_scroll.get_v_scroll_bar().max_value)
+
+
 func _process(delta: float) -> void:
 	super(delta)
 	session_page.tick(delta)
@@ -150,8 +157,11 @@ func refresh() -> void:
 		return
 	_title.text = b.doc.name
 	var room := b.doc.room(b.current_room)
-	_room_chip.text = str(room.get("name", "")) if b.room_state in ["found", "assumed"] else ("Looking for the room..." if b.room_state == "searching" else "")
+	var waiting := "Waiting to be aligned..." if b.session.is_client() else "Looking for the room..."      # (a guest in the owner's room sees nothing until aligned)
+	_room_chip.text = str(room.get("name", "")) if b.room_state in ["found", "assumed"] else (waiting if b.room_state == "searching" else "")
 	var sig := "%s|%s|%s|%s|%s|%d|%d|%s" % [tab, b.doc.id, b.doc.name, b.current_room, b.active_frame, b.doc.frames.size(), b.doc.rooms.size(), _confirm]
+	for e in b.pdfs.list():
+		sig += "|" + str(e.id) + str(e.name)
 	for f in b.doc.frames.values():
 		sig += "/" + (f as FrameData).name + str((f as FrameData).locked) + str((f as FrameData).surface)
 	if sig != _lists_sig:
@@ -205,6 +215,40 @@ func _build_docs(p: VBoxContainer) -> void:
 	_export_label = UiKit.note(p, "SVG: one vector file per canvas (Inkscape, Illustrator, Figma). 3D: the ink as a glTF model.")
 	UiKit.header(p, "All documents")
 	_docs_list = UiKit.vcol(p, 6)
+	UiKit.header(p, "PDF documents")
+	_pdf_list = UiKit.vcol(p, 6)
+
+
+## The PDFs on the headset: tap one to put it in front of you, the bin (pressed twice) removes it.
+func _refresh_pdfs() -> void:
+	var b: Board = shell.board
+	UiKit.clear(_pdf_list)
+	var list := b.pdfs.list()
+	if list.is_empty():
+		UiKit.note(_pdf_list, "No PDFs yet. Switch on the web page in Share, open it on your PC and drop a PDF on it: it arrives here and is put in front of you, one page at a time, to read and to draw on.")
+		return
+	for e in list:
+		var pid: String = e.id
+		var row := UiKit.hrow(_pdf_list, 6)
+		var btn := Btn.new("pdf", str(e.name))
+		btn.align = HORIZONTAL_ALIGNMENT_LEFT
+		btn.small = true
+		btn.custom_minimum_size = Vector2(0, 58)
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.hint = "Put it in front of you"
+		btn.pressed.connect(func():
+			var res := b.place_pdf(pid)
+			if not bool(res.ok):
+				b.toast.emit(str(res.message)))
+		row.add_child(btn)
+		var info := UiKit.label("%d page%s
+%s" % [int(e.pages), "" if int(e.pages) == 1 else "s", WebPages.size_text(int(e.size))], true, UITheme.FONT_TINY)
+		info.custom_minimum_size = Vector2(110, 0)
+		info.size_flags_horizontal = Control.SIZE_SHRINK_END
+		row.add_child(info)
+		row.add_child(_bin("pdf" + pid, "Press again to delete \"%s\" from the headset." % e.name, func():
+			b.pdfs.remove(pid)
+			b.toast.emit("Deleted \"%s\"" % e.name)))
 
 
 func _rename_doc() -> void:
@@ -408,7 +452,7 @@ func _refresh_rooms() -> void:
 			_room_card.text = "You are in \"%s\"" % cur.get("name", "this room")
 			_room_card.add_theme_color_override("font_color", UITheme.GOOD)
 		"searching":
-			_room_card.text = "Looking for a room you have used before..."
+			_room_card.text = b.session.align_text() if b.session.is_client() else "Looking for a room you have used before..."
 			_room_card.add_theme_color_override("font_color", UITheme.WARN)
 		"assumed":
 			_room_card.text = "\"%s\" is shown in front of you: its anchors were not found here. Re-anchor keeps it here; New room here starts an empty one." % cur.get("name", "The room")

@@ -33,6 +33,8 @@ static func edit_key(board: Board, k: InputEventKey) -> bool:
 			board.duplicate_selection()
 		KEY_DELETE, KEY_BACKSPACE:
 			board.delete_selection()
+		KEY_PAGEUP, KEY_PAGEDOWN, KEY_HOME, KEY_END, KEY_LEFT, KEY_RIGHT:
+			return _page_key(board, k)
 		KEY_ESCAPE:
 			if not board.placing.is_empty():
 				board.cancel_place()
@@ -48,3 +50,24 @@ static func edit_key(board: Board, k: InputEventKey) -> bool:
 ## A key that types a character (not a shortcut): what starts a new text when no field is being edited.
 static func is_printable(k: InputEventKey) -> bool:
 	return k.pressed and k.unicode >= 32 and k.unicode != 127 and not (k.ctrl_pressed or k.alt_pressed or k.meta_pressed)
+
+
+## Page Up / Page Down (and the arrow keys, Home and End) turn the pages of the PDF canvas in view; with none in view they are not ours.
+static func _page_key(board: Board, k: InputEventKey) -> bool:
+	if k.ctrl_pressed or k.alt_pressed or k.meta_pressed:
+		return false
+	var fn := board.current_pdf_frame()
+	if fn == null or board.doc == null:
+		return false
+	var page := board.doc.page_of(fn.data.id)
+	match k.keycode:
+		KEY_PAGEUP, KEY_LEFT:
+			page -= 1
+		KEY_PAGEDOWN, KEY_RIGHT:
+			page += 1
+		KEY_HOME:
+			page = 1
+		KEY_END:
+			page = 1000000
+	board.pdf_turn(fn.data.id, page)
+	return true

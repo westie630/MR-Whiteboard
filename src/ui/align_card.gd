@@ -53,7 +53,7 @@ func refresh() -> void:
 	if not bool(st.aligning):
 		return
 	var step := int(st.step)
-	_sub.text = "You are the owner: the guests line up on your points" if s.is_host() else "Touch the same two places as the owner"
+	_sub.text = "You are the owner: the guests in your room line up on your points" if s.is_host() else "Touch the same two places as the owner"
 	_dots.step = step
 	if str(st.note) != "":
 		_line.text = str(st.note)

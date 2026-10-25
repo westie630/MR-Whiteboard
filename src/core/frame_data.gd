@@ -30,6 +30,11 @@ var plane_point := Vector3.ZERO           # a point of the surface (room space)
 var plane_normal := Vector3.UP            # its normal, towards the side the canvas faces (room space)
 var plane_error := 0.0                    # how far the points it was found from strayed from flat (rms, m)
 var plane_points := 0                     # how many points it stands on
+## A canvas that shows a PDF: its pages are drawn on the canvas (sharp at any size) and what is drawn on it belongs to the page it was drawn on.
+var pdf := ""                             # the PDF's content id (PdfLibrary): "" for an ordinary canvas
+var page := 1                             # the page shown (1 = the first); everybody following the owner shows this one
+var pdf_pages := 0                        # how many pages it has (so every headset can say "3 / 12" before it has the file)
+var pdf_width := 0.0                      # the page's width in metres (at scale 1) when it is put down; a page of another shape keeps the width
 
 
 static func make(kind_id: String, room_id: String, pose: Transform3D, frame_name: String = "") -> FrameData:
@@ -49,7 +54,7 @@ func to_dict() -> Dictionary:
 		"locked": locked, "created": created, "surface": surface,
 		"plane": [snappedf(plane_point.x, 1e-5), snappedf(plane_point.y, 1e-5), snappedf(plane_point.z, 1e-5),
 			snappedf(plane_normal.x, 1e-6), snappedf(plane_normal.y, 1e-6), snappedf(plane_normal.z, 1e-6)],
-		"plane_error": snappedf(plane_error, 1e-5), "plane_points": plane_points}
+		"plane_error": snappedf(plane_error, 1e-5), "plane_points": plane_points, "pdf": pdf, "page": page, "pdf_pages": pdf_pages, "pdf_width": snappedf(pdf_width, 1e-5)}
 
 
 static func from_dict(d: Dictionary) -> FrameData:
@@ -76,11 +81,19 @@ static func from_dict(d: Dictionary) -> FrameData:
 		f.plane_normal = Vector3(pl[3], pl[4], pl[5]).normalized()
 	f.plane_error = float(d.get("plane_error", 0.0))
 	f.plane_points = int(d.get("plane_points", 0))
+	f.pdf = str(d.get("pdf", ""))
+	f.page = maxi(int(d.get("page", 1)), 1)
+	f.pdf_pages = maxi(int(d.get("pdf_pages", 0)), 0)
+	f.pdf_width = float(d.get("pdf_width", 0.0))
 	return f
 
 
 func copy() -> FrameData:
 	return FrameData.from_dict(to_dict())
+
+
+func is_pdf() -> bool:
+	return pdf != ""
 
 
 ## Take another copy's spatial anchor (what only this device knows about the frame; not part of an undo or of what a session shares).

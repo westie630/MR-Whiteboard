@@ -50,6 +50,7 @@ const DEFAULTS := {
 	"net_name": "",                  # the name the others in a session see ("" = Owner / Guest)
 	"net_code": true,                # a session asks its guests for a four-digit code
 	"net_last": "",                  # the last address typed to join a session
+	"session_place": "apart",        # as a guest: "together" (in the owner's real room: line up with it) or "apart" (somewhere else: the board is put in front of me)
 	"session_resume": {},              # the session this headset was in when the app stopped: started / joined again at the next start (Session)
 	"ui_scale": 1.0,                 # size of the interface (PC: its scale; headset: the panels' size)
 	"ui_fade": true,                 # the panels fade back while you draw
@@ -60,10 +61,12 @@ const DEFAULTS := {
 	"guide_seen": false,             # the guide has been opened by itself once, on the first start
 	"text_style": "body",            # TextLayout style id for new typed and dictated text (the last one chosen)
 	"xr_quality": "sharp",           # performance | sharp | ultra: render resolution in the headset
+	"pdf_tier": "",                  # how much a PDF page may ask of this device: "" (by the headset: a Quest 2 is "low") | low | high
 }
 
 var settings_path := SETTINGS_PATH
 var docs_dir := DOCS_DIR              # dev runs and tests point this at a scratch folder
+var pdf_dir := "user://pdfs"          # the PDF library (PdfLibrary); tests point it at a scratch folder too
 var panel_places_path := "user://panel_places.json"   # where the headset's panels were left (PanelPlaces; tests point it elsewhere)
 var _s: Dictionary = {}
 var _cfg := ConfigFile.new()

@@ -367,6 +367,20 @@ is checked: more than 4 mm off, and the canvas is **moved** onto the surface (a 
 
 PC: **F** starts it; the mouse ray lands on the simulated room's table top or wall (the nib feels nothing in the air) and the held left button is the nib pressed.
 
+### 10.2 A PDF canvas
+
+A PDF is put down like an imported SVG: in front of you, facing you, at the size of its page (a portrait page 85 cm tall, a landscape one 110 cm wide; the next
+one added within 90 s stands beside it). From then on it is a canvas: carried by its bar, resized at a corner, turned with two hands, locked, deleted (undo brings it back
+with its drawings of every page).
+
+| | |
+|---|---|
+| Page bar | hangs under the page of the PDF canvas you look at or work on (the nearest within 4 m, the active one first): first / previous / a slider over all pages / "3 / 12" / next / last. A press on a button is a press like any other (touch, or point and pinch / front button), so a guest with hands only can turn pages |
+| Keys | Page Up / Page Down, Left / Right (no modifier) turn the page; Home / End go to the first / last. They work on the PC and from a Bluetooth keyboard, only while a PDF canvas is in view |
+| Drawing | the tools work on the page like on any canvas, and a drawing belongs to the page shown when it was made; turning the page lets go of the selection |
+| In a session | the owner's turn is everybody's; a guest who may not move canvases turns for themselves and gets "Back to the owner's page" on the bar (see SHARING.md §4) |
+| Fading | the bar fades while the pen draws, like the dock |
+
 ---
 
 ## 11. Feedback: what you see, hear and feel

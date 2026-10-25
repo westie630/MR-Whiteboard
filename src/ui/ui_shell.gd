@@ -6,6 +6,7 @@ extends Node
 ##   ContextBar    above the selection, on the canvas: what fits what is selected
 ##   InkChip       beside handwriting: "convert to text?" while drawing, the other readings right after converting
 ##   SuggestionBar above a canvas the assistant drew a suggestion on: accept, discard, hide
+##   PdfBar        under a PDF canvas: previous / next page, a slider over the pages
 ##   Home          documents, canvases, rooms, sharing, settings (opened from the dock)
 ##   Assistant     the AI assistant (opened from the dock)
 ##   Compose       the typing card with its keyboard
@@ -27,6 +28,7 @@ var popover: Popover
 var context: ContextBar
 var ink_chip: InkChip
 var suggestion: SuggestionBar
+var pdf_bar: PdfBar
 var home: HomePanel
 var assistant: AssistantPanel
 var compose: ComposePanel
@@ -52,13 +54,14 @@ func setup(b: Board) -> void:
 	context = ContextBar.new()
 	ink_chip = InkChip.new()
 	suggestion = SuggestionBar.new()
+	pdf_bar = PdfBar.new()
 	home = HomePanel.new()
 	assistant = AssistantPanel.new()
 	compose = ComposePanel.new()
 	surface_card = SurfaceCard.new()
 	align_card = AlignCard.new()
 	toast = ToastView.new()
-	panels = [context, ink_chip, suggestion, dock, home, assistant, popover, compose, surface_card, align_card, toast]
+	panels = [context, ink_chip, suggestion, pdf_bar, dock, home, assistant, popover, compose, surface_card, align_card, toast]
 	for p in panels:
 		(p as FloatPanel).shell = self
 	compose.entry.accepted.connect(_entry_ok)
@@ -101,6 +104,7 @@ func update(delta: float) -> void:
 	var has_doc := board.doc != null
 	dock.wanted = not hidden
 	dock.dim = 1.0 if (calm or not fade) else FADED
+	pdf_bar.dim = dock.dim
 	popover.wanted = popover_id != "" and not hidden and not typing
 	for id in _side:
 		var p: FloatPanel = home if id == "home" else assistant
@@ -117,6 +121,7 @@ func update(delta: float) -> void:
 	context.wanted = on_canvas and not board.selection.is_empty() and context.place_for(board)
 	ink_chip.wanted = on_canvas and ink_chip.place_for(board)
 	suggestion.wanted = on_canvas and not board.ai.busy and suggestion.place_for(board)
+	pdf_bar.wanted = not hidden and has_doc and not typing and board.placing.is_empty() and pdf_bar.place_for(board)
 	toast.tick(delta)
 	if typing:
 		_keep_focus()
@@ -250,6 +255,12 @@ func show_toast(text: String) -> void:
 func show_home(tab: String) -> void:
 	home.select_tab(tab)
 	open_side("home")
+
+
+## The list of PDFs (Home > Docs): one is chosen there to be put in front of you.
+func show_pdfs() -> void:
+	show_home("docs")
+	home.scroll_to_bottom()
 
 
 ## The very first start: the guide opens beside the dock, once, and a ring shows where Home (and so the guide) is for later.

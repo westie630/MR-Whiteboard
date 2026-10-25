@@ -260,6 +260,8 @@ func _apply(op: Dictionary, reverse: bool) -> void:
 			var live: FrameData = doc.frames.get(fd.id)
 			if live != null:
 				fd.keep_anchor_of(live)
+				if live.pdf != "" and fd.pdf == live.pdf:
+					fd.page = live.page                  # the page being shown is not something to undo
 			doc.replace_frame(fd)
 		"frame_add":
 			if reverse:

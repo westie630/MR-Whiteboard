@@ -270,6 +270,18 @@ static func draw(ci: CanvasItem, id: String, r: Rect2, col: Color) -> void:
 			for k in 2:
 				var ly := 0.38 + float(k) * 0.2
 				ci.draw_polyline(PackedVector2Array([P.call(0.14, ly), P.call(0.5, ly - 0.16), P.call(0.86, ly), P.call(0.5, ly + 0.16), P.call(0.14, ly)]), Color(col.r, col.g, col.b, 1.0 - float(k) * 0.45), w, true)
+		"pdf":
+			# a page with a folded corner and a band across it: a PDF
+			ci.draw_polyline(PackedVector2Array([P.call(0.24, 0.12), P.call(0.58, 0.12), P.call(0.78, 0.32), P.call(0.78, 0.88), P.call(0.24, 0.88), P.call(0.24, 0.12)]), col, w, true)
+			ci.draw_polyline(PackedVector2Array([P.call(0.58, 0.12), P.call(0.58, 0.32), P.call(0.78, 0.32)]), Color(col.r, col.g, col.b, 0.6), w * 0.8, true)
+			ci.draw_rect(Rect2(P.call(0.24, 0.56), Vector2(0.54, 0.22) * s), col, true)
+			ci.draw_line(P.call(0.36, 0.42), P.call(0.58, 0.42), col, w * 0.7, true)
+		"pdf_first":
+			ci.draw_line(P.call(0.24, 0.26), P.call(0.24, 0.74), col, w * 1.3, true)
+			ci.draw_polyline(PackedVector2Array([P.call(0.7, 0.24), P.call(0.42, 0.5), P.call(0.7, 0.76)]), col, w * 1.3, true)
+		"pdf_last":
+			ci.draw_line(P.call(0.76, 0.26), P.call(0.76, 0.74), col, w * 1.3, true)
+			ci.draw_polyline(PackedVector2Array([P.call(0.3, 0.24), P.call(0.58, 0.5), P.call(0.3, 0.76)]), col, w * 1.3, true)
 		_:
 			if Shapes.STENCILS.any(func(st): return st.id == id):
 				_stencil(ci, id, o, s, col, w)

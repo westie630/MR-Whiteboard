@@ -16,6 +16,10 @@ extends Node
 ## Editing is optimistic on a guest's headset: it shows its own edits at once and sends them; until the host has answered, news about
 ## the same things from others is held back, so everybody lands on the order the host chose. Docs: docs/SHARING.md.
 ##
+## Two ways to be in a session, chosen by each guest (`place`): TOGETHER, in the owner's real room, where the canvases must stand on the
+## same real spot for everybody (so a guest sees nothing until they and the owner have touched the same two places), and APART, in
+## another room, where the board is put in front of the guest and only what is on it is shared. The owner needs no choice: it is the room.
+##
 ## Places stay put for everybody. Until the owner aligns to two touched points, the shared space P is the shared room's own frame
 ## (held by the owner's room anchor), so the owner recentring, re-localising or restarting moves nobody's board. Every headset's
 ## alignment (points, or "in front of me") is held by a spatial anchor of its own, so it survives recentring and the headset being taken
@@ -27,7 +31,8 @@ signal said(text: String)                  # a line for the toast
 
 enum Role { NONE, HOST, CLIENT }
 
-const PROTOCOL := 1
+const PROTOCOL := 2                        # (2: the file channel for PDFs)
+const PLACES: Array[String] = ["together", "apart"]
 const HOST_ID := 1                         # the host's id in every roster
 const PORT := 8190
 const MAX_CLIENTS := 40
@@ -60,6 +65,7 @@ var disco := LanDiscovery.new()
 var sync := DocSync.new()
 var avatars: PeerAvatars
 var live_out := LiveOut.new()              # what this headset is in the middle of doing, for the others
+var pdf_share := PdfShare.new()            # PDFs: the owner gives a file out to a guest whose canvas shows it
 var previews: LivePreview                  # what the others are in the middle of doing
 
 var role := Role.NONE
@@ -75,7 +81,7 @@ var code := ""                             # the session code ("" = none asked f
 var locked := false                        # host: no new guests
 var edit_all := true                       # host: guests may draw, erase, write and move what is on the canvases
 var canvas_edit := false                   # host: guests may also add, delete, rename, restyle and move canvases
-var peers: Dictionary = {}                 # id -> {id, name, color, can_edit, align, device, ready, seen}
+var peers: Dictionary = {}                 # id -> {id, name, color, can_edit, align, place, device, ready, seen}
 var presence: Dictionary = {}              # id -> {head: Transform3D (shared space), tracked, tip, dir, down, pressure, t}
 var rtt_ms := 0
 var client_doc: Document                   # guest: the copy of the shared room that is on the board
@@ -86,6 +92,7 @@ var scanning := false                      # listening for sessions on the netwo
 var scan_failed := false                   # ...but this network or device would not let it
 
 # the shared space (SharedSpace): everything on the wire is in P; align_xf is where P is in this headset's tracking space
+var place := "apart"                       # guest: together (in the owner's real room: align_mode is none until lined up, then points) | apart (here)
 var align_mode := "none"                   # none | here | points
 var align_xf := Transform3D.IDENTITY
 var align_epoch := 0                       # the host's epoch the alignment was made in
@@ -142,6 +149,7 @@ func _init() -> void:
 	net.received_live.connect(_on_live)
 	net.connected.connect(_on_connected)
 	net.failed.connect(_on_failed)
+	pdf_share.session = self
 
 
 func bind(anchors: AnchorService) -> void:
@@ -154,6 +162,7 @@ func _ready() -> void:
 	avatars.session = self
 	board.add_child.call_deferred(avatars)          # the board is still setting up its children
 	live_out.board = board
+	board.pdfs.wanted.connect(_on_pdf_wanted)
 	previews = LivePreview.new()
 	previews.session = self
 	board.add_child.call_deferred(previews)
@@ -239,7 +248,7 @@ func start_hosting(owner: String, title: String = "", use_code: bool = true) -> 
 	locked = false
 	edit_all = true
 	canvas_edit = false
-	peers = {my_id: _peer_entry(my_id, my_name, "host")}
+	peers = {my_id: _peer_entry(my_id, my_name, "host", "together")}      # (the owner is the room the others are in, or not)
 	presence.clear()
 	align_mode = "none"
 	align_xf = Transform3D.IDENTITY
@@ -416,8 +425,9 @@ func save_copy() -> String:
 	return d.name
 
 
-## Join the session at `address`. `name` is what the others see. The answer comes as `said` lines and `phase`.
-func join(address: String, port: int, session_code: String, guest: String) -> Error:
+## Join the session at `address`. `name` is what the others see. `where`: "together" (in the owner's real room) or "apart" (somewhere
+## else); empty is what this headset chose last. The answer comes as `said` lines and `phase`.
+func join(address: String, port: int, session_code: String, guest: String, where: String = "") -> Error:
 	if role != Role.NONE:
 		return ERR_ALREADY_IN_USE
 	scan(false)
@@ -426,6 +436,9 @@ func join(address: String, port: int, session_code: String, guest: String) -> Er
 		return err
 	role = Role.CLIENT
 	phase = "connecting"
+	place = where if where in PLACES else str(App.val("session_place"))
+	if not place in PLACES:
+		place = "apart"
 	my_name = _clean_name(guest, "Guest")
 	_server_address = address.strip_edges()
 	_server_port = port
@@ -453,6 +466,8 @@ func leave(quiet: bool = false, restore: bool = true) -> void:
 		return
 	net.close()
 	sync.detach()
+	pdf_share.reset()
+	board.pdfs.trim_cached(PdfShare.MAX_STORE_LOG)
 	_clear_resume()                                   # left (or turned away, or the session ended): a restart does not join it again
 	var had := client_doc
 	role = Role.NONE
@@ -486,12 +501,18 @@ func leave(quiet: bool = false, restore: bool = true) -> void:
 	changed.emit()
 
 
+## A canvas shows a PDF this headset does not have: a guest asks the owner for it.
+func _on_pdf_wanted(pdf_id: String) -> void:
+	if role == Role.CLIENT and phase == "live":
+		pdf_share.client_want(pdf_id)
+
+
 func _on_connected() -> void:
 	if role != Role.CLIENT:
 		return
 	phase = "joining"
 	_heard = _now
-	net.send(SessionNet.SERVER, {"t": "hello", "v": PROTOCOL, "name": my_name, "code": _server_code, "device": "quest" if App.xr_active else "pc"})
+	net.send(SessionNet.SERVER, {"t": "hello", "v": PROTOCOL, "name": my_name, "code": _server_code, "device": "quest" if App.xr_active else "pc", "place": place})
 	changed.emit()
 
 
@@ -575,6 +596,7 @@ func _host_update(delta: float) -> void:
 	if board.doc != null and (board.doc != sync.doc or (board.current_room != "" and board.current_room != room_id)):
 		_reshare()
 	_flush_host()
+	pdf_share.host_tick(delta)
 	_space_t += delta
 	if _space_t >= SPACE_S:
 		_space_t = 0.0
@@ -613,8 +635,8 @@ func tick(pen: PenState, hands: Array, dt: float) -> void:
 	if role == Role.NONE or phase != "live":
 		return
 	_stream_edits(dt)
-	if not have_space:
-		return
+	if not in_shared_space():
+		return                                                 # a pose in a space this headset does not share yet would put me in the wrong place
 	_presence_t += dt
 	if _presence_t < PRESENCE_S:
 		return
@@ -654,6 +676,7 @@ func _on_peer_left(id: int) -> void:
 
 
 func _remove_peer(id: int) -> void:
+	pdf_share.drop_peer(id)
 	peers.erase(id)
 	presence.erase(id)
 	if previews != null:
@@ -682,6 +705,10 @@ func _host_msg(from: int, msg: Dictionary) -> void:
 		return                                    # nobody who has not said hello is listened to
 	p.seen = _now
 	match kind:
+		"pdf?":
+			pdf_share.host_request(from, msg)
+		"pdf_stop":
+			pdf_share.host_stop(from, msg)
 		"ready":
 			_send_snapshot(from)
 			_send_space(from)
@@ -692,9 +719,14 @@ func _host_msg(from: int, msg: Dictionary) -> void:
 			net.send(from, {"t": "pong", "n": msg.get("n", 0)})
 		"status":
 			var mode := str(msg.get("align", "none"))
-			if mode in ["none", "here", "points"]:
+			var where := str(msg.get("place", p.get("place", "apart")))
+			if mode in ["none", "here", "points"] and where in PLACES:
+				var arrived := where == "together" and str(p.place) != "together"
 				p.align = mode
+				p.place = where
 				_send_roster()
+				if arrived:
+					_nudge_owner(str(p.name))
 
 
 func _on_hello(from: int, msg: Dictionary) -> void:
@@ -724,7 +756,7 @@ func _on_hello(from: int, msg: Dictionary) -> void:
 		_refuse(from, "full")
 		return
 	_fails.erase(address)
-	var entry := _peer_entry(from, _unique_name(_clean_name(str(msg.get("name", "")), "Guest")), str(msg.get("device", "pc")))
+	var entry := _peer_entry(from, _unique_name(_clean_name(str(msg.get("name", "")), "Guest")), str(msg.get("device", "pc")), str(msg.get("place", "apart")))
 	entry.can_edit = edit_all
 	entry.color = _free_color()
 	entry.seen = _now
@@ -734,6 +766,7 @@ func _on_hello(from: int, msg: Dictionary) -> void:
 	say("%s joined." % entry.name)
 	_send_roster()
 	_announce()
+	_nudge_owner(str(entry.name) if entry.place == "together" else "")
 	changed.emit()
 
 
@@ -742,9 +775,44 @@ func _refuse(to: int, reason: String) -> void:
 	_kick_later(to)
 
 
-func _peer_entry(id: int, who: String, device: String) -> Dictionary:
-	return {"id": id, "name": who, "color": 0, "can_edit": true, "align": "none", "device": device if device in ["quest", "pc"] else "pc",
-		"ready": false, "seen": _now}
+func _peer_entry(id: int, who: String, device: String, where: String = "apart") -> Dictionary:
+	return {"id": id, "name": who, "color": 0, "can_edit": true, "align": "none", "place": where if where in PLACES else "apart",
+		"device": device if device in ["quest", "pc"] else "pc", "ready": false, "seen": _now}
+
+
+## Somebody says they are in the owner's real room and the owner has not lined up with it: the canvases would not be on the same real spot.
+func _nudge_owner(who: String) -> void:
+	if who != "" and owner_should_align():
+		say("%s is in your room. Home > Session > Align with the room, so that you both see the canvases on the same real spot." % who)
+
+
+## The owner has people in their real room and has not touched the two places that line the headsets up.
+func owner_should_align() -> bool:
+	if role != Role.HOST or align_mode == "points":
+		return false
+	for id in peers:
+		if id != my_id and str(peers[id].get("place", "apart")) == "together":
+			return true
+	return false
+
+
+## Guests in the owner's real room, as names.
+func together_names() -> Array:
+	var out: Array = []
+	for id in peer_ids():
+		if id != my_id and str(peers[id].get("place", "apart")) == "together":
+			out.append(str(peers[id].name))
+	return out
+
+
+## Something the person should do now (the dock's session button shows it): the owner has people in the room and is not aligned, or a
+## guest in the owner's room is not lined up yet.
+func needs_attention() -> bool:
+	if phase != "live":
+		return false
+	if role == Role.HOST:
+		return owner_should_align()
+	return role == Role.CLIENT and place == "together" and (align_mode != "points" or waiting_for_owner())
 
 
 ## The host's own line in the roster says how the host is aligned (guests lined up on points need the owner on the same points).
@@ -788,10 +856,11 @@ static func _clean_name(raw: String, fallback: String) -> String:
 func _send_roster() -> void:
 	if role != Role.HOST:
 		return
+	_sync_host_entry()
 	var list: Array = []
 	for id in peer_ids():
 		var p: Dictionary = peers[id]
-		list.append({"id": id, "name": p.name, "color": p.color, "can_edit": p.can_edit, "align": p.align, "device": p.device})
+		list.append({"id": id, "name": p.name, "color": p.color, "can_edit": p.can_edit, "align": p.align, "place": p.place, "device": p.device})
 	net.send(0, {"t": "roster", "peers": list, "title": session_title, "host": host_name, "doc": doc_name, "room": room_name, "locked": locked,
 		"edit_all": edit_all, "canvas_edit": canvas_edit, "epoch": space_epoch})
 	if board != null:
@@ -946,7 +1015,8 @@ func _client_msg(msg: Dictionary) -> void:
 			room_name = str(msg.get("room", "")).left(MAX_NAME)
 			space_epoch = int(msg.get("epoch", 1))
 			host_session = str(msg.get("session", "")).left(64)
-			peers[my_id] = {"id": my_id, "name": my_name, "color": 0, "can_edit": bool(msg.get("can_edit", true)), "align": "none", "device": "quest" if App.xr_active else "pc"}
+			peers[my_id] = {"id": my_id, "name": my_name, "color": 0, "can_edit": bool(msg.get("can_edit", true)), "align": "none", "place": place,
+				"device": "quest" if App.xr_active else "pc"}
 			net.send(SessionNet.SERVER, {"t": "ready"})
 		"refuse":
 			var why := str(msg.get("reason", ""))
@@ -957,6 +1027,8 @@ func _client_msg(msg: Dictionary) -> void:
 			_on_chunk(msg)
 		"space":
 			_on_space(msg)
+		"pdf", "pdfc", "pdf_no":
+			pdf_share.client_msg(msg)
 		"roster":
 			_on_roster(msg)
 		"ops":
@@ -1015,17 +1087,19 @@ func _client_open(d: Dictionary) -> void:
 	_pending.clear()
 	live_out.reset()
 	phase = "live"
+	pdf_share.reset()
 	opening = true
 	board.open(doc)
 	opening = false
 	previews.clear_all()
+	pdf_share.client_rescan()
 	say("You joined \"%s\"." % session_title)
 	if _wanted_here:
 		_wanted_here = false
 		if not _restore_align():
-			if align_mode == "points" and align_epoch == space_epoch:
-				pass
-			else:
+			if place == "together":
+				_start_lining_up()
+			elif not (align_mode == "points" and align_epoch == space_epoch):
 				use_here()
 	elif align_mode == "here" and not same_room:
 		use_here()                                     # the owner shared another room: it is put in front of the guest
@@ -1042,6 +1116,8 @@ func _on_space(msg: Dictionary) -> void:
 	if not (rp is Transform3D) or not (hp is Transform3D):
 		return
 	var moved := not have_space or not SharedSpace.close(room_p, rp)
+	var had_space := have_space
+	var old_room := room_p
 	room_p = rp
 	host_head_p = hp
 	var epoch := int(msg.get("epoch", 1))
@@ -1051,9 +1127,12 @@ func _on_space(msg: Dictionary) -> void:
 		if align_mode == "points" and align_epoch != space_epoch:
 			realign_hint = true
 			say("The owner aligned again. If you both used the same two points you are fine; if not, align again.")
-		elif align_mode != "points":
-			use_here()
-	elif moved and align_mode == "none":
+		elif place == "apart":
+			if had_space and align_mode == "here" and align_known():
+				_set_align("here", align_world() * old_room * room_p.affine_inverse())    # the owner's space changed under the board: it stays where it is
+			else:
+				use_here()
+	elif moved and align_mode == "none" and place == "apart":
 		use_here()
 	changed.emit()
 
@@ -1066,8 +1145,10 @@ func _on_roster(msg: Dictionary) -> void:
 	for e in list:
 		if e is Dictionary and int(e.get("id", 0)) > 0:
 			var id := int(e.id)
+			var where := str(e.get("place", "apart"))
 			np[id] = {"id": id, "name": str(e.get("name", "")).left(MAX_NAME), "color": clampi(int(e.get("color", 0)), 0, COLORS.size() - 1),
-				"can_edit": bool(e.get("can_edit", true)), "align": str(e.get("align", "none")), "device": str(e.get("device", "pc"))}
+				"can_edit": bool(e.get("can_edit", true)), "align": str(e.get("align", "none")), "place": where if where in PLACES else "apart",
+				"device": str(e.get("device", "pc"))}
 	if phase == "live":
 		for id in np.keys():
 			if not peers.has(id) and id != my_id:
@@ -1314,6 +1395,7 @@ func others() -> Array:
 		e["name"] = str(peers[id].name)
 		e["color"] = color_of(id)
 		e["align"] = str(peers[id].get("align", "none"))
+		e["place"] = str(peers[id].get("place", "apart"))
 		out.append(e)
 	return out
 
@@ -1346,9 +1428,23 @@ func align_known() -> bool:
 	return _align_known
 
 
+## Does this headset know where the shared space is, so that what it sends and shows in it is in the right place? The owner always does
+## (but for a moment after a restart). A guest in the owner's real room does only when they and the owner have touched the same two places;
+## a guest elsewhere, as soon as the board is put in front of them.
+func in_shared_space() -> bool:
+	if role == Role.HOST:
+		return align_known()
+	return role == Role.CLIENT and have_space and align_mode != "none" and align_known() and not waiting_for_owner()
+
+
+## A guest in the owner's real room who is lined up, while the owner is not: their two points mean nothing until the owner touches them too.
+func waiting_for_owner() -> bool:
+	return role == Role.CLIENT and place == "together" and str((peers.get(HOST_ID, {}) as Dictionary).get("align", "none")) != "points"
+
+
 ## The shared room's origin in this headset's world; null while it is not known (a guest that has not got the room's place yet).
 func room_world(rid: String) -> Variant:
-	if role != Role.CLIENT or rid != room_id or not have_space or align_mode == "none" or not align_known():
+	if role != Role.CLIENT or rid != room_id or not in_shared_space():
 		return null
 	return align_world() * room_p
 
@@ -1372,6 +1468,46 @@ func use_here() -> void:
 	_set_align("here", f)
 
 
+## A guest says whether they are in the owner's real room ("together": the canvases must stand on the same real spot as the owner's, so
+## nothing is shown until both have touched the same two places) or somewhere else ("apart": the board is put in front of them).
+## Before and while joining it is what the guest asks to be; the choice is remembered for the next session.
+func set_place(where: String) -> void:
+	if not where in PLACES:
+		return
+	App.put("session_place", where)
+	if where == place:
+		return
+	place = where
+	if role != Role.CLIENT:
+		return                                             # (not in a session: it is what the next one starts as)
+	if phase != "live" or client_doc == null:
+		return                                             # (still joining: the document's arrival does the rest)
+	_align = {}
+	if where == "apart":
+		_drop_align_anchor()
+		align_mode = "none"
+		use_here()
+	else:
+		_start_lining_up()
+
+
+## A guest in the owner's real room starts with nothing shown (a board anywhere else would not be in the room) and the card for touching
+## the two places the owner touches.
+func _start_lining_up() -> void:
+	_drop_align_anchor()
+	align_mode = "none"
+	align_xf = Transform3D.IDENTITY
+	_align_known = true
+	realign_hint = false
+	_wanted_here = false
+	if avatars != null:
+		avatars.refresh()
+	_status()
+	_save_resume()
+	changed.emit()
+	align_begin()
+
+
 func _set_align(mode: String, f: Transform3D) -> void:
 	_drop_align_anchor()
 	align_mode = mode
@@ -1379,6 +1515,9 @@ func _set_align(mode: String, f: Transform3D) -> void:
 	_align_known = true
 	align_epoch = space_epoch
 	realign_hint = false
+	place = "together" if mode == "points" else "apart"       # touching the owner's two places means being in the owner's room
+	if str(App.val("session_place")) != place:
+		App.put("session_place", place)
 	if mode != "none" and board.anchors != null and board.anchors.is_supported():
 		_align_pending = true
 		board.anchors.create(f, "session:align")      # in front of me or on the touched points: either way it stays in the room
@@ -1440,7 +1579,7 @@ func resume_state() -> Dictionary:
 			"anchor": _align_anchor if align_mode == "points" else "", "doc": board.doc.id if board.doc != null else "", "room": room_id}
 	if role == Role.CLIENT and host_session != "":
 		return {"role": "client", "address": _server_address, "port": _server_port, "code": _server_code, "name": my_name,
-			"session": host_session, "epoch": align_epoch, "room": room_id, "align": align_mode, "anchor": _align_anchor}
+			"session": host_session, "epoch": align_epoch, "room": room_id, "align": align_mode, "anchor": _align_anchor, "place": place}
 	return {}
 
 
@@ -1459,7 +1598,8 @@ func resume_saved() -> bool:
 	_resume = (r as Dictionary).duplicate()
 	_resume_t = 0.0
 	if str(_resume.get("role", "")) == "client":
-		var err := join(str(_resume.get("address", "")), int(_resume.get("port", PORT)), str(_resume.get("code", "")), str(_resume.get("name", "")))
+		var was := str(_resume.get("place", "together" if str(_resume.get("align", "")) == "points" else "apart"))
+		var err := join(str(_resume.get("address", "")), int(_resume.get("port", PORT)), str(_resume.get("code", "")), str(_resume.get("name", "")), was)
 		if err != OK:
 			_resume = {}
 			return false
@@ -1550,6 +1690,9 @@ func _align_wait(delta: float) -> void:
 	if role == Role.HOST:
 		align_reset()
 		say("The two points the session was aligned on were not found: guests who aligned by points should align again.")
+	elif place == "together":
+		say("Your alignment was not found: touch the owner's two places again.")
+		_start_lining_up()
 	else:
 		align_mode = "none"
 		use_here()
@@ -1558,7 +1701,7 @@ func _align_wait(delta: float) -> void:
 
 func _status() -> void:
 	if role == Role.CLIENT and phase == "live":
-		net.send(SessionNet.SERVER, {"t": "status", "align": align_mode})
+		net.send(SessionNet.SERVER, {"t": "status", "align": align_mode, "place": place})
 
 
 # ------------------------------------------------------------------------------------------------ the alignment wizard
@@ -1671,13 +1814,17 @@ func _align_point(p: Vector3, pen: PenState) -> void:
 			_align_pending = true
 			board.anchors.create(r.xf, "session:align")
 		_align_known = true
+		_host_space()                                 # (the new space first, then who is aligned: a guest never sees one without the other)
 		_sync_host_entry()
 		_send_roster()
 		_save_resume()
 	else:
 		_set_align("points", r.xf)
 	align_marks_until = _now + 20.0
-	say("Aligned: the room is now shared. The two points are marked for a few seconds: check that they sit on the places you touched.")
+	if waiting_for_owner():
+		say("Aligned. The canvases appear as soon as the owner has touched the same two places.")
+	else:
+		say("Aligned: the room is now shared. The two points are marked for a few seconds: check that they sit on the places you touched.")
 	if avatars != null:
 		avatars.refresh()
 	changed.emit()
@@ -1694,6 +1841,7 @@ func align_reset() -> void:
 	space_epoch += 1
 	_space_sent = false
 	_space_t = SPACE_S
+	_host_space()
 	_sync_host_entry()
 	_send_roster()
 	_save_resume()
@@ -1715,13 +1863,30 @@ func phase_text() -> String:
 	return ""
 
 
-## Where this guest sees the board, in a sentence.
+## Where this person sees the board, in a sentence.
 func align_text() -> String:
 	if role == Role.HOST:
-		return "Aligned to the room: you and the guests touched the same two points." if align_mode == "points" else "Guests see the board where you have it."
-	match align_mode:
-		"points":
-			return "Aligned to the room." if not realign_hint else "The owner aligned again: align again to be sure."
-		"here":
-			return "The board is put in front of you; it is not lined up with the real room."
+		if align_mode == "points":
+			return "Aligned to the room: guests in your room touch the same two places."
+		var names := together_names()
+		if not names.is_empty():
+			return "%s in your room: align with the room so that you both see the canvases on the same spot." % ", ".join(names)
+		return "Guests elsewhere see the board in front of them."
+	if place == "together":
+		if align_mode != "points":
+			return "Touch the same two places as the owner to see the canvases."
+		if waiting_for_owner():
+			return "Aligned. The canvases appear when the owner has touched the same two places."
+		return "Aligned to the owner's room." if not realign_hint else "The owner aligned again: align again to be sure."
+	if align_mode == "here":
+		return "You are elsewhere: the board is put in front of you."
 	return "Waiting for the board..."
+
+
+## One person of the roster, in a word: where they are.
+static func place_word(p: Dictionary, is_owner: bool) -> String:
+	if is_owner:
+		return "owner"
+	if str(p.get("place", "apart")) == "apart":
+		return "elsewhere"
+	return "in the room" if str(p.get("align", "none")) == "points" else "aligning"

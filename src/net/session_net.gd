@@ -5,6 +5,7 @@ extends RefCounted
 ##   CONTROL  reliable   who is here, permissions, acknowledgements
 ##   DATA     reliable   the document: the snapshot a joiner gets and every edit afterwards (can be megabytes)
 ##   LIVE     unreliable where everybody is looking and pointing, a dozen times a second (a lost packet is out of date anyway)
+##   FILE     reliable   PDFs (tens of megabytes), on a channel of their own so that they never hold up a pen stroke
 ## Messages are dictionaries with a "t" (type); only plain data is accepted (no objects), and anything else is dropped here, so the
 ## code above never sees what the network made of it. Everything arrives through poll(), which the owner calls every frame.
 
@@ -18,7 +19,8 @@ signal received_live(from: int, bytes: PackedByteArray)
 const CH_CONTROL := 0
 const CH_DATA := 1
 const CH_LIVE := 2
-const CHANNELS := 3
+const CH_FILE := 3
+const CHANNELS := 4
 const MAX_PACKET := 64 * 1024 * 1024
 const SERVER := 1                          # the server's peer id in ENet
 const CONNECT_TIMEOUT_MS := 6000           # a client that has not reached the server by then has not

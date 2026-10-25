@@ -68,20 +68,21 @@ static func message(title: String, text: String, signed_in: bool = true) -> Stri
 
 # ------------------------------------------------------------------------------------------------ dashboard
 
-static func dashboard(snap: Dictionary, files: Array) -> String:
+static func dashboard(snap: Dictionary, files: Array, pdfs: Array = []) -> String:
 	var groups: Array = snap.groups
 	var b := "<section class=head><div><p class=eyebrow>Document</p><h1>%s</h1>" % h(snap.doc)
 	b += stats(snap)
 	b += "</div><div class=actions>"
-	b += "<button class='btn btn-primary' onclick=\"document.getElementById('file').click()\">%s Upload SVG</button>" % ic("upload")
+	b += "<button class='btn btn-primary' onclick=\"document.getElementById('file').click()\">%s Upload PDF or SVG</button>" % ic("upload")
 	b += "<a class='btn btn-primary' href='/live'>%s Live view</a>" % ic("eye")
 	b += "<a class=btn href='/ai'>%s AI assistant</a>" % ic("spark")
 	if int(snap.total) > 0:
 		b += "<a class=btn href='/all.zip'>%s Download all</a><a class=btn href='/all'>%s Gallery</a>" % [ic("download"), ic("image")]
 	b += "</div></section>"
-	b += "<label class=drop id=drop tabindex=0><span class=badge>%s</span><span><strong>Drop SVG files here to edit them in the headset</strong>" % ic("upload")
-	b += "<span>or click to choose. Each file becomes a new canvas in front of you, with real shapes, strokes and text you can select and change.</span></span>"
-	b += "<input type=file id=file accept='.svg,image/svg+xml' multiple></label><div id=uploads class=uploads></div>"
+	b += "<label class=drop id=drop tabindex=0><span class=badge>%s</span><span><strong>Drop PDF or SVG files here</strong>" % ic("upload")
+	b += "<span>or click to choose. A <b>PDF</b> is kept in the headset and put in front of you to read, page by page, and to draw on. An <b>SVG</b> becomes a new canvas of real shapes, strokes and text you can select and change.</span></span>"
+	b += "<input type=file id=file accept='.pdf,application/pdf,.svg,image/svg+xml' multiple></label><div id=uploads class=uploads></div>"
+	b += pdf_panel(pdfs)
 	b += library(snap)
 	b += files_panel(files)
 	b += "<p class=foot>Shared live from your headset. Changes you make here appear there at once.</p>"
@@ -132,6 +133,25 @@ static func card(f: Dictionary, room_id: String) -> String:
 	b += "<a class=icon-btn href='/svg/%s.svg?dl=1' title='Download SVG'>%s</a>" % [id, ic("download")]
 	b += "<button class=icon-btn data-act=rename data-name='%s' title=Rename>%s</button><span class=spacer></span>" % [nm, ic("pencil")]
 	b += "<button class='icon-btn danger' data-act=delete data-name='%s' title=Delete>%s</button></div></article>" % [nm, ic("trash")]
+	return b
+
+
+## The PDFs kept in the headset: each can be put in front of the viewer again, opened here, downloaded or removed.
+static func pdf_panel(pdfs: Array) -> String:
+	if pdfs.is_empty():
+		return "<div id=pdfs data-swap></div>"
+	var b := "<section class=panel id=pdfs data-swap><div class=panel-h>%s<h2>PDF documents</h2><span>Kept in the headset. Everybody in a session gets them when they are put down.</span></div>" % ic("file")
+	b += "<table><thead><tr><th>Name</th><th class='num hide'>Pages</th><th class='num hide'>Size</th><th></th></tr></thead><tbody>"
+	for e in pdfs:
+		var id := str(e.id)
+		b += "<tr data-pdf='%s'><td><div class=file>%s<span>%s</span><span class=ext>pdf</span></div></td>" % [h(id), ic("file"), h(str(e.name))]
+		b += "<td class='num hide'>%d</td><td class='num hide'>%s</td><td class=acts>" % [int(e.pages), size_text(int(e.size))]
+		b += "<button class='btn btn-sm' data-act=pdf-show data-id='%s' title='Put it in front of you in the headset'>%s Show in headset</button>" % [h(id), ic("eye")]
+		b += "<a class=icon-btn href='/pdf/%s.pdf' target=_blank rel=noopener title='Open it here'>%s</a>" % [u(id), ic("image")]
+		b += "<a class=icon-btn href='/pdf/%s.pdf?dl=1' title=Download>%s</a>" % [u(id), ic("download")]
+		b += "<button class=icon-btn data-act=pdf-rename data-id='%s' data-name='%s' title=Rename>%s</button>" % [h(id), h(str(e.name)), ic("pencil")]
+		b += "<button class='icon-btn danger' data-act=pdf-delete data-id='%s' data-name='%s' title=Delete>%s</button></td></tr>" % [h(id), h(str(e.name)), ic("trash")]
+	b += "</tbody></table></section>"
 	return b
 
 

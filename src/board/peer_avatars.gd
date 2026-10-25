@@ -2,7 +2,8 @@ class_name PeerAvatars
 extends Node3D
 ## The others in the session, drawn in the room where they are: a name tag over each head, the tip of each stylus with a short ray along it
 ## (brighter while it is pressed), and for somebody who is not in the same room a soft orb for the head with its gaze. Two headsets that
-## are lined up on the same room (both aligned to points) see the real people, so there they get the tag and the stylus only. The two
+## are lined up on the same room (both aligned to points: both "together") see the real people, so there they get the tag and the stylus
+## only. Nobody is drawn while this headset has no place in the shared space yet (it has not lined up, or the owner has not). The two
 ## points an alignment was made from stay marked for a while afterwards, to check them by eye. Poses arrive a dozen times a second and
 ## are smoothed here.
 
@@ -69,7 +70,7 @@ func refresh() -> void:
 
 
 func _process(delta: float) -> void:
-	if session == null or session.role == Session.Role.NONE or session.phase != "live":
+	if session == null or session.role == Session.Role.NONE or session.phase != "live" or not session.in_shared_space():
 		for a in _avatars.values():
 			(a as Avatar).visible = false
 		_marks.visible = false

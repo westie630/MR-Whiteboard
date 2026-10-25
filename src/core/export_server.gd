@@ -9,12 +9,15 @@ extends Node
 ##   GET  /room/<room>        all canvases of a room, large            /room/<room>.zip   the same as SVG files
 ##   GET  /all  /all.zip      the whole document                       /zip?ids=a,b,c     chosen canvases as a zip
 ##   GET  /svg/<canvas>.svg   the SVG itself (?dl=1 downloads it; ?bg=white|dark|none and ?grid=1 set how it looks)
+##   GET  /pdf/<id>.pdf       a PDF of the headset's library (?dl=1 downloads it, otherwise the browser shows it)
 ##   GET  /files/<name>       a file saved on the headset by the app's Export buttons
 ##   GET  /live               the live view: every canvas of the open document, redrawn as the headset changes it (read-only, many viewers)
 ##   GET  /api/live?since=    what the live view polls: the document's canvases with a version each, only when something changed
 ##   POST /api/delete        {ids: [...]}          delete canvases (undoable in the headset)
 ##   POST /api/rename         {id, name}            rename a canvas
 ##   POST /api/upload?name=   the raw .svg          import it as a new canvas, as shapes, strokes and text that can be edited
+##   POST /api/pdf?name=      the raw .pdf          take it into the headset's PDF library and put it in front of the viewer (?show=0 only stores it)
+##   POST /api/pdf/show       {id}                  put a PDF of the library in front of the viewer     /api/pdf/delete {ids}   /api/pdf/rename {id, name}
 ##   POST /api/files/delete   {names: [...]}        delete saved files
 ##   GET  /ai                 the AI assistant: API keys, models and thinking levels, asking about a canvas, its suggestions
 ##   GET  /api/ai/state       what the AI page shows (keys only as their last four characters)
@@ -51,6 +54,8 @@ var import_svg := Callable()              # (svg text, file name) -> {ok, messag
 var active_source := Callable()           # -> String: the canvas drawn on last (the live view can follow it)
 var backing_source := Callable()          # -> String: the backing canvases have unless they say otherwise (none | glass | dark | white)
 var ai_api := Callable()                  # (command, data) -> Dictionary: the AI assistant's page (AiController.api)
+var pdf_library: PdfLibrary               # the PDFs of the headset (null: no PDF section)
+var show_pdf := Callable()                # (pdf id) -> {ok, message, id, name}: puts one in front of the viewer
 var require_pin := true
 var files_dir := ""                       # where saved exports are listed from ("" = the app's export folder)
 var pin := ""                             # the access code while running
@@ -219,6 +224,13 @@ func _serve(c: Dictionary, delta: float) -> bool:
 		peer.disconnect_from_host()
 		return false
 	return true
+
+
+## The biggest body a request may carry: a PDF may be as big as the headset takes in, anything else is small.
+func _body_limit(head: String) -> int:
+	if pdf_library != null and head.begins_with("POST /api/pdf"):
+		return maxi(pdf_library.budget.max_file_mb * 1048576, MAX_BODY)
+	return MAX_BODY
 
 
 ## Index of the blank line that ends the request head (CR LF CR LF), -1 while it has not arrived.
@@ -395,7 +407,7 @@ func route(target: String) -> Dictionary:
 		bg = "white"
 	var opts := {"background": bg, "grid": query.get("grid", "") == "1"}
 	if path == "/":
-		return _html(200, WebPages.dashboard(_snapshot(doc), _export_files()))
+		return _html(200, WebPages.dashboard(_snapshot(doc), _export_files(), _pdf_list()))
 	if path == "/api/rev":
 		return _json(200, {"ok": true})
 	if path == "/live":
@@ -442,6 +454,8 @@ func route(target: String) -> Dictionary:
 		return _view(doc, vid, bg)
 	if path.begins_with("/files/"):
 		return _file(path.substr(7))
+	if path.begins_with("/pdf/") and path.ends_with(".pdf"):
+		return _pdf_file(path.substr(5).trim_suffix(".pdf"), query.get("dl", "") == "1")
 	return _html(404, WebPages.message("Not found", "There is nothing at this address."))
 
 
@@ -548,7 +562,10 @@ func _rev(doc: Document) -> String:
 	var newest := 0
 	for f in files:
 		newest = maxi(newest, int(f.modified))
-	return "%d.%d.%d.%d.%d" % [doc.modified, doc.frames.size(), doc.items.size(), files.size(), newest]
+	var pdf_stamp := 0
+	for e in _pdf_list():
+		pdf_stamp += int(e.added) + int(e.pages)
+	return "%d.%d.%d.%d.%d.%d" % [doc.modified, doc.frames.size(), doc.items.size(), files.size(), newest, pdf_stamp]
 
 
 func _gallery(doc: Document, rid: String) -> Dictionary:
@@ -791,6 +808,24 @@ func _file(rel: String) -> Dictionary:
 	return {"status": 200, "type": FILE_TYPES[rel.get_extension().to_lower()], "body": FileAccess.get_file_as_bytes(path), "download": rel.get_file()}
 
 
+# ------------------------------------------------------------------------------------------------ PDFs
+
+func _pdf_list() -> Array:
+	return pdf_library.list() if pdf_library != null else []
+
+
+func _pdf_file(id: String, download: bool) -> Dictionary:
+	if pdf_library == null or not pdf_library.has(id):
+		return _html(404, WebPages.message("Not found", "That PDF is not on the headset any more."))
+	var name := "%s.pdf" % DocStore.safe_name(str(pdf_library.entry(id).name))
+	var res := {"status": 200, "type": "application/pdf", "body": pdf_library.file_bytes(id)}
+	if download:
+		res["download"] = name
+	else:
+		res["headers"] = ["Content-Disposition: inline; filename=\"%s\"" % name]
+	return res
+
+
 # ------------------------------------------------------------------------------------------------ changes (POST)
 
 func _api(path: String, qs: String, body: PackedByteArray) -> Dictionary:
@@ -829,6 +864,44 @@ func _api(path: String, qs: String, body: PackedByteArray) -> Dictionary:
 			var fname := str(_query(qs).get("name", "drawing.svg")).get_file().get_basename().strip_edges().left(60)
 			var res: Dictionary = import_svg.call(body.get_string_from_utf8(), fname if fname != "" else "Imported")
 			return _json(200 if bool(res.get("ok", false)) else 422, res, doc)
+		"/api/pdf":
+			if pdf_library == null:
+				return _json(501, {"ok": false, "message": "PDFs are not available."})
+			if body.is_empty():
+				return _json(400, {"ok": false, "message": "The file is empty."})
+			var q := _query(qs)
+			var added := pdf_library.add(body, str(q.get("name", "document.pdf")))
+			if not bool(added.ok):
+				return _json(422, added, doc)
+			if str(q.get("show", "1")) != "0" and show_pdf.is_valid():
+				var shown: Dictionary = show_pdf.call(str(added.id))
+				added["shown"] = bool(shown.get("ok", false))
+				if bool(added.shown):
+					added["message"] = "%s: %s, %s. It is in front of you." % [added.name, WebPages.plural(int(added.pages), "page"), "added" if not bool(added.dup) else "it was here already"]
+				else:
+					added["message"] = "%s (not put in front of you: %s)" % [added.message, str(shown.get("message", ""))]
+			return _json(200, added, doc)
+		"/api/pdf/show":
+			var dp := _json_body(body)
+			if pdf_library == null or not show_pdf.is_valid():
+				return _json(501, {"ok": false, "message": "PDFs are not available."})
+			var sres: Dictionary = show_pdf.call(str(dp.get("id", "")))
+			return _json(200 if bool(sres.get("ok", false)) else 422, sres, doc)
+		"/api/pdf/delete":
+			var dd := _json_body(body)
+			var gone_pdfs := 0
+			for pid in (dd.get("ids", []) as Array).slice(0, 100):
+				if pdf_library != null and pdf_library.remove(str(pid)):
+					gone_pdfs += 1
+			if gone_pdfs == 0:
+				return _json(404, {"ok": false, "message": "Those PDFs are already gone."}, doc)
+			return _json(200, {"ok": true, "message": "Deleted %s" % WebPages.plural(gone_pdfs, "PDF")}, doc)
+		"/api/pdf/rename":
+			var dr := _json_body(body)
+			if pdf_library == null or not pdf_library.has(str(dr.get("id", ""))) or str(dr.get("name", "")).strip_edges() == "":
+				return _json(400, {"ok": false, "message": "That PDF cannot be renamed."}, doc)
+			pdf_library.rename(str(dr.id), str(dr.name))
+			return _json(200, {"ok": true, "name": str(pdf_library.entry(str(dr.id)).name)}, doc)
 		"/api/files/delete":
 			var data3 := _json_body(body)
 			var gone := 0

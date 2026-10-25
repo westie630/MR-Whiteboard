@@ -213,6 +213,10 @@ func _build_add(p: VBoxContainer) -> void:
 		var sp = shell.board.speech
 		mic.on = sp.listening()
 		mic.text = "Listening..." if sp.listening() else ("Reading..." if sp.busy() else "Dictate"))
+	var rp := UiKit.hrow(p, 8)
+	rp.add_child(UiKit.button("pdf", "PDF", func():
+		shell.close_popover()
+		shell.show_pdfs(), 64.0))
 	UiKit.header(p, "New canvas")
 	var r2 := UiKit.hrow(p, 8)
 	r2.add_child(UiKit.button("canvas", "On a wall", func(): _place("wall"), 64.0))

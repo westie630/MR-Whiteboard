@@ -3,7 +3,7 @@ extends Node3D
 ## Development switches (after `--`): --demo  open the demo document;  --screenshot=PATH [--tab=NAME] [--type] [--frames=N] [--cam=x,y,z,yaw,pitch]
 ## saves a picture after N frames and quits (--tab: brush, shapes, write, add, ai, docs, canvas, rooms, share, settings, guide [--topic=ID], --welcome: as on the very first start, the guide opens on its own; --select=text|shape|stroke
 ## selects the first such item first);  --battery=NN[c]  shows a made-up battery level (c: charging).  --host[=NAME] [--session=TITLE] [--code=NNNN|none]  starts a
-## session as soon as the room is found (--align then opens the card for lining up with the room);  --join=ADDRESS[:PORT] [--code=NNNN] [--guest=NAME]  joins one (for trying a session with several copies on one PC; --tab=session shows it).  --share  starts the web server for the canvases (as the Docs tab's switch does); --share=nopin leaves out the access code (for scripts).
+## session as soon as the room is found (--align then opens the card for lining up with the room);  --join=ADDRESS[:PORT] [--code=NNNN] [--guest=NAME] [--place=together|apart]  joins one (for trying a session with several copies on one PC; --tab=session shows it; together: in the owner's real room, so it waits to be lined up; apart, the default here: the board is put in front of it).  --share  starts the web server for the canvases (as the Docs tab's switch does); --share=nopin leaves out the access code (for scripts).  --pdf=FILE [--pdf-page=N]  takes a PDF into the library and puts it down in front of you;  --pdf-dir=DIR  keeps the PDF library there.
 
 var board: Board
 var rig: Node
@@ -13,6 +13,8 @@ func _ready() -> void:
 	var args := _args()
 	if args.has("docs-dir"):
 		App.docs_dir = str(args["docs-dir"])
+	if args.has("pdf-dir"):
+		App.pdf_dir = str(args["pdf-dir"])
 	if args.has("settings"):
 		App.settings_path = str(args["settings"])
 		App.reload()
@@ -48,6 +50,8 @@ func _ready() -> void:
 		board.session.resume_saved()                     # the session this headset was in when the app stopped
 	elif not (App.val("session_resume") as Dictionary).is_empty():
 		print("[session] not going back to the saved session (a development switch was given)")
+	if args.has("pdf"):
+		_pdf_later(args)
 	if args.has("share"):
 		board.share.require_pin = str(args["share"]) != "nopin"
 		board.share.start()
@@ -87,8 +91,23 @@ func _join_later(args: Dictionary) -> void:
 		await get_tree().process_frame
 	var target := str(args.join).split(":")
 	var port := int(target[1]) if target.size() > 1 else Session.PORT
-	var err := board.session.join(target[0], port, str(args.get("code", "")), str(args.get("guest", "Guest")))
-	print("[session] joining %s:%d: error %d" % [target[0], port, err])
+	var err := board.session.join(target[0], port, str(args.get("code", "")), str(args.get("guest", "Guest")), str(args.get("place", "apart")))
+	print("[session] joining %s:%d as %s: error %d" % [target[0], port, board.session.place, err])
+
+
+## --pdf: wait for the room to be found, then take the file into the library and put it down.
+func _pdf_later(args: Dictionary) -> void:
+	for i in 600:
+		await get_tree().process_frame
+		if board.current_room != "" or board.room_state == "unanchored":
+			break
+	var path := str(args.pdf)
+	var res := board.pdfs.add(FileAccess.get_file_as_bytes(path), path.get_file())
+	if not bool(res.ok):
+		print("[pdf] %s: %s" % [path, str(res.message)])
+		return
+	var placed := board.place_pdf(str(res.id), int(args.get("pdf-page", "1")))
+	print("[pdf] %s: %d pages, placed: %s" % [str(res.name), int(res.pages), str(placed.get("ok"))])
 
 
 func _headset_active() -> bool:

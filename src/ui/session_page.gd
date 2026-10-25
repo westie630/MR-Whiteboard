@@ -23,6 +23,17 @@ func _s() -> Session:
 	return home.shell.board.session
 
 
+## The two ways to be in a session, as one choice: in the owner's real room (the canvases stand on the same real spot, so you touch the
+## same two places the owner touches), or somewhere else (the board is put in front of you). `pick` is called with the choice.
+func _where(parent: Control, current: Callable, pick: Callable) -> void:
+	parent.add_child(UiKit.label("Where are you?", false, UITheme.FONT_SMALL, 600))
+	_kit.segmented(parent, [["together", "In the owner's room"], ["apart", "Somewhere else"]], current, pick, 48.0)
+	if str(current.call()) == "together":
+		UiKit.note(parent, "You touch the same two real places as the owner, and then every canvas stands on the same real spot for both of you. Nothing is shown until you have.")
+	else:
+		UiKit.note(parent, "The board is put in front of you, wherever you are. The canvases, the drawing and the pointers are the same as the owner's; where they stand in your room is yours.")
+
+
 ## Called every frame by Home: sessions are only listened for while this page is what is being looked at.
 func tick(_delta: float) -> void:
 	var s := _s()
@@ -54,10 +65,10 @@ func refresh() -> void:
 func _signature(s: Session) -> String:
 	var sig := "%d|%s|%s|%s|%s|%s|%s%s%s|%s|%s%s|%s|%s" % [s.role, s.phase, s.code, s.session_title, s.doc_name, s.last_error, s.locked, s.edit_all, s.canvas_edit,
 		s.align_mode, s.realign_hint, s.can_edit(), _confirm, str(App.val("net_name"))]
-	sig += "|%s%s" % [s.have_space, s.scan_failed]
+	sig += "|%s%s|%s%s%s" % [s.have_space, s.scan_failed, s.place, str(App.val("session_place")), s.needs_attention()]
 	for id in s.peer_ids():
 		var p: Dictionary = s.peers[id]
-		sig += "/%d,%s,%s,%s,%d" % [id, p.name, p.can_edit, p.align, p.color]
+		sig += "/%d,%s,%s,%s,%s,%d" % [id, p.name, p.can_edit, p.align, p.get("place", ""), p.color]
 	if s.role == Session.Role.NONE:
 		for c in s.disco.sessions():
 			sig += "~%s,%s,%d,%s,%d" % [c.name, c.host, c.n, c.locked, c.port]
@@ -82,6 +93,7 @@ func _build_idle(s: Session) -> void:
 
 	UiKit.header(_box, "Join")
 	var j := UiKit.card(_box)
+	_where(j, func(): return str(App.val("session_place")), func(v): s.set_place(str(v)))
 	if s.scan_failed:
 		UiKit.note(j, "This network does not let the app look for sessions. Type the owner's address below.")
 	var found := s.disco.sessions()
@@ -145,7 +157,7 @@ func _ask_address() -> void:
 func _join(address: String, port: int, code: String) -> void:
 	var s := _s()
 	s.last_error = ""
-	var err := s.join(address, port, code, _my_name(false))
+	var err := s.join(address, port, code, _my_name(false), str(App.val("session_place")))
 	if err != OK:
 		s.say("Could not start joining (error %d)." % err)
 
@@ -168,11 +180,16 @@ func _build_host(s: Session) -> void:
 	var r := UiKit.hrow(c, 8)
 	if s.code != "":
 		r.add_child(UiKit.button("undo", "New code", func(): s.change_code(), 48.0, "ghost"))
-	r.add_child(UiKit.button("session", "Align with the room", func(): s.align_begin(), 48.0))
+	var align := UiKit.button("session", "Align with the room", func(): s.align_begin(), 48.0)
+	if s.owner_should_align():
+		align.accent = UITheme.WARN
+	r.add_child(align)
 	_status = UiKit.label(_status_text(s), true, UITheme.FONT_TINY)
+	if s.owner_should_align():
+		_status.add_theme_color_override("font_color", UITheme.WARN)
 	c.add_child(_status)
 	_kit.switch(c, "Draw with a pinch", "finger_draw", "When you hand the stylus over, or have none")
-	UiKit.note(c, "Owner and guests touch the same two real places with the stylus to see the board in the same real spot. Without it each guest sees the board in front of them.")
+	UiKit.note(c, "Guests in your room: you and they touch the same two real places, and then every canvas stands on the same real spot for all of you. Guests elsewhere need nothing: they see the board in front of them, and everything on it is the same.")
 	if s.align_mode == "points":
 		c.add_child(UiKit.button("undo", "Back to showing the board where I have it", func(): s.align_reset(), 44.0, "ghost"))
 
@@ -214,8 +231,11 @@ func _person(parent: Control, s: Session, id: int) -> void:
 	who.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	who.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(who)
-	var mode := s.align_mode if id == s.my_id else str(p.align)
-	var state := UiKit.label(_align_word(mode, id == Session.HOST_ID), true, UITheme.FONT_TINY)
+	var shown := p.duplicate()
+	if id == s.my_id and s.role == Session.Role.CLIENT:
+		shown.place = s.place                                       # (what I know of myself is newer than the owner's list)
+		shown.align = s.align_mode
+	var state := UiKit.label(Session.place_word(shown, id == Session.HOST_ID), true, UITheme.FONT_TINY)
 	state.custom_minimum_size = Vector2(118, 0)
 	state.size_flags_horizontal = Control.SIZE_SHRINK_END
 	state.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -227,15 +247,6 @@ func _person(parent: Control, s: Session, id: int) -> void:
 		var out := UiKit.tool("close", "Remove from the session", func(): s.kick(id), 52.0)
 		out.danger = true
 		row.add_child(out)
-
-
-func _align_word(mode: String, owner: bool) -> String:
-	match mode:
-		"points":
-			return "lined up"
-		"here":
-			return "board in front"
-	return "" if owner else "waiting"
 
 
 # ------------------------------------------------------------------------------------------------ as a guest
@@ -262,9 +273,15 @@ func _build_client(s: Session) -> void:
 		ed.text = "You can draw, write, and add or move canvases."
 	c.add_child(ed)
 	_kit.switch(c, "Draw with a pinch", "finger_draw", "No stylus? There is only one in the session. Pinch on a canvas to draw")
+	_where(c, func(): return s.place, func(v): s.set_place(str(v)))
 	var r := UiKit.hrow(c, 8)
-	r.add_child(UiKit.button("align", "Align with the room", func(): s.align_begin(), 52.0))
-	r.add_child(UiKit.button("pin", "Board in front of me", func(): s.use_here(), 52.0))
+	if s.place == "together":
+		var again := UiKit.button("align", "Align with the room" if s.align_mode != "points" else "Align again", func(): s.align_begin(), 52.0)
+		if s.align_mode != "points":
+			again.accent = UITheme.WARN
+		r.add_child(again)
+	else:
+		r.add_child(UiKit.button("pin", "Board in front of me", func(): s.use_here(), 52.0))
 	if s.realign_hint:
 		var w := UiKit.label("The owner aligned again. If you used the same two points you are fine; if not, align again.", false, UITheme.FONT_TINY)
 		w.add_theme_color_override("font_color", UITheme.WARN)

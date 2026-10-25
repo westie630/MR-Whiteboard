@@ -3,7 +3,7 @@ extends RefCounted
 ## The stylesheet, the script and the icons of the web pages the app serves (see ExportServer / WebPages). Kept as strings so they
 ## travel inside the app without any extra files in the export.
 
-const VERSION := 7                       # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
+const VERSION := 8                       # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
 
 const LOGO := r"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#g)"/><path d="M14 40c6-14 11-14 14-4s8 10 12-4 6-8 10-2" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="50" cy="19" r="4" fill="#fff" opacity=".85"/></svg>"""
 
@@ -434,23 +434,43 @@ const JS := r"""
         api('/api/files/delete', { names: [rel] }).then(function (j) { afterChange(j.message || 'Deleted'); }).catch(function (err) { toast(err.message, true); });
       });
     }
+    else if (act === 'pdf-show') {
+      api('/api/pdf/show', { id: b.getAttribute('data-id') }).then(function () { toast('It is in front of you in the headset'); }).catch(function (err) { toast(err.message, true); });
+    }
+    else if (act === 'pdf-delete') {
+      var pid = b.getAttribute('data-id'), pname = b.getAttribute('data-name');
+      dialog({ title: 'Delete "' + pname + '"?', text: 'The PDF is removed from the headset. Canvases that show it keep their drawings but lose the pages until it is uploaded again.', ok: 'Delete', danger: true }).then(function (yes) {
+        if (!yes) return;
+        api('/api/pdf/delete', { ids: [pid] }).then(function (j) { afterChange(j.message || 'Deleted'); }).catch(function (err) { toast(err.message, true); });
+      });
+    }
+    else if (act === 'pdf-rename') {
+      var rid = b.getAttribute('data-id'), rcur = b.getAttribute('data-name');
+      dialog({ title: 'Rename PDF', input: true, value: rcur, ok: 'Save' }).then(function (v) {
+        if (!v || v === rcur) return;
+        api('/api/pdf/rename', { id: rid, name: v }).then(function () { afterChange('Renamed'); }).catch(function (err) { toast(err.message, true); });
+      });
+    }
     else if (act === 'refresh') { refresh(); }
   });
 
   // ---- upload
   var drop = $('#drop'), input = $('#file');
   function uploadAll(files) {
-    var list = $('#uploads'), ok = 0, chain = Promise.resolve();
+    var list = $('#uploads'), ok = 0, pdfs = 0, chain = Promise.resolve();
     files = Array.prototype.slice.call(files);
     files.forEach(function (f) {
       var row = document.createElement('div');
       row.className = 'up';
       var isSvg = /\.svg$/i.test(f.name) || f.type === 'image/svg+xml';
-      row.innerHTML = (isSvg ? '<div class="spin"></div>' : icon('x')) + '<span class="nm">' + esc(f.name) + '</span><span class="msg">' + (isSvg ? 'Importing...' : 'Only .svg files can be imported') + '</span>';
+      var isPdf = /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
+      var okType = isSvg || isPdf;
+      row.innerHTML = (okType ? '<div class="spin"></div>' : icon('x')) + '<span class="nm">' + esc(f.name) + '</span><span class="msg">' + (okType ? (isPdf ? 'Sending to the headset...' : 'Importing...') : 'Only .pdf and .svg files can be added') + '</span>';
       list.appendChild(row);
-      if (!isSvg) { row.classList.add('err'); return; }
+      if (!okType) { row.classList.add('err'); return; }
       chain = chain.then(function () {
-        return fetch('/api/upload?name=' + encodeURIComponent(f.name), { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'Content-Type': 'image/svg+xml' }, HEAD), body: f })
+        var url = isPdf ? '/api/pdf?name=' + encodeURIComponent(f.name) : '/api/upload?name=' + encodeURIComponent(f.name);
+        return fetch(url, { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'Content-Type': isPdf ? 'application/pdf' : 'image/svg+xml' }, HEAD), body: f })
           .then(function (r) {
             if (r.status === 401) { location.href = '/login'; throw new Error('Signed out'); }
             return r.json().catch(function () { return { ok: false, message: 'The headset sent an unexpected answer.' }; });
@@ -459,13 +479,13 @@ const JS := r"""
             if (j.rev) rev = j.rev;
             row.className = 'up ' + (j.ok ? 'ok' : 'err');
             row.firstChild.outerHTML = icon(j.ok ? 'check' : 'x');
-            $('.msg', row).textContent = j.message || (j.ok ? 'Imported' : 'Failed');
-            if (j.ok) ok++;
+            $('.msg', row).textContent = j.message || (j.ok ? 'Done' : 'Failed');
+            if (j.ok) { ok++; if (isPdf) pdfs++; }
           })
           .catch(function (e) { row.className = 'up err'; row.firstChild.outerHTML = icon('x'); $('.msg', row).textContent = e.message; });
       });
     });
-    chain.then(function () { if (ok) { toast(ok + (ok === 1 ? ' canvas' : ' canvases') + ' added: they are in front of you in the headset'); refresh(); } });
+    chain.then(function () { if (ok) { toast(ok + (ok === 1 ? ' file' : ' files') + ' added: ' + (pdfs ? 'it is in front of you in the headset' : 'they are in front of you in the headset')); refresh(); } });
   }
   if (drop && input) {
     drop.onclick = function (e) { if (e.target !== input) input.click(); };

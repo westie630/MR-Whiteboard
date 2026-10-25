@@ -63,6 +63,7 @@ var texts: TextController
 var ai: AiController                       # the AI assistant (ask a language model about a canvas; its suggestion layers)
 var surface: SurfaceController             # the desk: canvases bound to a physical surface found with the stylus nib
 var share: ExportServer                   # the web server that lets a PC browser view / download the canvases (off until switched on)
+var pdfs: PdfLibrary                      # the PDFs on this device, and the pages made from them (canvases that show a PDF ask it)
 var session: Session                       # a session: this headset hosting one (the owner) or in one (a guest); see Session
 var head := Transform3D(Basis.IDENTITY, Vector3(0, 1.6, 0))
 
@@ -95,6 +96,15 @@ func _init() -> void:
 	texts = TextController.new(self)
 	ai = AiController.new(self)
 	surface = SurfaceController.new(self)
+	pdfs = PdfLibrary.new()
+	pdfs.name = "Pdfs"
+	pdfs.dir = App.pdf_dir
+	pdfs.budget = PdfBudget.for_tier(PdfBudget.detect_tier(str(App.val("pdf_tier"))))
+	pdfs.page_ready.connect(_on_pdf_page)
+	pdfs.page_failed.connect(_on_pdf_failed)
+	pdfs.changed.connect(_on_pdfs_changed)
+	pdfs.progress_changed.connect(func(_id): _on_pdfs_changed())
+	add_child(pdfs)
 	share = ExportServer.new()
 	share.name = "Share"
 	share.doc_source = func(): return doc
@@ -104,6 +114,8 @@ func _init() -> void:
 	share.delete_canvas = _web_delete
 	share.rename_canvas = rename_frame
 	share.import_svg = import_svg
+	share.pdf_library = pdfs
+	share.show_pdf = place_pdf
 	share.ai_api = func(cmd: String, data: Dictionary) -> Dictionary: return ai.api(cmd, data)
 	share.state_changed.connect(func(): changed.emit())
 	add_child(share)
@@ -238,6 +250,7 @@ func _notification(what: int) -> void:
 
 func _make_frame_node(f: FrameData) -> FrameNode:
 	var fn := FrameNode.new()
+	fn.pdfs = pdfs
 	add_child(fn)
 	fn.setup(f, doc)
 	fn.visible = false
@@ -271,12 +284,20 @@ func _on_frame_changed(f: FrameData) -> void:
 		fn.data = f
 		fn.apply_style()
 		fn.invalidate_bounds()
+		fn.refresh_pdf()
+		if f.pdf != "" and sel_frame == f.id and not selection.is_empty():
+			var pg := doc.page_of(f.id)
+			for sid in selection:
+				var si: Item = doc.items.get(sid)
+				if si != null and si.page != pg:
+					clear_selection()                          # the page turned: what was selected is on another page
+					break
 	changed.emit()
 
 
 func _on_item_added(it: Item) -> void:
 	var fn: FrameNode = frame_nodes.get(it.frame)
-	if fn != null:
+	if fn != null and fn.shows_item(it):
 		fn.add_view(it)
 		fn.invalidate_bounds()
 
@@ -294,7 +315,7 @@ func _on_item_removed(it: Item) -> void:
 
 func _on_item_changed(it: Item) -> void:
 	var fn: FrameNode = frame_nodes.get(it.frame)
-	if fn != null:
+	if fn != null and fn.shows_item(it):
 		fn.refresh_view(it)
 		fn.invalidate_bounds()
 	if selection.has(it.id):
@@ -1103,7 +1124,7 @@ func bring_canvas_here() -> void:
 
 
 ## `plane` ({point, normal, error, count}, world space) puts the new canvas on a physical surface (SurfaceController.finish).
-func add_frame(kind: String, world_xf: Transform3D, size: Vector2 = Vector2(1.2, 0.8), plane: Dictionary = {}) -> FrameData:
+func add_frame(kind: String, world_xf: Transform3D, size: Vector2 = Vector2(1.2, 0.8), plane: Dictionary = {}, props: Dictionary = {}) -> FrameData:
 	if doc == null or not canvas_edit_ok():
 		return null
 	if current_room == "":
@@ -1111,6 +1132,8 @@ func add_frame(kind: String, world_xf: Transform3D, size: Vector2 = Vector2(1.2,
 	var rw: Variant = room_world(current_room)
 	var f := FrameData.make(kind, current_room, (rw as Transform3D).affine_inverse() * world_xf if rw != null else world_xf)
 	f.size = size
+	for k in props:
+		f.set(k, props[k])
 	if not plane.is_empty():
 		surface.apply_plane(f, rw, plane)
 		f.xf = f.on_surface(f.xf)
@@ -1128,7 +1151,7 @@ func delete_frame(frame_id: String) -> void:
 	var f: FrameData = doc.frames.get(frame_id)
 	if f == null or not canvas_edit_ok():
 		return
-	var items := doc.items_of(frame_id)
+	var items := doc.items_all_of(frame_id)
 	var old_anchor := f.anchor
 	history.do(History.op_frame_remove(f, items))
 	# the anchor is erased from the device only when the deletion can no longer be undone: keep it until the document is closed
@@ -1159,6 +1182,35 @@ func _web_delete(frame_id: String) -> void:
 	toast.emit("\"%s\" was deleted from the web page (undo brings it back)." % f.name)
 
 
+## Where something added from outside (an SVG or a PDF from the web page) is put: in front of the viewer, facing them; several added one
+## after another stand side by side.
+func _front_pose(size: Vector2) -> Transform3D:
+	var basis := Basis(Vector3.UP, _head_yaw())
+	var fwd := Vector3(-head.basis.z.x, 0.0, -head.basis.z.z)
+	fwd = fwd.normalized() if fwd.length() > 0.05 else Vector3.FORWARD
+	var now := Time.get_ticks_msec()
+	var shift := 0.0
+	if now - _import_time < 90000:
+		shift = _import_right + 0.12 + size.x * 0.5
+	_import_time = now
+	_import_right = shift + size.x * 0.5
+	var dist := clampf(0.9 + size.x * 0.35, 0.9, 1.7)
+	var pos := Vector3(head.origin.x, clampf(head.origin.y - 0.1, 0.8, 1.9), head.origin.z) + fwd * dist + basis.x * shift
+	return Transform3D(basis, pos)
+
+
+func _unique_frame_name(base: String) -> String:
+	var taken := {}
+	for f in doc.frames.values():
+		taken[(f as FrameData).name] = true
+	var final_name := base
+	var k := 2
+	while taken.has(final_name):
+		final_name = "%s (%d)" % [base, k]
+		k += 1
+	return final_name
+
+
 ## Adds an SVG as a new canvas in front of the viewer: its shapes, strokes and text become ordinary items that can be selected and
 ## edited. One undo step removes it all. Returns {ok, message, id, name, count}.
 func import_svg(svg: String, canvas_name: String = "") -> Dictionary:
@@ -1179,20 +1231,9 @@ func import_svg(svg: String, canvas_name: String = "") -> Dictionary:
 	while taken.has(final_name):
 		final_name = "%s (%d)" % [base, k]
 		k += 1
-	# in front of the viewer, facing them; several files added one after another stand side by side
-	var basis := Basis(Vector3.UP, _head_yaw())
-	var fwd := Vector3(-head.basis.z.x, 0.0, -head.basis.z.z)
-	fwd = fwd.normalized() if fwd.length() > 0.05 else Vector3.FORWARD
-	var now := Time.get_ticks_msec()
-	var shift := 0.0
-	if now - _import_time < 90000:
-		shift = _import_right + 0.12 + size.x * 0.5
-	_import_time = now
-	_import_right = shift + size.x * 0.5
-	var dist := clampf(0.9 + size.x * 0.35, 0.9, 1.7)
-	var pos := Vector3(head.origin.x, clampf(head.origin.y - 0.1, 0.8, 1.9), head.origin.z) + fwd * dist + basis.x * shift
+	var world := _front_pose(size)
 	history.begin_group()
-	var frame := add_frame(FrameData.CANVAS, Transform3D(basis, pos), size)
+	var frame := add_frame(FrameData.CANVAS, world, size)
 	if frame == null:
 		history.end_group()
 		return {"ok": false, "message": "The canvas could not be created."}
@@ -1219,6 +1260,140 @@ func set_frame_prop(frame_id: String, key: String, value: Variant) -> void:
 	var upd := f.copy()
 	upd.set(key, value)
 	history.do(History.op_frame(f, upd))
+
+
+# ------------------------------------------------------------------------------------------------ PDFs
+
+const PDF_LONG_SIDE := 0.85                # a portrait page is put down this tall (metres), a landscape one this wide times 1.3
+
+## Puts a PDF of the library down as a canvas in front of the viewer, on its first page (or `page`). {ok, message, id, name}.
+func place_pdf(pdf_id: String, page: int = 1) -> Dictionary:
+	if doc == null:
+		return {"ok": false, "message": "No document is open in the headset."}
+	if not pdfs.has(pdf_id):
+		return {"ok": false, "message": "That PDF is not on the headset."}
+	if not canvas_edit_ok():
+		return {"ok": false, "message": "This session does not let guests add canvases."}
+	var e := pdfs.entry(pdf_id)
+	page = clampi(page, 1, maxi(int(e.pages), 1))
+	var pts := pdfs.page_size(pdf_id, page)
+	if pts == Vector2.ZERO:
+		pts = Vector2(595.0, 842.0)
+	var width := PDF_LONG_SIDE * pts.x / pts.y if pts.y >= pts.x else PDF_LONG_SIDE * 1.3
+	var size := Vector2(width, width * pts.y / pts.x)
+	var world := _front_pose(size)
+	history.begin_group()
+	var frame := add_frame(FrameData.CANVAS, world, size, {}, {"pdf": pdf_id, "page": page, "pdf_pages": int(e.pages), "pdf_width": width,
+		"grid": "none", "backing": "none"})
+	if frame == null:
+		history.end_group()
+		return {"ok": false, "message": "The canvas could not be created."}
+	var nm := _unique_frame_name(str(e.name))
+	rename_frame(frame.id, nm)
+	history.end_group()
+	active_frame = frame.id
+	toast.emit("\"%s\" is in front of you." % nm)
+	changed.emit()
+	return {"ok": true, "message": "Placed", "id": frame.id, "name": nm}
+
+
+## Turns a PDF canvas to a page. The owner's (or anybody allowed to move canvases) turn is everybody's: the frame's page. A guest who may
+## not change canvases only looks at another page on their own headset (and is told so); `follow_pdf` brings them back to the owner's page.
+func pdf_turn(frame_id: String, page: int) -> bool:
+	var f: FrameData = doc.frames.get(frame_id) if doc != null else null
+	if f == null or not f.is_pdf():
+		return false
+	var count := maxi(f.pdf_pages, pdfs.page_count(f.pdf))
+	page = clampi(page, 1, maxi(count, 1))
+	if page == doc.page_of(frame_id) and not doc.view_pages.has(frame_id):
+		return true
+	if session != null and not session.can_edit_canvases() and not f.locked:
+		doc.view_pages[frame_id] = page if page != f.page else doc.view_pages.get(frame_id, page)
+		if page == f.page:
+			doc.view_pages.erase(frame_id)
+		_pdf_page_changed(frame_id)
+		return true
+	if f.locked:
+		deny_edit()
+		return false
+	doc.view_pages.erase(frame_id)
+	var upd := f.copy()
+	upd.page = page
+	var pts := pdfs.page_size(f.pdf, page)
+	if pts != Vector2.ZERO and f.pdf_width > 0.0:
+		upd.size = Vector2(f.pdf_width, f.pdf_width * pts.y / pts.x)       # the page's own shape, at the width the canvas has
+		upd.offset = Vector2.ZERO
+	var keep_anchor := f
+	upd.keep_anchor_of(keep_anchor)
+	doc.replace_frame(upd)
+	_pdf_page_changed(frame_id)
+	return true
+
+
+## May this headset turn the pages for everybody? (A guest may not unless the owner lets guests move canvases: they look on their own.)
+func can_edit_pdf_pages() -> bool:
+	return session == null or session.can_edit_canvases()
+
+
+## A guest who looked at another page than the owner's goes back to it.
+func pdf_follow(frame_id: String) -> void:
+	if doc != null and doc.view_pages.has(frame_id):
+		doc.view_pages.erase(frame_id)
+		_pdf_page_changed(frame_id)
+
+
+func pdf_is_following(frame_id: String) -> bool:
+	return doc == null or not doc.view_pages.has(frame_id)
+
+
+func _pdf_page_changed(frame_id: String) -> void:
+	var fn: FrameNode = frame_nodes.get(frame_id)
+	if fn != null:
+		fn.refresh_pdf()
+	if sel_frame == frame_id:
+		clear_selection()
+	changed.emit()
+
+
+func _on_pdf_page(pdf_id: String, page: int, data: PdfPageData) -> void:
+	for fn in frame_nodes.values():
+		(fn as FrameNode).on_pdf_page(pdf_id, page, data)
+	# the pages next to the one shown are made ahead (not on a Quest 2: its memory and its processor are for the page in front of you)
+	if pdfs.budget.prefetch:
+		for fn in frame_nodes.values():
+			var n := fn as FrameNode
+			if n.visible and n.data.pdf == pdf_id and doc.page_of(n.data.id) == page and page < pdfs.page_count(pdf_id):
+				pdfs.request(pdf_id, page + 1)
+
+
+func _on_pdf_failed(pdf_id: String, page: int, message: String) -> void:
+	for fn in frame_nodes.values():
+		(fn as FrameNode).on_pdf_failed(pdf_id, page, message)
+
+
+func _on_pdfs_changed() -> void:
+	for fn in frame_nodes.values():
+		var n := fn as FrameNode
+		if n.data.is_pdf():
+			n.pdf_state = "" if n.pdf_state in ["missing", "failed"] else n.pdf_state
+			n.refresh_pdf()
+	changed.emit()
+
+
+## The PDF canvas the interface's page bar belongs to: the one being looked at or worked on, else the nearest one in view.
+func current_pdf_frame() -> FrameNode:
+	var best: FrameNode = null
+	var best_score := -INF
+	for fn in frame_nodes.values():
+		var n := fn as FrameNode
+		if not n.visible or not n.data.is_pdf():
+			continue
+		var d := n.global_position.distance_to(head.origin)
+		var score := -d + n.hover * 2.0 + (1.5 if n.data.id == active_frame else 0.0)
+		if d < 4.0 and score > best_score:
+			best_score = score
+			best = n
+	return best
 
 
 func clear_frame(frame_id: String) -> void:

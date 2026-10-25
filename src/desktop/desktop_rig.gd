@@ -165,7 +165,7 @@ func _place_ui() -> void:
 	t.max_width = maxf((hi - lo - 2.0 * MARGIN) / sc, 260.0)
 	t.position = Vector2(clampf((lo + hi - t.size.x * sc) * 0.5, MARGIN, maxf(win.x - MARGIN - t.size.x * sc, MARGIN)), MARGIN + 6.0)
 	# bars pinned to the canvas: where their spot is on the screen
-	for cp2 in [ui.context, ui.ink_chip, ui.suggestion]:
+	for cp2 in [ui.context, ui.ink_chip, ui.suggestion, ui.pdf_bar]:
 		var c := cp2 as FloatPanel
 		if not c.visible or c.anchor.is_empty():
 			continue

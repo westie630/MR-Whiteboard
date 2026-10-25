@@ -10,6 +10,9 @@ const AI_COLOR :=Color(0.72, 0.62, 1.0, 0.95)
 
 var data: FrameData
 var doc: Document
+var pdfs: PdfLibrary                       # where the PDF of a PDF canvas comes from (the Board sets it before setup)
+var pdf_state := ""                        # "" not a PDF | loading | ready | missing (not on this headset) | failed
+var pdf_note := ""                         # what the canvas says in place of a page that is not there
 var views: Dictionary = {}                 # item id -> ItemView
 var hover := 0.0                           # 0..1 how near a pen or hand is (the border and title fade in)
 var is_canvas: bool:
@@ -32,6 +35,11 @@ var _ai_items: Array = []
 var _ai_hidden: Array = []                 # ids of document items the suggestion replaces: hidden while it is shown
 var _ai_marks: Array = []                  # [{rect, kind: new | removed}] outlines drawn in the overlay
 var _ai_tag: Label3D
+var _pdf: PdfPageNode
+var _pdf_label: Label3D
+var _pdf_key := ""                         # "id:page" of the page being shown or waited for
+var _items_page := -1                      # the page whose drawings the item views are of
+var _pdf_shown_size := Vector2.ZERO        # the page's size in points as it is shown
 
 
 func setup(d: FrameData, document: Document) -> void:
@@ -87,10 +95,23 @@ func setup(d: FrameData, document: Document) -> void:
 	_ai_tag.text = "AI suggestion: Accept or Discard above the canvas"
 	_ai_tag.visible = false
 	add_child(_ai_tag)
+	_pdf_label = Label3D.new()
+	_pdf_label.font = TextLayout.font(500)
+	_pdf_label.font_size = 64
+	_pdf_label.pixel_size = 0.03 / 64.0
+	_pdf_label.shaded = false
+	_pdf_label.modulate = Color(0.25, 0.28, 0.35, 1.0)
+	_pdf_label.outline_size = 0
+	_pdf_label.double_sided = true
+	_pdf_label.visible = false
+	_pdf_label.position = Vector3(0, 0, 0.0005)
+	add_child(_pdf_label)
+	_items_page = doc.page_of(d.id)
 	for it in doc.items_of(d.id):
 		add_view(it)
 	apply_style()
 	refresh_frame()
+	refresh_pdf()
 
 
 # ------------------------------------------------------------------------------------------------ items
@@ -115,6 +136,22 @@ func remove_view(item_id: String) -> void:
 		(views[item_id] as ItemView).queue_free()
 		views.erase(item_id)
 		_bounds_dirty = true
+
+
+## Does this item belong on what the canvas shows now? (On a PDF canvas, only the page being looked at has its drawings.)
+func shows_item(it: Item) -> bool:
+	return not data.is_pdf() or it.page == doc.page_of(data.id)
+
+
+## The page turned: the drawings of the new page replace those of the old one.
+func rebuild_items() -> void:
+	for id in views.keys():
+		(views[id] as ItemView).queue_free()
+	views.clear()
+	for it in doc.items_of(data.id):
+		add_view(it)
+	_bounds_dirty = true
+	refresh_frame()
 
 
 func refresh_view(it: Item) -> void:
@@ -151,6 +188,8 @@ func content_bounds() -> Rect2:
 func bounds() -> Rect2:
 	if _bounds_dirty:
 		var nominal := Rect2(data.offset - data.size * 0.5, data.size)
+		if data.is_pdf():
+			nominal = nominal.merge(page_rect())
 		var cb := content_bounds()
 		_bounds = nominal.merge(cb.grow(MARGIN)) if cb.size != Vector2.ZERO or cb.position != Vector2.ZERO else nominal
 		for it in _ai_items:
@@ -177,6 +216,9 @@ func to_world_point(local: Vector3) -> Vector3:
 
 func apply_style() -> void:
 	if not is_canvas:
+		return
+	if data.is_pdf():
+		_grid.visible = false                         # the page is the surface: no grid and no backing under it
 		return
 	var style := data.grid if data.grid != "" else str(App.val("grid"))
 	var backing := data.backing if data.backing != "" else str(App.val("backing"))
@@ -227,6 +269,7 @@ func refresh_frame() -> void:
 	else:
 		_title.position = Vector3(0.0, 0.12, 0.0)
 		_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_place_pdf()
 	_overlay_dirty = true
 
 
@@ -276,6 +319,100 @@ func _redraw_overlay() -> void:
 	if _extra.is_valid():
 		_extra.call(_draw)
 	_draw.build(_overlay_mesh)
+
+
+# ------------------------------------------------------------------------------------------------ PDF
+
+## The page on the canvas in frame metres: as wide as the canvas's `pdf_width`, as tall as the page's shape makes it, centred on the canvas.
+## Before the file is here (a guest still receiving it) it is the canvas's own rectangle.
+func page_rect() -> Rect2:
+	if not data.is_pdf():
+		return Rect2()
+	var pts := pdfs.page_size(data.pdf, doc.page_of(data.id)) if pdfs != null else Vector2.ZERO
+	if pts == Vector2.ZERO:
+		return Rect2(data.offset - data.size * 0.5, data.size)
+	var w := data.pdf_width if data.pdf_width > 0.0 else data.size.x
+	var sz := pts * (w / pts.x)
+	return Rect2(data.offset - sz * 0.5, sz)
+
+
+## Brings what is shown in line with the canvas: the PDF and page it names (asking the library, and the session when the file is not here).
+func refresh_pdf() -> void:
+	if not data.is_pdf():
+		if _pdf != null:
+			_pdf.queue_free()
+			_pdf = null
+		_pdf_key = ""
+		pdf_state = ""
+		_pdf_label.visible = false
+		return
+	var page := doc.page_of(data.id)
+	if page != _items_page:
+		_items_page = page
+		rebuild_items()                               # the drawings of the page now shown
+	var key := "%s:%d" % [data.pdf, page]
+	if key == _pdf_key and pdf_state in ["ready", "loading"] and pdfs != null and pdfs.has(data.pdf):
+		_place_pdf()
+		return
+	_pdf_key = key
+	if pdfs == null:
+		return
+	if not pdfs.has(data.pdf):
+		pdf_state = "missing"
+		if _pdf != null:
+			_pdf.clear()
+		pdfs.want(data.pdf)
+		_say(pdfs.state_text(data.pdf))
+		return
+	if page > pdfs.page_count(data.pdf):
+		pdf_state = "failed"
+		_say("This PDF has no page %d." % page)
+		return
+	pdf_state = "loading"
+	if _pdf == null or _pdf.data == null:
+		_say("Page %d..." % page)
+	pdfs.request(data.pdf, page)
+
+
+## The library has made a page: it is put on the canvas when it is the one wanted.
+func on_pdf_page(pdf_id: String, page: int, page_data: PdfPageData) -> void:
+	if not data.is_pdf() or pdf_id != data.pdf or page != doc.page_of(data.id):
+		return
+	if _pdf == null:
+		_pdf = PdfPageNode.new()
+		_pdf.name = "Pdf"
+		add_child(_pdf)
+	_pdf.show_page(page_data, 1.0 / maxf(page_data.size.x, 1.0))
+	_pdf_shown_size = page_data.size
+	pdf_state = "ready"
+	_pdf_label.visible = false
+	_place_pdf()
+	_bounds_dirty = true
+	refresh_frame()
+
+
+func on_pdf_failed(pdf_id: String, page: int, message: String) -> void:
+	if data.is_pdf() and pdf_id == data.pdf and page == doc.page_of(data.id):
+		pdf_state = "failed"
+		_say(message)
+
+
+func _say(text: String) -> void:
+	pdf_note = text
+	_pdf_label.text = text
+	_pdf_label.visible = text != "" and pdf_state != "ready"
+	var r := page_rect()
+	_pdf_label.position = Vector3(r.get_center().x, r.get_center().y, 0.0006)
+
+
+func _place_pdf() -> void:
+	if _pdf == null or _pdf.data == null:
+		return
+	var r := page_rect()
+	var width := r.size.x
+	var mpp := width / maxf(_pdf_shown_size.x, 1.0)
+	_pdf.set_metres_per_point(mpp)
+	_pdf.position = Vector3(r.get_center().x, r.get_center().y, 0.0)
 
 
 # ------------------------------------------------------------------------------------------------ AI suggestion layer
