@@ -79,12 +79,11 @@ const TOPICS := [
 		["steps", [
 			"Add (+), then Type text. A box with a keyboard opens: type, then OK. The text lands on the canvas in front of you, selected, so you can move it.",
 			"To change text, select it and open Type again (or tap Edit in the bar above it). With a box selected, what you type becomes its label.",
-			"Add, then Dictate: speak, pause, and the words appear as text. Tap Dictate again to stop early.",
-			"Add, then Place text: type or say the words (the box has a microphone), then point at a canvas and tap or pinch to put them down there. Where I look uses the canvas in front of you, Cancel throws them away.",
+			"Dictate (the microphone right of the Pen): its card stays open. Tap Dictate, speak, pause: the words follow your stylus or hand over the canvases. Tap with the stylus tip or pinch to put them down there; Where I look uses the canvas in front of you, Cancel throws them away. Tap the microphone button again to close the card.",
 			"Dictation needs a free Wit.ai token: Home, Settings, Speech to text.",
 			"A Bluetooth keyboard works too: pair it, then start typing.",
 		]],
-		["try", [["keyboard", "Type some text", "type:"], ["plus", "Where is Add?", "pulse:add"]]],
+		["try", [["keyboard", "Type some text", "type:"], ["mic", "Open Dictate", "pop:dictate"], ["plus", "Where is Add?", "pulse:add"]]],
 	]},
 	{"id": "select", "icon": "select", "title": "Select, move, resize", "sum": "Pinch a drawing to pick it up", "blocks": [
 		["steps", [
@@ -352,11 +351,11 @@ func do(action: String) -> void:
 			sh.dock.pulse(arg)
 		"pop":                                      # a tool's options, and a ring round the button they belong to
 			sh.open_popover(arg)
-			sh.dock.pulse({"brush": "brush", "shapes": "shape", "write": "write", "add": "add"}.get(arg, arg))
+			sh.dock.pulse({"brush": "brush", "shapes": "shape", "write": "write", "add": "add", "dictate": "dictate"}.get(arg, arg))
 		"pulse":
 			sh.dock.pulse(arg)
 		"all":
-			for k in ["draw", "write", "shape", "select", "erase", "brush", "undo", "redo", "add", "ai", "home"]:
+			for k in ["draw", "write", "shape", "select", "erase", "brush", "undo", "redo", "dictate", "add", "ai", "home"]:
 				sh.dock.pulse(k)
 		"tab":
 			_home.select_tab(arg)

@@ -101,7 +101,7 @@ func update(delta: float) -> void:
 	var calm := _calm_t >= CALM_S
 	var fade := bool(App.val("ui_fade"))
 	var st := board.pen_ctl.state
-	if busy and popover_id != "" and st in [PenController.S.DRAWING, PenController.S.ERASING, PenController.S.SHAPE_DRAG, PenController.S.LASSO]:
+	if busy and popover_id != "" and popover_id != "dictate" and st in [PenController.S.DRAWING, PenController.S.ERASING, PenController.S.SHAPE_DRAG, PenController.S.LASSO]:
 		close_popover()                                  # drawing on a canvas closes the options
 	var typing := entry_open()
 	var has_doc := board.doc != null
@@ -116,7 +116,7 @@ func update(delta: float) -> void:
 	compose.wanted = typing
 	surface_card.wanted = board.surface.finding() and not hidden and not typing
 	align_card.wanted = board.session.aligning() and not hidden and not typing
-	place_card.wanted = not board.placing_text.is_empty() and not hidden and not typing
+	place_card.wanted = not board.placing_text.is_empty() and popover_id != "dictate" and not hidden and not typing
 	var on_canvas := not hidden and calm and has_doc and not typing
 	var sel_sig := ",".join(PackedStringArray(board.selection))
 	if sel_sig != _sel_sig:
@@ -301,12 +301,6 @@ func open_text_entry() -> bool:
 		return false
 	open_entry("New text on the canvas", "", true, func(t: String): board.texts.place(t))
 	return true
-
-
-## Place text: the typing card (with its microphone, so it can be spoken) asks for the words, and the placement tool puts them on a
-## canvas you point at. No AI model is involved: the words are yours (or Wit.ai's transcription of them).
-func open_place_text() -> void:
-	open_entry("Text to place: type or speak it", "", true, func(t: String): board.begin_place_text(t, TextController.WRAP_CHARS))
 
 
 func ask_name(title: String, current: String, cb: Callable) -> void:

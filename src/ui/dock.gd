@@ -1,8 +1,9 @@
 class_name Dock
 extends FloatPanel
 ## The toolbar: the one surface that is always there. Tools on the left (tap the active tool again for its options), the current
-## brush as a chip, undo and redo, then Add (text, dictation, a canvas), the assistant and Home (documents, rooms, settings), and the
+## brush as a chip, undo and redo, then Add (text, a canvas), the assistant and Home (documents, rooms, settings), and the
 ## device's battery when it has one.
+## Dictate sits right of the Pen: its own options stay open until it is tapped again or something else is picked.
 ## Icons only; each says what it is when hovered.
 
 const TOOLS := [["draw", "draw", "Pen", "1"], ["write", "write", "Write: handwriting to text", "3"], ["shape", "shapes", "Shapes", "2"],
@@ -13,6 +14,7 @@ var tool_btns := {}                        # tool id -> Btn
 var brush_chip: BrushChip
 var undo_btn: Btn
 var redo_btn: Btn
+var dictate_btn: Btn
 var add_btn: Btn
 var ai_btn: Btn
 var home_btn: Btn
@@ -43,6 +45,9 @@ func _init() -> void:
 		b.marker = OPTIONS.has(tid)
 		row.add_child(b)
 		tool_btns[tid] = b
+		if tid == "draw":
+			dictate_btn = UiKit.tool("mic", "Dictate text: speak it, then place it on a canvas", func(): shell.toggle_popover("dictate"))
+			row.add_child(dictate_btn)
 	UiKit.divider(row)
 	brush_chip = BrushChip.new()
 	brush_chip.hint = "Colour and brush"
@@ -54,7 +59,7 @@ func _init() -> void:
 	redo_btn = UiKit.tool("redo", "Redo", func(): shell.board.redo())
 	row.add_child(redo_btn)
 	UiKit.divider(row)
-	add_btn = UiKit.tool("plus", "Add: text, dictation, canvas", func(): shell.toggle_popover("add"))
+	add_btn = UiKit.tool("plus", "Add: text, canvas", func(): shell.toggle_popover("add"))
 	row.add_child(add_btn)
 	ai_btn = UiKit.tool("ai", "Assistant", func(): shell.toggle_side("assistant"))
 	ai_btn.accent = UITheme.AI
@@ -88,7 +93,8 @@ func refresh() -> void:
 	undo_btn.disabled = b.history == null or not b.history.can_undo()
 	redo_btn.disabled = b.history == null or not b.history.can_redo()
 	add_btn.on = shell.popover_id == "add"
-	add_btn.badge = UITheme.BAD if b.speech.listening() else Color(0, 0, 0, 0)
+	dictate_btn.on = shell.popover_id == "dictate" or b.speech.listening()
+	dictate_btn.badge = UITheme.BAD if b.speech.listening() else Color(0, 0, 0, 0)
 	ai_btn.on = shell.is_side_open("assistant")
 	ai_btn.busy = b.ai.busy
 	ai_btn.badge = UITheme.AI if not b.ai.current_layer().is_empty() else Color(0, 0, 0, 0)
@@ -105,12 +111,14 @@ func refresh() -> void:
 
 
 ## Make a ring breathe around one of the dock's buttons (the guide points at them): a tool id (draw, write, shape, select, erase),
-## "brush", "undo", "redo", "add", "ai" or "home".
+## "brush", "dictate", "undo", "redo", "add", "ai" or "home".
 func pulse(what: String) -> void:
 	var b: Btn = tool_btns.get(what)
 	match what:
 		"brush":
 			b = brush_chip
+		"dictate":
+			b = dictate_btn
 		"undo":
 			b = undo_btn
 		"redo":
@@ -135,6 +143,8 @@ func button_x(popover: String) -> float:
 			c = tool_btns["write"]
 		"add":
 			c = add_btn
+		"dictate":
+			c = dictate_btn
 		"brush":
 			c = brush_chip
 	return c.get_global_rect().get_center().x - get_global_rect().position.x

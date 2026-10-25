@@ -1,7 +1,7 @@
 class_name Popover
 extends FloatPanel
 ## The options of one dock button, opened above it: Brush (brush, colour, width, snapping), Shapes (stencils and their style),
-## Write (handwriting) and Add (text, dictation, a new canvas). One is open at a time; drawing on a canvas closes it.
+## Write (handwriting), Dictate (speech to text, then the placement tool) and Add (text, a new canvas). One is open at a time; drawing on a canvas closes it.
 
 const W := 540.0
 const SIZES := [["S", "Small", Vector2(0.6, 0.4)], ["M", "Medium", Vector2(1.2, 0.8)], ["L", "Large", Vector2(2.4, 1.6)]]
@@ -49,6 +49,9 @@ func open(what: String) -> void:
 		"write":
 			_title.text = "Handwriting"
 			_build_write(_body)
+		"dictate":
+			_title.text = "Dictate text"
+			_build_dictate(_body)
 		"add":
 			_title.text = "Add"
 			_build_add(_body)
@@ -197,6 +200,48 @@ func _build_write(p: VBoxContainer) -> void:
 	UiKit.note(p, "The pen notices words and offers to turn them into text; drawings are left alone.")
 
 
+# ------------------------------------------------------------------------------------------------ dictate
+
+## One Dictate button: speak, pause, and the words wait as a ghost on the canvas you point at (Board.begin_place_text). The card stays
+## open until the dock's Dictate is tapped again or something else is picked; while words are waiting it holds their preview and the
+## ways to put them down or throw them away.
+func _build_dictate(p: VBoxContainer) -> void:
+	UiKit.note(p, "Tap Dictate, speak and pause. The words follow your stylus or hand over the canvases: tap with the stylus tip or pinch to put them down.")
+	var mic := UiKit.button("mic", "Dictate", func(): shell.board.speech.toggle(func(t: String): shell.board.begin_place_text(t, TextController.WRAP_CHARS)), 88.0)
+	p.add_child(mic)
+	UiKit.header(p, "Text style")
+	_kit.segmented(p, [["h1", "H1"], ["h2", "H2"], ["h3", "H3"], ["body", "Body"], ["small", "Small"]], func(): return App.val("text_style"), func(v): App.put("text_style", v))
+	var wait := UiKit.vcol(p, 8)
+	var well := PanelContainer.new()
+	well.add_theme_stylebox_override("panel", UITheme.box(UITheme.WELL, 16))
+	wait.add_child(well)
+	var preview := UiKit.label("", false, UITheme.FONT_SMALL)
+	preview.custom_minimum_size = Vector2(W - 60.0, 0)
+	well.add_child(preview)
+	var where := UiKit.label("", true, UITheme.FONT_TINY)
+	wait.add_child(where)
+	var row := UiKit.hrow(wait, 8)
+	var here := UiKit.chip("Where I look", func(): shell.board.place_text_here(), "eye", 52.0)
+	here.accent = UITheme.AI
+	here.on = true
+	here.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(here)
+	var no := UiKit.chip("Cancel", func(): shell.board.cancel_place_text(), "close", 52.0)
+	no.variant = "ghost"
+	no.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(no)
+	_kit.syncers.append(func():
+		var b: Board = shell.board
+		mic.on = b.speech.listening()
+		mic.text = "Listening... tap to finish" if b.speech.listening() else ("Reading..." if b.speech.busy() else "Dictate")
+		wait.visible = not b.placing_text.is_empty()
+		if wait.visible:
+			var text := str(b.placing_text.text)
+			preview.text = text if text.length() <= 160 else text.left(160).strip_edges() + "..."
+			var fd: FrameData = b.doc.frames.get(str(b.placing_text.frame)) if b.doc != null else null
+			where.text = "Pointing at nothing yet" if fd == null else "Pointing at %s" % fd.name)
+
+
 # ------------------------------------------------------------------------------------------------ add
 
 func _build_add(p: VBoxContainer) -> void:
@@ -205,18 +250,6 @@ func _build_add(p: VBoxContainer) -> void:
 		shell.close_popover()
 		shell.open_text_entry(), 88.0)
 	row.add_child(t)
-	var mic := UiKit.button("mic", "Dictate", func():
-		shell.close_popover()
-		shell.board.speech.toggle(), 88.0)
-	row.add_child(mic)
-	var place_text := UiKit.button("pin", "Place text", func():
-		shell.close_popover()
-		shell.open_place_text(), 88.0)
-	row.add_child(place_text)
-	_kit.syncers.append(func():
-		var sp = shell.board.speech
-		mic.on = sp.listening()
-		mic.text = "Listening..." if sp.listening() else ("Reading..." if sp.busy() else "Dictate"))
 	var rp := UiKit.hrow(p, 8)
 	rp.add_child(UiKit.button("pdf", "PDF", func():
 		shell.close_popover()

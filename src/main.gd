@@ -168,7 +168,7 @@ func _show_tab(ui: UiShell, tab: String) -> void:
 	match tab:
 		"draw", "brush":
 			ui.open_popover("brush")
-		"shapes", "write", "add":
+		"shapes", "write", "add", "dictate":
 			ui.open_popover(tab)
 		"ai":
 			ui.open_side("assistant")

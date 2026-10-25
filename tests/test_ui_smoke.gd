@@ -57,7 +57,7 @@ func _ready() -> void:
 
 	# every popover
 	var pressed := 0
-	for id in ["brush", "shapes", "write", "add"]:
+	for id in ["brush", "shapes", "write", "dictate", "add"]:
 		ui.open_popover(id)
 		await _frames(3)
 		t.check(ui.popover.visible and ui.popover.mode == id, "the %s popover opens" % id)
@@ -241,6 +241,37 @@ func _flow_rules() -> void:
 	t.check(ui.popover_id == "shapes" and App.val("tool") == "shape", "Shapes picks the tool and opens the stencils")
 	ui.pick_stencil("diamond")
 	t.check(ui.popover_id == "" and board.stencil == "diamond", "picking a stencil closes them, ready to place it")
+	ui.tool_pressed("select")
+	# Dictate sits right of the Pen; its card stays up until it is tapped again or something else is picked
+	var dict_btn: Btn = ui.dock.dictate_btn
+	t.eq(dict_btn.get_index(), (ui.dock.tool_btns["draw"] as Btn).get_index() + 1, "the Dictate button is right of the Pen")
+	dict_btn.pressed.emit()
+	t.eq(ui.popover_id, "dictate", "Dictate opens its own card")
+	App.put("tool", "draw")
+	pen.tracked = true
+	pen.pressure = 0.8
+	pen.tip = fn.to_world_point(Vector3(-0.3, -0.2, 0.0))
+	pen.down = true
+	board.tick(pen, [], 0.016)
+	for i in 6:
+		pen.tip = fn.to_world_point(Vector3(-0.3 + i * 0.02, -0.2, 0.0))
+		board.tick(pen, [], 0.016)
+		await _frames(1)
+	t.eq(ui.popover_id, "dictate", "drawing does not close it")
+	pen.down = false
+	board.tick(pen, [], 0.016)
+	pen.tracked = false
+	board.begin_place_text("Hello there")
+	await _frames(3)
+	t.check(not ui.place_card.wanted, "its card holds the waiting words, so the separate placement card stays away")
+	ui.tool_pressed("erase")
+	t.eq(ui.popover_id, "", "picking another tool closes it")
+	await _frames(3)
+	t.check(ui.place_card.wanted, "...and the placement card takes over the waiting words")
+	board.cancel_place_text()
+	dict_btn.pressed.emit()
+	dict_btn.pressed.emit()
+	t.eq(ui.popover_id, "", "tapping Dictate again closes it")
 	ui.tool_pressed("select")
 	# Esc closes what is open, the topmost first
 	ui.open_side("home")
