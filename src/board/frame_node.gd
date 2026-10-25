@@ -45,6 +45,10 @@ var _pdf_shown_size := Vector2.ZERO        # the page's size in points as it is 
 var _grid_key := ""                        # what the grid mesh was built for
 var _bend_tag: Label3D                     # says the bend's numbers beside its marker while it is touched or moved
 var _marker_hot := ""                      # the marker ("d" distance, "r" radius) the pointer is on or moving, "" none
+var _marks: MeshInstance3D                 # a curved desk's edge and markers: a mesh of their own, drawn again only when they change (not with the cursor)
+var _marks_mesh := ArrayMesh.new()
+var _mdraw := OverlayDraw.new()
+var _marks_key := ""
 
 
 func setup(d: FrameData, document: Document) -> void:
@@ -323,6 +327,17 @@ func _set_bend_nodes() -> void:
 	_overlay.custom_aabb = box
 	if _grid != null:
 		_grid.custom_aabb = box
+	if bend != null and _marks == null:
+		_marks = MeshInstance3D.new()
+		_marks.name = "BendMarks"
+		_marks.mesh = _marks_mesh
+		_marks.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(_marks)
+	if _marks != null:
+		_marks.visible = bend != null
+		_marks.material_override = bend.overlay_material() if bend != null else null
+		_marks.custom_aabb = box
+	_marks_key = ""
 
 
 ## Which marker the pointer is on (or moving): it lights up and says its number.
@@ -460,13 +475,16 @@ func _process(_delta: float) -> void:
 	if _overlay_dirty:
 		_overlay_dirty = false
 		_redraw_overlay()
+	if bend != null:
+		_refresh_marks()
 
 
 func _redraw_overlay() -> void:
 	_draw.clear()
+	_draw.bent = bend != null
 	if is_canvas:
-		if data.surface:
-			# a canvas on the desk keeps a thin amber edge: it is bound to that surface
+		if data.surface and bend == null:
+			# a canvas on the desk keeps a thin amber edge: it is bound to that surface (a curved desk's is with its markers)
 			_draw.rect(bounds(), 0.0016, Color(DESK_COLOR.r, DESK_COLOR.g, DESK_COLOR.b, 0.3 + 0.45 * clampf(hover, 0.0, 1.0)))
 		if hover > 0.05:
 			var b := bounds()
@@ -489,20 +507,31 @@ func _redraw_overlay() -> void:
 			if cb.size != Vector2.ZERO:
 				_draw.rect(cb.grow(0.03), 0.002, Color(0.65, 1.0, 0.95, 0.4 * hover))
 	_draw_ai_marks()
-	if bend != null:
-		_draw_bend_markers()
 	if _extra.is_valid():
 		_extra.call(_draw)
-	_draw.build(_overlay_mesh, bend != null)
+	_draw.build(_overlay_mesh)
+
+
+## The curved desk's edge and markers are drawn again when one of them, or how near a pointer is (in tenths), has changed.
+func _refresh_marks() -> void:
+	var key := "%s %s %s %s %d %s" % [bend.at, bend.radius, bend.pan, bend.window, roundi(clampf(hover, 0.0, 1.0) * 10.0), _marker_hot]
+	if key == _marks_key:
+		return
+	_marks_key = key
+	_mdraw.clear()
+	_mdraw.bent = true
+	_mdraw.rect(bounds(), 0.0016, Color(DESK_COLOR.r, DESK_COLOR.g, DESK_COLOR.b, 0.3 + 0.45 * clampf(hover, 0.0, 1.0)))
+	_draw_bend_markers(_mdraw)
+	_mdraw.build(_marks_mesh)
 
 
 ## The curved desk's markers: a line across where the flat part ends and another where the wall starts, each with a round handle outside the
 ## left edge that slides along the surface. The first sets the distance, the second the radius of the bend.
-func _draw_bend_markers() -> void:
+func _draw_bend_markers(od: OverlayDraw) -> void:
 	var win := bend.canvas_window()
 	var a := clampf(hover, 0.0, 1.0)
 	var amber := Color(DESK_COLOR.r, DESK_COLOR.g, DESK_COLOR.b, 1.0)
-	_draw.z = 0.0
+	od.z = 0.0
 	for which: String in ["d", "r"]:
 		var hot := _marker_hot == which
 		var p := marker_pos(which)
@@ -512,17 +541,17 @@ func _draw_bend_markers() -> void:
 			if i % 2 == 0:
 				var x0 := win.position.x + win.size.x * float(i) / n
 				var x1 := win.position.x + win.size.x * float(i + 1) / n
-				_draw.segment(Vector2(x0, p.y), Vector2(x1, p.y), 0.0014, Color(amber.r, amber.g, amber.b, line_a))
-		_draw.segment(Vector2(p.x, p.y), Vector2(win.position.x, p.y), 0.0014, Color(amber.r, amber.g, amber.b, line_a))
+				od.segment(Vector2(x0, p.y), Vector2(x1, p.y), 0.0014, Color(amber.r, amber.g, amber.b, line_a))
+		od.segment(Vector2(p.x, p.y), Vector2(win.position.x, p.y), 0.0014, Color(amber.r, amber.g, amber.b, line_a))
 		var r := InputTuning.MARKER_R * (1.25 if hot else 1.0)
-		_draw.disc(p, r + 0.0025, Color(0.05, 0.06, 0.08, 0.85))
-		_draw.disc(p, r, Color(amber.r, amber.g, amber.b, 1.0 if hot else 0.55 + 0.4 * a))
+		od.disc(p, r + 0.0025, Color(0.05, 0.06, 0.08, 0.85))
+		od.disc(p, r, Color(amber.r, amber.g, amber.b, 1.0 if hot else 0.55 + 0.4 * a))
 		var ink := Color(0.1, 0.08, 0.04, 0.95)
 		if which == "d":
 			# arrows up and down the surface: it slides along it
 			for sgn: float in [-1.0, 1.0]:
 				var tip: Vector2 = p + Vector2(0, sgn * r * 0.62)
-				_draw.polygon(PackedVector2Array([tip, tip - Vector2(r * 0.4, sgn * r * 0.4), tip - Vector2(-r * 0.4, sgn * r * 0.4)]), ink)
+				od.polygon(PackedVector2Array([tip, tip - Vector2(r * 0.4, sgn * r * 0.4), tip - Vector2(-r * 0.4, sgn * r * 0.4)]), ink)
 		else:
 			# a quarter of a circle: the bend
 			var arc := PackedVector2Array()
@@ -530,7 +559,7 @@ func _draw_bend_markers() -> void:
 			for i in 9:
 				var t := -PI * 0.5 + PI * 0.5 * float(i) / 8.0
 				arc.append(centre + Vector2(cos(t), sin(t)) * (0.55 * r))
-			_draw.line(arc, r * 0.2, ink)
+			od.line(arc, r * 0.2, ink)
 	# the numbers beside the handle that is touched
 	if _marker_hot != "":
 		var q := marker_pos(_marker_hot)

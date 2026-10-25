@@ -125,12 +125,13 @@ const TOPICS := [
 	{"id": "curved", "icon": "curve", "title": "The curved desk", "sum": "A canvas that bends up from your desk into a wall", "blocks": [
 		["steps", [
 			"Add (+), then Curved desk, and feel for your desk with the stylus tip like for any desk canvas. It needs a level desk.",
-			"The canvas then faces you: flat on the desk in front of you, bending up at a set distance, and climbing the wall. What you draw keeps its size; only where it appears changes.",
+			"Then line it up: touch the front edge of the desk with the stylus tip, right in front of you, and then the wall behind the desk (or the desk's far edge). The canvas starts at the edge, runs away from you along the desk and bends up so that it climbs the wall. Home, Canvases, Line it up with my desk does it again any time.",
+			"What you draw keeps its size; only where it appears changes.",
 			"Draw on any part of it. To move what is drawn, pinch on the canvas (or hold the stylus front button) and push it away from you: it slides along the desk, round the bend and up the wall, and the other way back.",
 			"Two round markers stand on its left edge. The one where the flat part ends slides on the desk and sets the distance; the one at the foot of the wall slides up and away and sets how round the bend is. Touch one with the stylus tip, or pinch it.",
 			"Home, Canvases has the curve button on a desk canvas, to curve or flatten it, and Bends at and Radius with minus and plus under Selected canvas. Everything is one undo step.",
 		]],
-		["try", [["curve", "Make a curved desk", "curved:"], ["canvas", "My canvases", "tab:canvas"]]],
+		["try", [["curve", "Make a curved desk", "curved:"], ["curve", "Line it up with my desk", "curvealign:"], ["canvas", "My canvases", "tab:canvas"]]],
 	]},
 	{"id": "ai", "icon": "ai", "title": "The assistant", "sum": "Ask about a canvas, get a suggestion drawn on it", "blocks": [
 		["steps", [
@@ -382,11 +383,25 @@ func do(action: String) -> void:
 		"curved":
 			sh.close_popover()
 			b.surface.begin("", DeskBend.DEFAULT_SIZE, true)
+		"curvealign":                               # the active canvas if it is a curved desk, else the first one in this room
+			sh.close_popover()
+			var fid := b.active_frame
+			var fa: FrameData = b.doc.frames.get(fid)
+			if fa == null or not fa.bend:
+				fid = ""
+				for f in b.doc.frames_in(b.current_room):
+					if (f as FrameData).bend:
+						fid = (f as FrameData).id
+						break
+			if fid == "":
+				b.toast.emit("There is no curved desk in this room yet: Make a curved desk first.")
+			else:
+				b.surface.begin_align(fid)
 
 
 ## The actions the topics use, for the tests: every one must be one `do` knows.
 static func known_actions() -> PackedStringArray:
-	return PackedStringArray(["tool", "pop", "pulse", "all", "tab", "side", "type", "place", "desk", "curved"])
+	return PackedStringArray(["tool", "pop", "pulse", "all", "tab", "side", "type", "place", "desk", "curved", "curvealign"])
 
 
 # ------------------------------------------------------------------------------------------------ widgets

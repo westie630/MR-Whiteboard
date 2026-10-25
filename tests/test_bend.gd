@@ -180,6 +180,23 @@ func run() -> void:
 			attr_ok = false
 	t.check(attr_ok, "uv and colour are interpolated to the new corners")
 	t.eq((arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).size(), 3, "the arrays that were given are left as they were")
+	# corners level with each other, at the bottom and on a cutting line: still the whole triangle
+	var level_ok := true
+	for tri in [[Vector3(0, 0, 0), Vector3(0.05, 0, 0), Vector3(0.01, 0.1, 0)], [Vector3(0, DeskBend.PITCH * 3.0, 0), Vector3(0.04, 0.05, 0), Vector3(-0.02, 0.05, 0)],
+			[Vector3(0.2, 0.3, 0), Vector3(0.1, 0.1, 0), Vector3(0.0, 0.2, 0)]]:
+		var arr2 := arrays.duplicate()
+		arr2[Mesh.ARRAY_VERTEX] = PackedVector3Array(tri)
+		var want := absf(((tri[1] as Vector3) - (tri[0] as Vector3)).cross((tri[2] as Vector3) - (tri[0] as Vector3)).z) * 0.5
+		var cut2 := DeskBend.slice(arr2)
+		var cv2: PackedVector3Array = cut2[Mesh.ARRAY_VERTEX]
+		var ci2: PackedInt32Array = cut2[Mesh.ARRAY_INDEX]
+		var got := 0.0
+		for k in ci2.size() / 3:
+			got += absf((cv2[ci2[k * 3 + 1]] - cv2[ci2[k * 3]]).cross(cv2[ci2[k * 3 + 2]] - cv2[ci2[k * 3]]).z) * 0.5
+		if absf(got - want) > 1e-8:
+			level_ok = false
+			print("  area %.6f of %.6f for %s" % [got, want, str(tri)])
+	t.check(level_ok, "triangles with level corners, or a corner on a cutting line, keep all their area")
 	var small := arrays.duplicate()
 	small[Mesh.ARRAY_VERTEX] = PackedVector3Array([Vector3(0, 0.001, 0), Vector3(0.002, 0.002, 0), Vector3(0, 0.004, 0)])
 	t.check(DeskBend.slice(small) == small, "a triangle inside one strip is not touched")
@@ -206,6 +223,9 @@ func run() -> void:
 	await tap(on_desk(-0.2, -0.3))
 	await tap(on_desk(0.25, 0.1))
 	t.check(board.surface.finish(), "Done on a level desk makes the canvas")
+	t.check(board.surface.aligning(), "...and asks for the desk's front edge and the wall, to line it up")
+	board.surface.cancel_align()                       # Not now: it stays lined up with the head
+	t.check(not board.surface.aligning(), "Not now leaves it as it is")
 	await tick(90)
 	t.eq(board.doc.frames.size(), frames_before + 1, "one canvas")
 	var f: FrameData = board.doc.frames.values()[board.doc.frames.size() - 1]
@@ -343,6 +363,8 @@ func run() -> void:
 	t.check(not (mi2.material_override as ShaderMaterial).get_shader_parameter("bend_a") is Vector4 or (mi2.material_override as ShaderMaterial).get_shader_parameter("bend_a") == null \
 		or ((mi2.material_override as ShaderMaterial).get_shader_parameter("bend_a") as Vector4).x == 0.0, "...drawn flat again")
 	t.check(board.curve_frame(f.id, true), "a canvas on a level desk can be curved")
+	t.check(board.surface.aligning(), "...and then asks to be lined up")
+	board.surface.cancel_align()
 	await tick(30)
 	var again: FrameData = board.doc.frames[f.id]
 	t.check(again.bend and (board.frame_nodes[f.id] as FrameNode).bend != null, "it is curved again")
@@ -351,6 +373,58 @@ func run() -> void:
 	board.undo()
 	await tick(2)
 	t.check(not (board.doc.frames[f.id] as FrameData).bend, "undo flattens it")
+
+	# ---- lining it up with the real desk: the front edge, then the wall
+	var fa: FrameData = board.doc.frames[f.id]
+	if not fa.bend:
+		board.curve_frame(f.id, true)
+		board.surface.cancel_align()
+		await tick(5)
+	fa = board.doc.frames[f.id]
+	var pan_before: Vector2 = fa.bend_pan
+	var r_before := fa.bend_radius
+	var edge := Vector3(0.1, p0.y + 0.002, -0.45)
+	var wall_at := Vector3(0.1 + 0.8 * sin(0.3), p0.y + 0.2, -0.45 - 0.8 * cos(0.3))     # a wall 80 cm away, the desk turned 17 degrees
+	board.surface.begin_align(f.id)
+	t.check(board.surface.aligning() and int(board.surface.align_status().step) == 0, "lining up starts with the front edge")
+	await tap(edge)
+	t.eq(int(board.surface.align_status().step), 1, "one touch: now the wall")
+	await tap(Vector3(0.1, p0.y + 0.1, -0.5))
+	t.check(board.surface.aligning() and str(board.surface.align_status().note) != "", "a wall 5 cm from the edge is refused, and the edge asked for again")
+	t.eq(int(board.surface.align_status().step), 0, "...from the start")
+	await tap(edge)
+	await tap(wall_at)
+	await tick(5)
+	t.check(not board.surface.aligning(), "two good touches line it up")
+	var fl: FrameData = board.doc.frames[f.id]
+	var fnl: FrameNode = board.frame_nodes[f.id]
+	t.check(fnl.global_position.distance_to(Vector3(edge.x, p0.y, edge.z)) < 0.002, "it starts at the front edge, on the desk: %s" % str(fnl.global_position))
+	var run := Vector3(sin(0.3), 0.0, -cos(0.3))
+	t.check(fnl.global_transform.basis.y.normalized().dot(run) > 0.9999, "it runs from the edge towards the wall")
+	t.check(fnl.global_transform.basis.z.normalized().is_equal_approx(Vector3.UP), "...level with the desk")
+	t.near(fl.bend_at + fl.bend_radius, 0.8, 0.002, "the bend ends at the wall: distance + radius = 80 cm")
+	t.near(fl.bend_radius, r_before, 1e-6, "...keeping its radius")
+	var up_wall := fnl.to_world_point(Vector3(0.0, fl.bend_at + PI * 0.5 * fl.bend_radius + 0.25 - fl.bend_pan.y, 0.0))
+	t.near((up_wall - edge).dot(run), 0.8, 0.002, "25 cm up its upright part it is on the wall")
+	t.near(up_wall.y - p0.y, fl.bend_radius + 0.25, 0.002, "...that high above the desk")
+	t.check(fl.bend_pan.is_equal_approx(pan_before), "what is drawn stays on the canvas where it was")
+	t.check(fl.size.y >= fl.bend_at + PI * 0.5 * fl.bend_radius + Board.WALL_ABOVE - 1e-6, "the shown part reaches up the wall")
+	board.undo()
+	await tick(3)
+	t.check((board.doc.frames[f.id] as FrameData).xf.is_equal_approx(fa.xf), "undo puts it back where it was")
+	var near_wall := board.doc.frames[f.id].copy() as FrameData
+	t.eq(board.align_curved(f.id, edge, edge + Vector3(0.0, 0.3, -0.25)) == "", true, "a wall 25 cm away still makes a bend (the radius gives way)")
+	var tight: FrameData = board.doc.frames[f.id]
+	t.check(tight.bend_at >= DeskBend.MIN_AT - 1e-6 and absf(tight.bend_at + tight.bend_radius - 0.25) < 0.002, "...distance + radius = 25 cm: %.3f + %.3f" % [tight.bend_at, tight.bend_radius])
+	board.undo()
+	await tick(2)
+	t.check((board.doc.frames[f.id] as FrameData).xf.is_equal_approx(near_wall.xf), "undo")
+	board.surface.begin_align(f.id)
+	pen.back = true
+	await tick(2)
+	pen.back = false
+	await tick(2)
+	t.check(not board.surface.aligning(), "the back button leaves it as it was")
 
 	# a canvas that is not on a desk, or on a tilted one, cannot be curved
 	var wall_f := board.add_frame(FrameData.CANVAS, Transform3D(Basis.IDENTITY, Vector3(0, 1.4, -1.5)))

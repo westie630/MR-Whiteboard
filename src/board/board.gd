@@ -615,7 +615,7 @@ func _pick_room(present: Array, dt: float) -> String:
 	if tracking_live:
 		_pick_t += dt
 	var pick := current_room
-	if grabs.is_empty() and placing.is_empty() and placing_text.is_empty() and pen_ctl.state == PenController.S.IDLE and not surface.finding():
+	if grabs.is_empty() and placing.is_empty() and placing_text.is_empty() and pen_ctl.state == PenController.S.IDLE and not surface.finding() and not surface.aligning():
 		var near := _nearest_room(present)
 		if near == session.resume_room() or _room_dist(near) + ROOM_NEARER_M < _room_dist(current_room):
 			pick = near
@@ -1224,13 +1224,51 @@ func curve_frame(frame_id: String, on: bool) -> bool:
 			return false
 		var rw: Variant = room_world(f.room)
 		make_curved(upd, rw as Transform3D)
-		toast.emit("\"%s\" curves up at the end of your desk. Move the markers on its left edge to set where, and how tight." % f.name)
 	else:
 		make_flat(upd)
 		toast.emit("\"%s\" lies flat on your desk again." % f.name)
 	history.do(History.op_frame(f, upd))
 	active_frame = f.id
+	if on:
+		surface.begin_align(f.id)                        # line it up with the real desk (the head only gave a first guess)
 	return true
+
+
+const ALIGN_MIN := 0.15                    # the wall must be at least this far (along the desk) from the front edge touched
+const WALL_ABOVE := 0.6                    # after lining up, the shown part reaches at least this far up the wall
+
+## Line curved desk `frame_id` up with the real desk from two world points the nib touched: `edge` on the desk's front edge in front of you,
+## `wall` on the wall behind it (or the desk's far edge). The canvas then starts at the edge, runs from it towards the wall, level with the
+## desk, and bends so that its upright part lies on the wall (the radius is kept, the distance is the edge's to the wall less the radius).
+## One undo step. "" when done, else what is wrong.
+func align_curved(frame_id: String, edge: Vector3, wall: Vector3) -> String:
+	var f: FrameData = doc.frames.get(frame_id) if doc != null else null
+	if f == null or not f.bend or not canvas_edit_ok():
+		return "That canvas is not a curved desk."
+	var rw_v: Variant = room_world(f.room)
+	var rw: Transform3D = rw_v as Transform3D if rw_v != null else Transform3D.IDENTITY
+	var n := (rw.basis * f.plane_normal).normalized()
+	var p0 := rw * f.plane_point
+	var e := edge - n * n.dot(edge - p0)                # the edge, on the desk's plane
+	var run := wall - e
+	run -= n * n.dot(run)                               # along the desk
+	var d := run.length()
+	if d < ALIGN_MIN:
+		return "The wall (or the far edge) must be at least %d cm from the front edge. Touch the front edge again." % int(ALIGN_MIN * 100.0)
+	var y := run / d
+	var world := Transform3D(Basis(y.cross(n).normalized(), y, n), e)
+	var upd := f.copy()
+	upd.xf = rw.affine_inverse() * world
+	upd.bend_radius = DeskBend.clamp_radius(minf(f.bend_radius, d - DeskBend.MIN_AT))
+	upd.bend_at = DeskBend.clamp_at(d - upd.bend_radius)
+	var reach := upd.bend_at + PI * 0.5 * upd.bend_radius + WALL_ABOVE
+	if upd.size.y < reach:
+		upd.size.y = reach
+	upd.offset = Vector2(upd.offset.x, upd.size.y * 0.5)  # (the shown part starts at the front edge)
+	history.do(History.op_frame(f, upd))
+	active_frame = f.id
+	toast.emit("Lined up: \"%s\" starts at the front edge and climbs the wall %d cm from it. Push what you draw away from you to send it up the wall." % [f.name, roundi(d * 100.0)])
+	return ""
 
 
 ## Set where the flat part of a curved desk ends and how round the bend is (one undo step).
@@ -2162,7 +2200,7 @@ func tick(pen: PenState, hands: Array, dt: float) -> void:
 		_update_placing(pen, hands, dt)
 	elif not placing_text.is_empty():
 		_update_placing_text(pen, hands)
-	elif surface.finding():
+	elif surface.finding() or surface.aligning():
 		surface.update(pen, dt)                       # the nib is feeling for the desk: it neither draws nor grabs meanwhile
 	elif session.aligning():
 		session.align_update(pen, hands, dt)          # the nib (or a pinch) is touching the two points the session lines up on: nothing draws or grabs

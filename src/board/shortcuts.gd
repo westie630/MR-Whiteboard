@@ -42,6 +42,8 @@ static func edit_key(board: Board, k: InputEventKey) -> bool:
 				board.cancel_place_text()
 			elif board.surface.finding():
 				board.surface.cancel()
+			elif board.surface.aligning():
+				board.surface.cancel_align()
 			else:
 				board.clear_selection()
 		_:

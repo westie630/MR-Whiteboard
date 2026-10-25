@@ -75,6 +75,8 @@ func _stroke_points() -> Array:
 
 func _build_ribbon() -> void:
 	var pw := _stroke_points()
+	if _bend != null:
+		pw = DeskBend.subdivide(pw[0], pw[1])
 	var def := Brushes.get_def(item.brush)
 	var col := Brushes.color_for(item.brush, item.color)
 	var arrays := StrokeMesher.ribbon_arrays(pw[0], pw[1], col, false, bool(def.get("caps", true)), float(def.get("nib", -1.0)))
@@ -99,7 +101,7 @@ func _build_shape() -> void:
 	# fill first (under the outline)
 	if item.fill.a > 0.01 and not is_line:
 		var poly := item.poly if item.shape == "poly" else Shapes.world_fill_poly(item)
-		_add_mesh(StrokeMesher.fill_arrays(poly, item.fill), Brushes.canvas_material("pen", Brushes.priority("pen", item.z, "fill")))
+		_add_mesh(StrokeMesher.fill_arrays(poly, item.fill), Brushes.canvas_material("pen", Brushes.priority("pen", item.z, "fill")), true)
 	if is_line:
 		var path := Shapes.line_points(item)
 		var n := path.size()
@@ -111,11 +113,11 @@ func _build_shape() -> void:
 			if ends_b:
 				var d: Vector2 = (path[n - 1] - path[n - 2]).normalized()
 				shaft[n - 1] = path[n - 1] - d * head_len * 0.6
-				_add_mesh(StrokeMesher.fill_arrays(Shapes.arrow_head(path[n - 1], d, item.width), col), Brushes.canvas_material("pen", prio))
+				_add_mesh(StrokeMesher.fill_arrays(Shapes.arrow_head(path[n - 1], d, item.width), col), Brushes.canvas_material("pen", prio), true)
 			if ends_a:
 				var d2: Vector2 = (path[0] - path[1]).normalized()
 				shaft[0] = path[0] - d2 * head_len * 0.6
-				_add_mesh(StrokeMesher.fill_arrays(Shapes.arrow_head(path[0], d2, item.width), col), Brushes.canvas_material("pen", prio))
+				_add_mesh(StrokeMesher.fill_arrays(Shapes.arrow_head(path[0], d2, item.width), col), Brushes.canvas_material("pen", prio), true)
 			_add_ribbon(shaft, false, col, mat)
 	elif item.shape == "poly":
 		_add_ribbon(item.poly, true, col, mat)
@@ -136,6 +138,10 @@ func _add_ribbon(pts: PackedVector2Array, closed: bool, col: Color, mat: Materia
 	for p in pts:
 		p3.append(Vector3(p.x, p.y, 0.0))
 		w.append(item.width)
+	if _bend != null:
+		var sub := DeskBend.subdivide(p3, w, closed)
+		p3 = sub[0]
+		w = sub[1]
 	_add_mesh(StrokeMesher.ribbon_arrays(p3, w, col, closed, not closed), mat)
 
 
@@ -204,17 +210,19 @@ func _build_text_mesh(txt: String, center: Vector2, rot: float, em: float, col: 
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_COLOR] = cols
 	arrays[Mesh.ARRAY_INDEX] = idx
-	_add_mesh(arrays, Brushes.canvas_material("pen", clampi(prio, -128, 126)))
+	_add_mesh(arrays, Brushes.canvas_material("pen", clampi(prio, -128, 126)), true)
 
 
 # ------------------------------------------------------------------------------------------------ helpers
 
-func _add_mesh(arrays: Array, mat: Material) -> void:
+## `cut`: on a curved desk, the triangles are cut into strips (fills and letters; lines are already made of short pieces, see DeskBend.subdivide).
+func _add_mesh(arrays: Array, mat: Material, cut: bool = false) -> void:
 	if arrays.is_empty():
 		return
 	var mi := MeshInstance3D.new()
 	if _bend != null:
-		arrays = DeskBend.slice(arrays)
+		if cut:
+			arrays = DeskBend.slice(arrays)
 		mat = _bend.material(mat)
 		mi.custom_aabb = AABB(Vector3.ONE * -DeskBend.FAR, Vector3.ONE * (2.0 * DeskBend.FAR))
 	mi.mesh = StrokeMesher.to_mesh(arrays)

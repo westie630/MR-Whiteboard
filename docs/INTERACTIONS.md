@@ -443,15 +443,22 @@ Both the sounds and the haptics follow one setting: **More > Feedback** (`haptic
 A desk canvas that is curved up into a wall. Add (+) > **Curved desk** (the same search for the desk as 10.1, which must be level: the normal's up part at least `Board.CURVE_LEVEL` 0.9),
 Home > Canvases > **New curved desk**, or the curve button of a canvas that already lies on a level desk (it curves it, or flattens it again). [DeskBend](../src/core/desk_bend.gd).
 
-**Aligned to you.** The canvas's edge is put on the desk 15 cm in front of your chest (`Board.CHEST`), straight in front of the head, its top running away from you level along the desk. The
+**Lined up with the real desk.** Right after the desk is found (and after the curve button, and from Home > Canvases > **Line it up with my desk**), the desk card asks for two touches of
+the nib ([SurfaceController.begin_align](../src/board/surface_controller.gd), [Board.align_curved](../src/board/board.gd)): **1** the desk's front edge, right in front of you, **2** the wall behind the desk, low
+down (no wall: the desk's far edge). Each touch is where the nib was while pressed. The canvas then starts at the first point (on the desk's plane), runs towards the second, level with the desk, and
+the distance becomes the edge-to-wall distance less the radius, so the upright part lies on the wall (a wall nearer than radius + 5 cm makes the radius smaller; nearer than `Board.ALIGN_MIN` 15 cm is refused and
+the edge asked for again). The shown part is made long enough to reach `Board.WALL_ABOVE` 60 cm up the wall. What is drawn keeps its place on the canvas. One undo step; **Not now**, Esc or the back button leaves it as it was.
+
+**Aligned to you (first guess).** Before it is lined up, the canvas's edge is put on the desk 15 cm in front of your chest (`Board.CHEST`), straight in front of the head, its top running away from you level along the desk. The
 canvas is the *window* on the surface: `FrameData.size` / `offset` are the shown part in surface coordinates (default 1.0 x 1.5 m: your width, the flat part, the bend and the wall). What is drawn is
 on the canvas as ever (same coordinates, same sizes); `bend_pan` is how far it has slid along the surface. A canvas that already had drawings is put so that they are in front of you on the flat part.
 
 **The surface.** Flat on the desk up to `bend_at` from your edge (40 cm), then a quarter circle of `bend_radius` (12 cm) with its concave side to you, then straight up. It is a cylinder, so
 the canvas is not stretched: a line keeps its length round the bend. Mapping canvas (x, y, height) to the room: u = x + pan.x, s = y + pan.y, and s along the surface ([DeskBend.to_node](../src/core/desk_bend.gd);
 the shaders in [bend.gdshaderinc](../shaders/bend.gdshaderinc) do the same, with the same numbers). Everything that is drawn (ink, shapes, fills, text, the grid, the selection) is bent by its
-material's vertex shader; ink and shapes are cut into strips of 8 mm (`DeskBend.PITCH`) when their mesh is built so a long line bends instead of cutting the corner, and text is the font's outlines as geometry
-(`TextMesh`) because a `Label3D` is a flat quad. What slides out of the window is hidden. The pen, the hands, the mouse and the rays all use `FrameNode.to_local_point`, `to_world_point` and `ray_hit`,
+material's vertex shader. For a long line to bend instead of cutting the corner, lines get a point every 8 mm of climb (`DeskBend.subdivide`, cheap, so the overlay can be drawn again every
+frame), and fills and letters are cut into 8 mm strips once, when their mesh is built (`DeskBend.slice`); text is the font's outlines as geometry (`TextMesh`) because a `Label3D` is a flat quad. The
+edge and the markers have a mesh of their own, drawn again only when the bend, the pan, the lit marker or how near a pointer is (in tenths) changes, not with the cursor. What slides out of the window is hidden. The pen, the hands, the mouse and the rays all use `FrameNode.to_local_point`, `to_world_point` and `ray_hit`,
 which know the bend, so the nib at any part of the surface is at the canvas point under it, and a pointer at a distance is where its ray meets the surface.
 
 **Moving the contents.** A pinch (touching or pointing) on empty canvas or on the bar, or the stylus front button, then a drag: the contents slide along the surface by as far as the pointer moved *along the
@@ -469,7 +476,7 @@ In a session the numbers are part of the canvas, so every headset shows the same
 | Tunable | |
 |---|---|
 | `DeskBend` | `PITCH` 8 mm · `MIN_AT` 5 cm · `MAX_AT` 1.2 m · `MIN_RADIUS` 4 cm · `MAX_RADIUS` 60 cm · `DEFAULT_AT` 40 cm · `DEFAULT_RADIUS` 12 cm · `DEFAULT_SIZE` 1.0 x 1.5 m |
-| `Board` | `CHEST` 15 cm · `CURVE_LEVEL` 0.9 · `CURVE_FRONT` 30 cm (where existing drawings are put) |
+| `Board` | `CHEST` 15 cm · `CURVE_LEVEL` 0.9 · `CURVE_FRONT` 30 cm (where existing drawings are put) · `ALIGN_MIN` 15 cm · `WALL_ABOVE` 60 cm |
 | `InputTuning` | `MARKER_SIDE` 4 cm · `MARKER_R` 2.4 cm · `MARKER_HIT` 5 cm |
 
 ---

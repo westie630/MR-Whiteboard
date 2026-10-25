@@ -24,7 +24,6 @@ const DEFAULT_RADIUS := 0.12
 const DEFAULT_SIZE := Vector2(1.0, 1.5)    # the window of a new curved desk: wide, and long enough for the desk, the bend and the wall
 const SCREEN_SHADER := "res://shaders/ink_overlay.gdshader"
 const EPS := 1e-6                          # a vertex this close to a cutting line is on it (a micron: vertices are 32-bit floats)
-const MAX_PIECES := 20000                  # no one triangle is cut into more pieces than this
 const FAR := 6.0                           # the frame is never culled by its own (unbent) bounds: a bent surface lies far from them
 
 var at := DEFAULT_AT                       # surface distance from your edge where the flat part ends
@@ -177,6 +176,39 @@ func ray(o: Vector3, d: Vector3, tmin: float = 0.0) -> Dictionary:
 
 # ------------------------------------------------------------------------------------------------ cutting geometry
 
+## A line (points and widths, for StrokeMesher.ribbon_arrays) with points put in wherever it climbs more than a strip between two of its
+## points, so that its ribbon bends instead of cutting the corner. Cheap: this, not slice(), is how lines are made bendable (the overlay is
+## drawn again every frame). Unchanged when no segment is that long. Returns [points, widths].
+static func subdivide(pts: PackedVector3Array, widths: PackedFloat32Array, closed: bool = false) -> Array:
+	var n := pts.size()
+	if n < 2:
+		return [pts, widths]
+	var segs := n if closed else n - 1
+	var need := false
+	for i in segs:
+		if absf(pts[(i + 1) % n].y - pts[i].y) > PITCH:
+			need = true
+			break
+	if not need:
+		return [pts, widths]
+	var op := PackedVector3Array()
+	var ow := PackedFloat32Array()
+	var last := widths.size() - 1
+	for i in n:
+		var wi := widths[mini(i, last)]
+		op.append(pts[i])
+		ow.append(wi)
+		if i < segs:
+			var j := (i + 1) % n
+			var k := ceili(absf(pts[j].y - pts[i].y) / PITCH)
+			var wj := widths[mini(j, last)]
+			for m in range(1, k):
+				var t := float(m) / float(k)
+				op.append(pts[i].lerp(pts[j], t))
+				ow.append(lerpf(wi, wj, t))
+	return [op, ow]
+
+
 ## Cut triangles (arrays as ArrayMesh takes them: vertex, uv, colour, index) wherever they cross a line y = k * PITCH, so that each piece is
 ## short enough for a vertex shader to bend it without cutting a corner. Every attribute is interpolated; arrays without a triangle that
 ## crosses are returned as they are.
@@ -208,49 +240,78 @@ static func slice(arrays: Array) -> Array:
 	for t in n:
 		if not is_cut.has(t) and not broken.has(t):
 			out_idx.append_array(PackedInt32Array([idx[t * 3], idx[t * 3 + 1], idx[t * 3 + 2]]))
+	var poly := PackedInt32Array()
 	for t in crossing:
-		var stack: Array = [[idx[t * 3], idx[t * 3 + 1], idx[t * 3 + 2]]]
-		var guard := 0
-		while not stack.is_empty():
-			guard += 1
-			if guard > MAX_PIECES:
-				break                                  # (cannot happen; but a hang in a frame would be worse than a gap in a mesh)
-			var tri: Array = stack.pop_back()
-			var ia: int = tri[0]
-			var ib: int = tri[1]
-			var ic: int = tri[2]
-			var ya := verts[ia].y
-			var yb := verts[ib].y
-			var yc := verts[ic].y
-			var lo := floorf((minf(ya, minf(yb, yc)) + EPS) / PITCH)
-			var hi := floorf((maxf(ya, maxf(yb, yc)) - EPS) / PITCH)
-			if lo >= hi:
-				out_idx.append_array(PackedInt32Array([ia, ib, ic]))
-				continue
-			var cut := (lo + 1.0) * PITCH
-			var below := [ya < cut - EPS * 0.5, yb < cut - EPS * 0.5, yc < cut - EPS * 0.5]
-			var nb := int(below[0]) + int(below[1]) + int(below[2])
-			var corner: Array = [ia, ib, ic]
-			# rotate so that `a` is the corner alone on its side of the line, keeping the winding
-			var lone := 0
-			if nb == 1:
-				lone = below.find(true)
-			else:
-				lone = below.find(false)
-			var a: int = corner[lone]
-			var b: int = corner[(lone + 1) % 3]
-			var c: int = corner[(lone + 2) % 3]
-			var ab := _lerp_vertex(verts, uvs, cols, a, b, cut)
-			var ac := _lerp_vertex(verts, uvs, cols, a, c, cut)
-			stack.append([a, ab, ac])
-			stack.append([ab, b, c])
-			stack.append([ab, c, ac])
+		var i0 := idx[t * 3]
+		var i1 := idx[t * 3 + 1]
+		var i2 := idx[t * 3 + 2]
+		var v0 := verts[i0]
+		var facing := (verts[i1].x - v0.x) * (verts[i2].y - v0.y) - (verts[i1].y - v0.y) * (verts[i2].x - v0.x)
+		# the corners from low to high: `a` - `c` is the long side, `a` - `b` - `c` the short one
+		var a := i0
+		var b := i1
+		var c := i2
+		if verts[b].y < verts[a].y:
+			var sw := a
+			a = b
+			b = sw
+		if verts[c].y < verts[b].y:
+			var sw2 := b
+			b = c
+			c = sw2
+		if verts[b].y < verts[a].y:
+			var sw3 := a
+			a = b
+			b = sw3
+		var yb := verts[b].y
+		var yc := verts[c].y
+		var lo := int(floorf((verts[a].y + EPS) / PITCH))
+		var hi := int(floorf((yc - EPS) / PITCH))
+		# one strip after the other, bottom up: each is the part of the triangle between two cutting lines, a convex polygon
+		var prev_l := a
+		var prev_s := a
+		var prev_y := verts[a].y
+		for k in range(lo + 1, hi + 2):
+			var top := k > hi
+			var y := yc if top else float(k) * PITCH
+			var l := c if top else _lerp_vertex(verts, uvs, cols, a, c, y)
+			var sv := c
+			if not top:
+				sv = _lerp_vertex(verts, uvs, cols, a, b, y) if y <= yb else _lerp_vertex(verts, uvs, cols, b, c, y)
+			poly.clear()
+			poly.append(prev_l)
+			poly.append(prev_s)
+			if yb >= prev_y and (yb < y or top) and b != prev_s:
+				poly.append(b)                                 # (also when it is level with the bottom or the top corner)
+			poly.append(sv)
+			poly.append(l)
+			for j in range(1, poly.size() - 1):
+				_emit(out_idx, verts, poly[0], poly[j], poly[j + 1], facing)
+			prev_l = l
+			prev_s = sv
+			prev_y = y
 	var res := arrays.duplicate()
 	res[Mesh.ARRAY_VERTEX] = verts
 	res[Mesh.ARRAY_TEX_UV] = uvs
 	res[Mesh.ARRAY_COLOR] = cols
 	res[Mesh.ARRAY_INDEX] = out_idx
 	return res
+
+
+## One triangle of a cut, turned to face the way the triangle it is cut from faced; nothing when it has no area.
+static func _emit(out: PackedInt32Array, verts: PackedVector3Array, p: int, q: int, r: int, facing: float) -> void:
+	var vp := verts[p]
+	var cr := (verts[q].x - vp.x) * (verts[r].y - vp.y) - (verts[q].y - vp.y) * (verts[r].x - vp.x)
+	if absf(cr) < 1e-14:
+		return
+	if (cr > 0.0) == (facing > 0.0):
+		out.append(p)
+		out.append(q)
+		out.append(r)
+	else:
+		out.append(p)
+		out.append(r)
+		out.append(q)
 
 
 ## A new vertex on the edge a-b at height y (appended to the arrays); the index of a or b itself when the edge lies on that height.

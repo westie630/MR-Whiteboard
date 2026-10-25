@@ -2,11 +2,16 @@ class_name SurfaceCard
 extends FloatPanel
 ## Finding the desk: the card that stands on the dock while the stylus nib feels for a surface (SurfaceController). A plan of the points
 ## felt so far, one sentence on what is still needed (or how flat and level the desk is), and Done / Start over / Cancel.
+## Lining a curved desk up with the real desk (SurfaceController.begin_align) shows on it too: which of the two touches is next, and Not now.
 
 var _plot: SurfacePlot
 var _line: Label
 var _done: Btn
 var _sub: Label
+var _find: VBoxContainer
+var _align: VBoxContainer
+var _adots: AlignCard.StepDots
+var _aline: Label
 
 
 func _init() -> void:
@@ -16,10 +21,14 @@ func _init() -> void:
 	pivot = Vector2(0.5, 1.0)
 	max_size = Vector2(620, 420)
 	add_theme_stylebox_override("panel", UITheme.glass(26, 16.0))
+	var outer := VBoxContainer.new()
+	add_child(outer)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 12)
 	v.custom_minimum_size = Vector2(520, 0)
-	add_child(v)
+	outer.add_child(v)
+	_find = v
+	_build_align(outer)
 	var head := UiKit.hrow(v, 12)
 	var icon := Btn.new("desk", "")
 	icon.variant = "tool"
@@ -51,8 +60,51 @@ func _init() -> void:
 	row.add_child(no)
 
 
+func _build_align(parent: Control) -> void:
+	_align = VBoxContainer.new()
+	_align.add_theme_constant_override("separation", 12)
+	_align.custom_minimum_size = Vector2(520, 0)
+	parent.add_child(_align)
+	var head := UiKit.hrow(_align, 12)
+	var icon := Btn.new("curve", "")
+	icon.variant = "tool"
+	icon.accent = UITheme.DESK
+	icon.on = true
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.custom_minimum_size = Vector2(46, 46)
+	head.add_child(icon)
+	var titles := UiKit.vcol(head, 0)
+	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	titles.add_child(UiKit.label("Line it up with your desk", false, UITheme.FONT, 600))
+	titles.add_child(UiKit.label("Two touches with the stylus tip", true, UITheme.FONT_TINY))
+	_adots = AlignCard.StepDots.new()
+	_align.add_child(_adots)
+	_aline = UiKit.label("", false, UITheme.FONT_SMALL, 500)
+	_aline.custom_minimum_size = Vector2(0, 56)
+	_align.add_child(_aline)
+	_align.add_child(UiKit.label("The canvas then starts at the edge, faces away from you along the desk and bends up so that it climbs the wall. The markers on its left edge still fine-tune the bend.", true, UITheme.FONT_TINY))
+	var row := UiKit.hrow(_align, 8)
+	var no := UiKit.chip("Not now", func(): shell.board.surface.cancel_align(), "close", 52.0)
+	no.variant = "ghost"
+	no.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(no)
+
+
 func refresh() -> void:
 	var b: Board = shell.board
+	var al := b.surface.align_status()
+	_align.visible = bool(al.aligning)
+	_find.visible = not bool(al.aligning)
+	if bool(al.aligning):
+		_adots.step = int(al.step)
+		_adots.queue_redraw()
+		if str(al.note) != "":
+			_aline.text = str(al.note)
+		elif int(al.step) == 0:
+			_aline.text = "1. Touch the front edge of your desk with the stylus tip, right in front of you."
+		else:
+			_aline.text = "2. Now touch the wall behind the desk, low down. No wall? Touch the desk's far edge."
+		return
 	var st := b.surface.status()
 	if not bool(st.finding):
 		return

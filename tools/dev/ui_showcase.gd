@@ -9,6 +9,7 @@ extends Node
 ##   deskcanvas ...and Done: the canvas lies on the table with a stroke drawn on it
 ##   curved    ...as a curved desk: the canvas lies on the table, bends up and climbs the wall, with drawings across all of it
 ##   curvedside ...seen from the side, with the markers lit
+##   curvedalign ...just made: the card asks for the desk's front edge and the wall
 
 class FakeInk extends InkRecognizer:
 	func name_of() -> String:
@@ -78,6 +79,28 @@ func _ready() -> void:
 				await _frames(60)
 		"desk", "deskcanvas":
 			await _desk(show == "deskcanvas")
+		"curvedalign":
+			await _desk(true, true)
+			await _frames(20)
+			if args.has("touch"):
+				# the mouse presses on the simulated table's front edge, then its far edge (no wall there)
+				for w in [Vector3(1.9, 0.75, -1.03), Vector3(1.75, 0.75, -1.77)]:
+					var sp := rig.camera.unproject_position(w) + rig.view_container.position
+					_mouse(sp)
+					await _frames(3)
+					_button(sp, true)
+					await _frames(12)
+					_button(sp, false)
+					await _frames(6)
+				var fa: FrameNode = board.frame_nodes[board.active_frame]
+				print("aligned: origin ", fa.global_position, " runs ", fa.global_transform.basis.y, " bend at ", fa.data.bend_at, " radius ", fa.data.bend_radius, " aligning ", board.surface.aligning())
+				var o := fa.global_transform
+				rig.camera.position = o * Vector3(0.0, -0.45, 0.55)
+				var d3 := (o * Vector3(0.0, 0.5, 0.15) - rig.camera.position).normalized()
+				rig._yaw = atan2(-d3.x, -d3.z)
+				rig._pitch = asin(d3.y)
+				rig._apply_look()
+				await _frames(30)
 		"curved", "curvedside":
 			await _curved(show == "curvedside", float(args.get("pan", 0.0)), str(args.get("hot", "")))
 		"ai":
@@ -140,6 +163,7 @@ func _desk(finish: bool, curved: bool = false) -> void:
 ## A curved desk with drawings that run over its flat part, its bend and its wall. `side`: seen from the side. `pan`: the contents slid this far.
 func _curved(side: bool, pan: float, hot: String) -> void:
 	await _desk(true, true)
+	board.surface.cancel_align()
 	var f: FrameNode = board.frame_nodes[board.active_frame]
 	var fid := f.data.id
 	var upd := f.data.copy()
@@ -167,9 +191,6 @@ func _curved(side: bool, pan: float, hot: String) -> void:
 	await _frames(20)
 	if hot != "":
 		f.set_marker_hot(hot)
-	print("DBG pan data ", f.data.bend_pan, " live ", f.bend.pan, " views ", f.views.size(), " frames ", board.frame_nodes.size())
-	for fn2 in board.frame_nodes.values():
-		print("DBG frame ", (fn2 as FrameNode).data.id, " ", (fn2 as FrameNode).data.name, " bent=", (fn2 as FrameNode).bend != null, " visible=", (fn2 as FrameNode).visible)
 	if side:
 		var o := f.global_transform
 		var target := o * Vector3(-0.45, 0.45, 0.1)

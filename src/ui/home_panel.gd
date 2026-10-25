@@ -407,6 +407,10 @@ func _refresh_canvas() -> void:
 	if active.bend:
 		var cc := UiKit.card(_canvas_style)
 		UiKit.header(cc, "Curved desk")
+		var al := UiKit.button("curve", "Line it up with my desk", func(): b.surface.begin_align(aid), 52.0)
+		al.tint = UITheme.DESK
+		cc.add_child(al)
+		UiKit.note(cc, "Touch the desk's front edge in front of you, then the wall behind it: the canvas starts at the edge and climbs the wall.")
 		_stepper(cc, "Bends at", "from your edge", func(): return (b.doc.frames[aid] as FrameData).bend_at, 0.05,
 			func(v: float): b.set_bend(aid, v, (b.doc.frames[aid] as FrameData).bend_radius))
 		_stepper(cc, "Radius", "of the bend", func(): return (b.doc.frames[aid] as FrameData).bend_radius, 0.02,

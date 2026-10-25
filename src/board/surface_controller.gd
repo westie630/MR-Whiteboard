@@ -9,6 +9,8 @@ extends RefCounted
 ##   finding   the calibration: points from the nib, the fitted plane, a preview of the canvas on it; finish() creates the canvas (or
 ##             pins an existing one to the desk), cancel() drops it
 ##   tracking  the measurements made while drawing on a desk canvas
+##   aligning  a curved desk is lined up with the real desk: the nib touches the desk's front edge in front of you, then the wall behind it
+##             (begin_align; a new curved desk starts it by itself)
 
 const STEP := 0.02                         # rubbing: a point every this far (m)
 const TAP_S := 0.12                        # a press shorter than this is one point (its average)
@@ -27,6 +29,7 @@ const MARK_R := 0.006
 var board: Board
 var calib := {}                            # {target, size, points: PackedVector3Array, fit, ghost, tmp, marks, press}; empty = not finding
 var _track := {}                           # frame id -> {pts: PackedVector3Array (room space), last: Vector3, down: bool, fresh: int}
+var align := {}                            # {frame, step: 0 the front edge | 1 the wall, edge: Vector3 (world), marks, press}; empty = not aligning
 var _was_back := false
 
 
@@ -36,6 +39,10 @@ func _init(b: Board) -> void:
 
 func finding() -> bool:
 	return not calib.is_empty()
+
+
+func aligning() -> bool:
+	return not align.is_empty()
 
 
 # ------------------------------------------------------------------------------------------------ finding the desk
@@ -83,6 +90,7 @@ func cancel() -> void:
 ## The document closed: nothing is being found, nothing is tracked.
 func reset() -> void:
 	cancel()
+	cancel_align()
 	_track.clear()
 
 
@@ -113,6 +121,9 @@ func status() -> Dictionary:
 
 ## Every frame while finding: the nib's presses are the measurements. The back button cancels.
 func update(pen: PenState, dt: float) -> void:
+	if not align.is_empty():
+		_update_align(pen)
+		return
 	if calib.is_empty():
 		return
 	if pen.back and not _was_back:
@@ -160,6 +171,14 @@ func _add_point(p: Vector3, pen: PenState) -> void:
 		return
 	pts.append(p)
 	calib.points = pts
+	(calib.marks as Node3D).add_child(_mark(p))
+	pen.tick(0.35, 0.02)
+	_refit()
+	board.changed.emit()
+
+
+## An amber dot where the nib touched.
+func _mark(p: Vector3) -> MeshInstance3D:
 	var m := MeshInstance3D.new()
 	var sph := SphereMesh.new()
 	sph.radius = MARK_R
@@ -174,10 +193,7 @@ func _add_point(p: Vector3, pen: PenState) -> void:
 	sph.material = mat
 	m.mesh = sph
 	m.position = p
-	(calib.marks as Node3D).add_child(m)
-	pen.tick(0.35, 0.02)
-	_refit()
-	board.changed.emit()
+	return m
 
 
 func _refit() -> void:
@@ -231,8 +247,10 @@ func finish() -> bool:
 	var f: FrameData = board.doc.frames.get(target) if target != "" else null
 	if f == null:
 		var made := board.add_frame(FrameData.CANVAS, pose, size, plane, {"bend": true} if curved else {})
-		if made != null:
-			board.toast.emit("Canvas \"%s\" curves up at the end of your desk. Move the markers on its left edge." % made.name if curved else "Canvas \"%s\" lies on your desk." % made.name)
+		if made != null and curved:
+			begin_align(made.id)                              # now line it up with the real desk
+		elif made != null:
+			board.toast.emit("Canvas \"%s\" lies on your desk." % made.name)
 		return made != null
 	var rw: Variant = board.room_world(f.room)
 	if rw == null:
@@ -245,7 +263,10 @@ func finish() -> bool:
 		board.make_curved(upd, rw as Transform3D)
 	board.history.do(History.op_frame(f, upd))
 	board.active_frame = f.id
-	board.toast.emit("\"%s\" now lies on your desk%s." % [f.name, " and curves up at its far end" if upd.bend else ""])
+	if upd.bend:
+		begin_align(f.id)
+	else:
+		board.toast.emit("\"%s\" now lies on your desk." % f.name)
 	return true
 
 
@@ -301,6 +322,89 @@ func stood_up(world_xf: Transform3D, f: FrameData) -> Transform3D:
 	var z := out.normalized()
 	var basis := Basis(Vector3.UP.cross(z), Vector3.UP, z)
 	return Transform3D(basis, centre - basis * mid)
+
+
+# ------------------------------------------------------------------------------------------------ lining a curved desk up with the real desk
+
+## Line curved desk `frame_id` up with the real desk: the nib touches the desk's front edge, right in front of you (where the canvas starts and
+## the way it faces), then the wall behind the desk, or the desk's far edge when there is no wall (where it climbs up). Each touch is a tap
+## or a press; the back button or Cancel leaves the desk where it was.
+func begin_align(frame_id: String) -> void:
+	var f: FrameData = board.doc.frames.get(frame_id) if board.doc != null else null
+	if f == null or not f.bend:
+		return
+	if f.locked:
+		board.toast.emit("That canvas is locked.")
+		return
+	board.cancel_place()
+	cancel()
+	cancel_align()
+	var marks := Node3D.new()
+	marks.name = "AlignMarks"
+	board.add_child(marks)
+	align = {"frame": frame_id, "step": 0, "edge": Vector3.ZERO, "marks": marks, "note": "", "press": {"down": false, "acc": PackedVector3Array()}}
+	_was_back = false
+	board.active_frame = frame_id
+	board.toast.emit("Line it up with your desk: touch the front edge of the desk with the stylus tip, right in front of you.")
+	board.changed.emit()
+
+
+func cancel_align() -> void:
+	if align.is_empty():
+		return
+	(align.marks as Node).queue_free()
+	align = {}
+	board.changed.emit()
+
+
+## What the card shows: {aligning, step (0 the edge, 1 the wall), note (what went wrong, or "")}.
+func align_status() -> Dictionary:
+	if align.is_empty():
+		return {"aligning": false, "step": 0, "note": ""}
+	return {"aligning": true, "step": int(align.step), "note": str(align.note)}
+
+
+func _update_align(pen: PenState) -> void:
+	if pen.back and not _was_back:
+		_was_back = true
+		cancel_align()
+		board.toast.emit("The curved desk stays where it was.")
+		return
+	_was_back = pen.back
+	var pr: Dictionary = align.press
+	if pen.tracked and pen.contact:
+		pr.down = true
+		var acc: PackedVector3Array = pr.acc
+		acc.append(pen.tip)
+		pr.acc = acc
+	elif bool(pr.down):
+		pr.down = false
+		var p := _mean(pr.acc)                         # a touch is where the nib was while it was pressed
+		pr.acc = PackedVector3Array()
+		pen.tick(0.35, 0.02)
+		_align_point(p)
+
+
+func _align_point(p: Vector3) -> void:
+	var fid := str(align.frame)
+	if int(align.step) == 0:
+		align.edge = p
+		align.step = 1
+		align.note = ""
+		(align.marks as Node3D).add_child(_mark(p))
+		board.toast.emit("Now touch the wall behind the desk (or the desk's far edge, if there is no wall).")
+		board.changed.emit()
+		return
+	var res := board.align_curved(fid, align.edge, p)
+	if res != "":
+		align.note = res                               # (too close: the edge is touched again)
+		align.step = 0
+		for c in (align.marks as Node).get_children():
+			c.queue_free()
+		board.toast.emit(res)
+		board.changed.emit()
+		return
+	cancel_align()
 
 
 static func reason_text(reason: String) -> String:

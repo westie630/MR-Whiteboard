@@ -86,6 +86,7 @@ var _palm_t := {"left": 0.0, "right": 0.0}
 var _board_pen := PenState.new()
 var _no_hands_t := 0.0
 var _diag_t := 0.0
+var _slowest := 0.0                        # the longest frame since the last [perf] line (s)
 
 
 # ------------------------------------------------------------------------------------------------ start-up
@@ -698,8 +699,14 @@ func _process(delta: float) -> void:
 	for side in ["left", "right"]:
 		_pinch_peak[side] = maxf(float(_pinch_peak.get(side, 0.0)), (hands[side] as HandInput).pinch_strength)
 	_diag_t += delta
+	_slowest = maxf(_slowest, delta)
 	if _diag_t > 5.0:
 		_diag_t = 0.0
+		# how the headset keeps up: frames per second, the slowest frame of the last 5 s, the script's share, what was drawn
+		print("[perf] %d fps, slowest %.0f ms, script %.1f ms, %d draw calls, %dk triangles, %d objects" % [Engine.get_frames_per_second(), _slowest * 1000.0,
+			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME),
+			Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME) / 1000, Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME)])
+		_slowest = 0.0
 		var l := hands["left"] as HandInput
 		var r := hands["right"] as HandInput
 		print("[xr] stylus=%s pen=%s down=%s hands=%d panel=%s aim L=%s R=%s pinch peak L=%.2f R=%.2f anchors: %s" % [stylus.active, str(pen.tracked), str(pen.down), board_hands.size(), str(panel.visible), _aim_note(l), _aim_note(r), float(_pinch_peak.get("left", 0.0)), float(_pinch_peak.get("right", 0.0)), anchors.status()])

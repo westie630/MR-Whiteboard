@@ -114,7 +114,7 @@ func update(delta: float) -> void:
 		p.wanted = bool(_side[id]) and not hidden and has_doc
 		p.dim = 1.0 if (calm or not fade) else SIDE_FADED
 	compose.wanted = typing
-	surface_card.wanted = board.surface.finding() and not hidden and not typing
+	surface_card.wanted = (board.surface.finding() or board.surface.aligning()) and not hidden and not typing
 	align_card.wanted = board.session.aligning() and not hidden and not typing
 	place_card.wanted = not board.placing_text.is_empty() and popover_id != "dictate" and not hidden and not typing
 	var on_canvas := not hidden and calm and has_doc and not typing
@@ -238,6 +238,9 @@ func back() -> bool:
 		return true
 	if board.surface.finding():
 		board.surface.cancel()
+		return true
+	if board.surface.aligning():
+		board.surface.cancel_align()
 		return true
 	if board.session.aligning():
 		board.session.align_cancel()

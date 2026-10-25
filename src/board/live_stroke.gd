@@ -98,13 +98,15 @@ func _mesh_for(from: int, to: int) -> ArrayMesh:
 		w.append(Brushes.width_at(brush, width, pts[i * 4 + 3]))
 	var col := Brushes.color_for(brush, color)
 	var arrays: Array
+	if not volume and _bend() != null:
+		var sub := DeskBend.subdivide(p, w)
+		p = sub[0]
+		w = sub[1]
 	if volume:
 		arrays = StrokeMesher.tube_arrays(p, w, col, 6)
 	else:
 		var def := Brushes.get_def(brush)
 		arrays = StrokeMesher.ribbon_arrays(p, w, col, false, bool(def.get("caps", true)), float(def.get("nib", -1.0)))
-		if _bend() != null:
-			arrays = DeskBend.slice(arrays)
 	return StrokeMesher.to_mesh(arrays)
 
 

@@ -8,6 +8,7 @@ var _uvs := PackedVector2Array()
 var _cols := PackedColorArray()
 var _idx := PackedInt32Array()
 var z := 0.0
+var bent := false                        # for a curved desk: lines get points along them, polygons are cut into strips, so they bend (DeskBend)
 
 
 func clear() -> void:
@@ -23,6 +24,10 @@ func line(pts: PackedVector2Array, width: float, col: Color, closed: bool = fals
 	for p in pts:
 		p3.append(Vector3(p.x, p.y, z))
 		w.append(width)
+	if bent:
+		var sub := DeskBend.subdivide(p3, w, closed)
+		p3 = sub[0]
+		w = sub[1]
 	_append(StrokeMesher.ribbon_arrays(p3, w, col, closed, true))
 
 
@@ -47,7 +52,8 @@ func ring(c: Vector2, radius: float, width: float, col: Color, n: int = 28) -> v
 
 
 func polygon(poly: PackedVector2Array, col: Color) -> void:
-	_append(StrokeMesher.fill_arrays(poly, col, z))
+	var arrays := StrokeMesher.fill_arrays(poly, col, z)
+	_append(DeskBend.slice(arrays) if bent else arrays)
 
 
 func _append(arrays: Array) -> void:
@@ -61,8 +67,7 @@ func _append(arrays: Array) -> void:
 		_idx.append(i + base)
 
 
-## `bent`: the mesh is for a curved desk, so it is cut into strips (DeskBend.slice) for its material to bend.
-func build(mesh: ArrayMesh, bent: bool = false) -> void:
+func build(mesh: ArrayMesh) -> void:
 	mesh.clear_surfaces()
 	if _verts.is_empty():
 		return
@@ -72,8 +77,6 @@ func build(mesh: ArrayMesh, bent: bool = false) -> void:
 	arrays[Mesh.ARRAY_TEX_UV] = _uvs
 	arrays[Mesh.ARRAY_COLOR] = _cols
 	arrays[Mesh.ARRAY_INDEX] = _idx
-	if bent:
-		arrays = DeskBend.slice(arrays)
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
 

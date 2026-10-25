@@ -444,7 +444,7 @@ func _update_pen() -> void:
 			best_t = float(hit.t)
 			tip = hit.point
 	var feels := true
-	if board.surface.finding() or board.session.aligning():
+	if board.surface.finding() or board.surface.aligning() or board.session.aligning():
 		# feeling for the desk (or for the points a session lines up on): the nib lands on the simulated room's tables and walls, and feels nothing in the air
 		var hit := _surface_hit(o, d)
 		feels = not hit.is_empty()
