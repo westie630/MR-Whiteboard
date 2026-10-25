@@ -328,17 +328,10 @@ func _controller(board: Board, fid: String) -> void:
 	board.undo()
 	board.ai.forget(fid)
 
-	# AI text: written from a prompt, then put down with the placement tool on the canvas pointed at
-	var written := FakeClient.new()
-	board.ai.client = written
-	written.answer = "```" + "\n" + "## Agenda" + "\n" + "**Welcome** and news" + "\n" + "* Plans" + "\n" + "```"
-	t.check(board.ai.write("an agenda"), "AI text starts")
-	t.eq(str(written.asked[0][3]), AiPrompts.TEXT_SYSTEM, "it asks for the text itself, not the assistant's JSON")
-	t.eq((written.asked[0][4] as Array).size(), 0, "... without the conversation")
-	t.eq(int(written.asked[0][6]), 0, "... or a picture")
+	# the placement tool: words (typed or dictated, no model) are put down on the canvas pointed at
+	board.begin_place_text("Agenda for today", TextController.WRAP_CHARS)
 	t.check(not board.placing_text.is_empty(), "the words wait on the placement tool")
-	t.eq(str(board.placing_text.text).split("\n"), PackedStringArray(["Agenda", "Welcome and news", "- Plans"]), "markdown is tidied away")
-	t.check(not board.ai.busy, "the assistant is free again")
+	t.check(not board.ai.busy and board.ai.client == fake, "no model was asked")
 	var pen := PenState.new()
 	for _i in 20:
 		board.tick(pen, [], 0.1)                        # the reopened canvases settle into their room first
@@ -356,7 +349,7 @@ func _controller(board: Board, fid: String) -> void:
 	t.check(board.placing_text.is_empty(), "a tap puts the text down")
 	t.eq(board.doc.items_of(fid).size(), placed_before + 1, "it is on the canvas")
 	var put: Item = board.doc.items.get(board.selection[0])
-	t.check(put != null and put.kind == Item.TEXT and put.text.contains("Welcome and news"), "the text item holds the words")
+	t.check(put != null and put.kind == Item.TEXT and put.text.contains("Agenda"), "the text item holds the words")
 	t.check(put.center.distance_to(aim) < 0.6, "it is where it was pointed")
 	board.undo()
 	t.eq(board.doc.items_of(fid).size(), placed_before, "one undo takes it back")
@@ -373,8 +366,8 @@ func _controller(board: Board, fid: String) -> void:
 	board.begin_place_text("Where I look")
 	t.check(board.place_text_here() != null and board.placing_text.is_empty(), "Where I look puts it on the canvas in view")
 	board.undo()
-	t.check(not board.ai.write("  "), "an empty prompt is not sent")
-	board.ai.client = fake
+	board.begin_place_text("   ")
+	t.check(board.placing_text.is_empty(), "empty words start no placement")
 	await get_tree().process_frame
 
 

@@ -303,10 +303,10 @@ func open_text_entry() -> bool:
 	return true
 
 
-## AI text: the typing card (with its microphone) asks what the text should be about; the AI writes it and the placement tool puts it
-## on a canvas.
-func open_ai_text() -> void:
-	open_entry("AI text: what should it say?", "", true, func(t: String): board.ai.write(t))
+## Place text: the typing card (with its microphone, so it can be spoken) asks for the words, and the placement tool puts them on a
+## canvas you point at. No AI model is involved: the words are yours (or Wit.ai's transcription of them).
+func open_place_text() -> void:
+	open_entry("Text to place: type or speak it", "", true, func(t: String): board.begin_place_text(t, TextController.WRAP_CHARS))
 
 
 func ask_name(title: String, current: String, cb: Callable) -> void:

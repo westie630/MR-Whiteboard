@@ -80,7 +80,7 @@ const TOPICS := [
 			"Add (+), then Type text. A box with a keyboard opens: type, then OK. The text lands on the canvas in front of you, selected, so you can move it.",
 			"To change text, select it and open Type again (or tap Edit in the bar above it). With a box selected, what you type becomes its label.",
 			"Add, then Dictate: speak, pause, and the words appear as text. Tap Dictate again to stop early.",
-			"Add, then AI text: say or type what the text should be about (the box has a microphone). The AI writes it, then point at a canvas and tap or pinch to put it down there. Where I look uses the canvas in front of you, Cancel throws it away.",
+			"Add, then Place text: type or say the words (the box has a microphone), then point at a canvas and tap or pinch to put them down there. Where I look uses the canvas in front of you, Cancel throws them away.",
 			"Dictation needs a free Wit.ai token: Home, Settings, Speech to text.",
 			"A Bluetooth keyboard works too: pair it, then start typing.",
 		]],

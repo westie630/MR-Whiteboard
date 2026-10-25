@@ -101,12 +101,6 @@ func _init() -> void:
 		c.tint = UITheme.AI
 		chips.add_child(c)
 		_chips.append(c)
-	var write := UiKit.chip("AI text", func(): shell.open_ai_text(), "text", 38.0)
-	write.variant = "ghost"
-	write.accent = UITheme.AI
-	write.tint = UITheme.AI
-	write.hint = "Say or type what to write, then place the text on a canvas"
-	chips.add_child(write)
 
 	# the box to write in
 	var comp := PanelContainer.new()
@@ -171,7 +165,7 @@ func _set_key() -> void:
 	shell.ask_secret("%s API key" % LlmApi.name_of(pv), func(t: String): ai.set_key(pv, t.strip_edges()))
 
 
-## Everything asked here is answered here: the chat never writes onto the canvas by itself (Place on canvas and AI text do that).
+## Everything asked here is answered here: the chat never writes onto the canvas by itself (Place on canvas and Add > Place text do that).
 func _ask(action: String) -> void:
 	shell.board.ai.ask(action, "", "", false)
 

@@ -209,11 +209,10 @@ func _build_add(p: VBoxContainer) -> void:
 		shell.close_popover()
 		shell.board.speech.toggle(), 88.0)
 	row.add_child(mic)
-	var ai_text := UiKit.button("ai", "AI text", func():
+	var place_text := UiKit.button("pin", "Place text", func():
 		shell.close_popover()
-		shell.open_ai_text(), 88.0)
-	ai_text.accent = UITheme.AI
-	row.add_child(ai_text)
+		shell.open_place_text(), 88.0)
+	row.add_child(place_text)
 	_kit.syncers.append(func():
 		var sp = shell.board.speech
 		mic.on = sp.listening()

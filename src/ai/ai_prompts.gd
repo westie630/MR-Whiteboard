@@ -38,33 +38,6 @@ Rules:
 - Never invent a mistake to correct, and say plainly when something is unclear."""
 
 
-## "AI text": words written to be put on a canvas, so the answer is the text itself, not the JSON of the assistant.
-const TEXT_SYSTEM := """You write short text for a whiteboard that the user reads in a mixed-reality headset. Answer with only the text to put on the canvas: plain text, no markdown, no quotation marks around it, no introduction and no closing remark. Use short lines or lines starting with "- ". Keep it under 80 words unless the user asks for more."""
-
-
-## Tidy the model's text for the canvas: no code fence, no markdown marks, no stray quotation marks around all of it.
-static func clean_text(text: String) -> String:
-	var t := text.strip_edges()
-	if t.begins_with("```"):
-		t = t.trim_prefix("```")
-		var nl := t.find("\n")
-		t = t.substr(nl + 1) if nl >= 0 else t
-		t = t.trim_suffix("```").strip_edges()
-	var lines := PackedStringArray()
-	for line in t.split("\n"):
-		var l := line.rstrip(" \t")
-		if l.begins_with("#"):
-			l = l.lstrip("#").strip_edges()
-		l = l.replace("**", "").replace("__", "")
-		if l.begins_with("* "):
-			l = "- " + l.substr(2)
-		lines.append(l)
-	t = "\n".join(lines).strip_edges()
-	if t.length() > 2 and t.begins_with("\"") and t.ends_with("\"") and t.count("\"") == 2:
-		t = t.substr(1, t.length() - 2)
-	return t
-
-
 static func action(id: String) -> Array:
 	for a in ACTIONS:
 		if a[0] == id:
