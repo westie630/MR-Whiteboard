@@ -4,16 +4,29 @@ extends Control
 ## plenty, amber at 30 % and red at 15 %. It reads the device now and then and hides itself when there is no battery to show.
 
 const POLL_S := 30.0
+const HINT_DELAY := 0.45
 
 var level := -1
 var charging := false
+var status := Callable()                   # -> String, shown as a tooltip while hovered: the stylus's state (the headset knows no stylus charge)
 var _t := 0.0
+var _hover := false
+var _hover_t := 0.0
 
 
 func _init() -> void:
 	custom_minimum_size = Vector2(46, UITheme.TOOL)
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false
+	mouse_entered.connect(func():
+		_hover = true
+		_hover_t = 0.0
+		z_index = 10
+		queue_redraw())
+	mouse_exited.connect(func():
+		_hover = false
+		z_index = 0
+		queue_redraw())
 
 
 func _ready() -> void:
@@ -24,6 +37,9 @@ func _process(delta: float) -> void:
 	_t += delta
 	if _t >= POLL_S:
 		poll()
+	if _hover:
+		_hover_t += delta
+		queue_redraw()                       # the stylus's state can change under the pointer
 
 
 func poll() -> void:
@@ -50,9 +66,39 @@ func tint() -> Color:
 	return UITheme.TEXT_DIM
 
 
+## What the stylus is doing, in a few words, from the pen of the latest frame.
+static func stylus_text(pen: PenState) -> String:
+	if pen == null:
+		return ""
+	match pen.source:
+		"stylus":
+			if pen.docked:
+				return "Stylus: in its dock"
+			return "Stylus: connected" + (", pen down" if pen.down else "")
+		"mouse":
+			return "Pen: mouse or tablet"
+	return "Stylus: not found. Is it on?"
+
+
+## The tooltip, like Btn's: a dark pill above, lined up with the gauge's right edge since the gauge ends the dock.
+func _draw_status() -> void:
+	if not _hover or _hover_t < HINT_DELAY or not status.is_valid():
+		return
+	var txt := str(status.call())
+	if txt == "":
+		return
+	var f := UITheme.font(500)
+	var fs := UITheme.FONT_TINY + 1
+	var tw := f.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var br := Rect2(Vector2(size.x + 6.0 - tw - 24.0, -40.0), Vector2(tw + 24.0, 30.0))
+	draw_style_box(UITheme.box(Color(0.02, 0.025, 0.035, 0.96), 15, Color(1, 1, 1, 0.12), 1), br)
+	draw_string(f, Vector2(br.position.x + 12.0, br.position.y + 20.5), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, UITheme.TEXT)
+
+
 func _draw() -> void:
 	if level < 0:
 		return
+	_draw_status()
 	var col := tint()
 	var w := 28.0
 	var h := 14.0

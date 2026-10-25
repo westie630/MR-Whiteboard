@@ -36,6 +36,8 @@ var room_state := "none"                   # none | searching | found | assumed 
 ## False while the headset is off or its session is not running (set by the XR rig): anchors have no pose then, and that is not a
 ## reason to give up on the room.
 var tracking_live := true
+var last_pen: PenState                     # the pen of the latest tick (the PC's mouse pen)
+var stylus_pen: PenState                   # in the headset: the real stylus, which `last_pen` is not while a menu holds it or it is missing
 var _assumed := {}                         # room id -> world pose it is shown at while its anchors are not found
 var _located := {}                         # room id -> world pose from its anchors this tick (or held through a short dropout)
 var _located_by := {}                      # room id -> "room" (its own anchor) | "frame" (a canvas's anchor) | "hold"
@@ -2030,6 +2032,7 @@ func _release_glue_to(removed: Array) -> void:
 
 ## Called every frame by the rig with the pen, the hands that are not busy with a menu, and the head pose.
 func tick(pen: PenState, hands: Array, dt: float) -> void:
+	last_pen = pen
 	if doc == null:
 		return
 	if head_provider.is_valid():

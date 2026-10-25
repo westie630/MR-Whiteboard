@@ -650,6 +650,7 @@ func _process(delta: float) -> void:
 		(hands[side] as HandInput).feed(delta, head, _read_hand(side))
 	var pen := stylus.pen
 	var stylus_here := pen.tracked and stylus.active != ""
+	board.stylus_pen = pen                             # the real stylus, even while a menu has captured it (the dock's tooltip)
 	_place_ui(delta)
 	var captured := _update_menu(pen)
 	_summon_gesture(delta, stylus_here)

@@ -28,6 +28,18 @@ func _ready() -> void:
 	t.eq(g.tint(), UITheme.GOOD, "charging: green")
 	await get_tree().process_frame
 
+	var p := PenState.new()
+	t.eq(BatteryGauge.stylus_text(null), "", "no pen yet: nothing to say")
+	t.eq(BatteryGauge.stylus_text(p), "Stylus: not found. Is it on?", "no stylus")
+	p.source = "stylus"
+	t.eq(BatteryGauge.stylus_text(p), "Stylus: connected", "stylus connected")
+	p.down = true
+	t.eq(BatteryGauge.stylus_text(p), "Stylus: connected, pen down", "stylus pressed")
+	p.docked = true
+	t.eq(BatteryGauge.stylus_text(p), "Stylus: in its dock", "stylus docked")
+	p.front = true
+	t.eq(BatteryGauge.stylus_text(p), "Stylus: in its dock", "a button does not change the state")
+
 	Battery.set_fake("63")
 	var dock := Dock.new()
 	add_child(dock)

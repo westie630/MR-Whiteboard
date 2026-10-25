@@ -71,6 +71,7 @@ func _init() -> void:
 	row.add_child(session_btn)
 	var bat_div := UiKit.divider(row)
 	battery = BatteryGauge.new()
+	battery.status = func(): return BatteryGauge.stylus_text(shell.board.stylus_pen if shell.board.stylus_pen != null else shell.board.last_pen)
 	row.add_child(battery)
 	bat_div.visible = battery.visible
 	battery.visibility_changed.connect(func(): bat_div.visible = battery.visible)
