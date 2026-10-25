@@ -2,64 +2,24 @@
 <defs>
 <clipPath id="round"><rect width="512" height="512" rx="102"/></clipPath>
 
-    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#0b1226"/>
-      <stop offset="1" stop-color="#1d3260"/>
-    </linearGradient>
-    <linearGradient id="gridfade" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#7ff3e2" stop-opacity="0"/>
-      <stop offset="0.45" stop-color="#7ff3e2" stop-opacity="0.22"/>
-      <stop offset="1" stop-color="#7ff3e2" stop-opacity="0.75"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="0.5" cy="0.62" r="0.55">
-      <stop offset="0" stop-color="#3fe0c8" stop-opacity="0.22"/>
-      <stop offset="1" stop-color="#3fe0c8" stop-opacity="0"/>
-    </radialGradient>
-  
-    <linearGradient id="ink" x1="70" y1="380" x2="440" y2="140" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#3fe0c8"/>
-      <stop offset="0.55" stop-color="#ffd166"/>
-      <stop offset="1" stop-color="#ff7aa2"/>
-    </linearGradient>
-    <linearGradient id="body" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#e9eef9"/>
-      <stop offset="1" stop-color="#a9b6d3"/>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1f2d4d"/>
+      <stop offset="1" stop-color="#0e1628"/>
     </linearGradient>
   
 </defs>
 <g clip-path="url(#round)">
-  <rect width="512" height="512" fill="url(#sky)"/>
-  <rect width="512" height="512" fill="url(#glow)"/>
-  <!-- canvas plane in perspective: converging verticals, receding horizontals -->
-  <g fill="none" stroke="url(#gridfade)" stroke-width="5" stroke-linecap="round">
-    <path d="M256 150 L256 470"/>
-    <path d="M256 150 L168 470"/>
-    <path d="M256 150 L80 470"/>
-    <path d="M256 150 L-8 470"/>
-    <path d="M256 150 L344 470"/>
-    <path d="M256 150 L432 470"/>
-    <path d="M256 150 L520 470"/>
-    <path d="M0 218 H512"/>
-    <path d="M0 262 H512"/>
-    <path d="M0 322 H512"/>
-    <path d="M0 400 H512"/>
-    <path d="M0 500 H512"/>
-  </g>
+  <rect width="512" height="512" fill="url(#tile)"/>
 </g>
 
-  <!-- ink glow: the same path, wider and fainter -->
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M92 372 C 128 150, 252 128, 262 262 S 370 392, 404 176" stroke="url(#ink)" stroke-opacity="0.16" stroke-width="64"/>
-    <path d="M92 372 C 128 150, 252 128, 262 262 S 370 392, 404 176" stroke="url(#ink)" stroke-opacity="0.28" stroke-width="46"/>
-    <path d="M92 372 C 128 150, 252 128, 262 262 S 370 392, 404 176" stroke="url(#ink)" stroke-width="30"/>
+  <!-- canvas frame: four corner brackets, the way AR marks out a surface -->
+  <g fill="none" stroke="#2dd4bf" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M104 168 V134 Q104 104 134 104 H168"/>
+    <path d="M344 104 H378 Q408 104 408 134 V168"/>
+    <path d="M408 344 V378 Q408 408 378 408 H344"/>
+    <path d="M168 408 H134 Q104 408 104 378 V344"/>
   </g>
-  <!-- stylus: tip on the end of the stroke, body going up and to the right -->
-  <g transform="translate(404 176) rotate(28)">
-    <path d="M0 0 L-17 -46 L17 -46 Z" fill="#12162a"/>
-    <path d="M-17 -46 L-20 -70 L20 -70 L17 -46 Z" fill="#3fe0c8"/>
-    <rect x="-20" y="-172" width="40" height="102" rx="12" fill="url(#body)"/>
-    <rect x="-20" y="-112" width="40" height="9" fill="#7a8bb3" opacity="0.55"/>
-    <circle cx="0" cy="-88" r="6" fill="#ef476f"/>
-  </g>
+  <!-- M, written as one pen stroke -->
+  <path d="M164 340 V172 L256 286 L348 172 V340" fill="none" stroke="#f8fafc" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
 
 </svg>

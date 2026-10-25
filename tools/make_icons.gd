@@ -89,7 +89,7 @@ func _corner_alpha(x: int, y: int, s: int, r: int) -> float:
 	return clampf(float(r) - d + 0.5, 0.0, 1.0)
 
 
-## Just the ink stroke and stylus on a transparent canvas: no tile behind them (project.godot's boot_splash/bg_color shows through).
+## Just the mark (brackets and M) on a transparent canvas: no tile behind it (project.godot's boot_splash/bg_color shows through).
 func _splash(_bg: String, fg: String) -> Image:
 	var size := 1024
 	var icon_size := 640
