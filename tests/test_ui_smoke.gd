@@ -247,6 +247,10 @@ func _flow_rules() -> void:
 	t.eq(dict_btn.get_index(), (ui.dock.tool_btns["draw"] as Btn).get_index() + 1, "the Dictate button is right of the Pen")
 	dict_btn.pressed.emit()
 	t.eq(ui.popover_id, "dictate", "Dictate opens its own card")
+	ui.open_side("assistant")
+	t.check(ui.popover_id == "" and ui.is_side_open("assistant"), "opening the assistant closes the Dictate card")
+	dict_btn.pressed.emit()
+	t.check(ui.popover_id == "dictate" and not ui.is_side_open("assistant") and not ui.dock.ai_btn.on, "...and Dictate closes the assistant, so its dock button is not lit")
 	App.put("tool", "draw")
 	pen.tracked = true
 	pen.pressure = 0.8

@@ -181,6 +181,8 @@ func set_color(c: Color, to_selection: bool = true) -> void:
 
 
 func open_popover(id: String) -> void:
+	if id == "dictate":
+		close_side("assistant")                          # one thing lit at a time: Dictate and the assistant take turns
 	popover_id = id
 	popover.open(id)
 	popover.wanted = true
