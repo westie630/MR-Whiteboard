@@ -256,16 +256,43 @@ func apply_plane(f: FrameData, rw: Variant, plane: Dictionary) -> void:
 	_set_plane(f, rw as Transform3D if rw != null else Transform3D.IDENTITY, plane)
 
 
-## A canvas leaves the desk: it can be carried anywhere again.
-func release(frame_id: String) -> void:
+## A canvas leaves the desk: it can be carried anywhere again. `upright` also stands it up (see stood_up) instead of leaving it lying.
+func release(frame_id: String, upright: bool = false) -> void:
 	var f: FrameData = board.doc.frames.get(frame_id) if board.doc != null else null
 	if f == null or not f.surface:
 		return
 	var upd := f.copy()
 	upd.surface = false
+	if upright:
+		var rw: Variant = board.room_world(f.room)
+		var w: Transform3D = rw as Transform3D if rw != null else Transform3D.IDENTITY
+		upd.xf = w.affine_inverse() * stood_up(w * f.xf, f)
 	board.history.do(History.op_frame(f, upd))
 	_track.erase(frame_id)
-	board.toast.emit("\"%s\" is free again: it can be carried anywhere." % f.name)
+	if upright:
+		board.toast.emit("\"%s\" stands upright and is free: it can be carried anywhere." % f.name)
+	else:
+		board.toast.emit("\"%s\" is free again: it can be carried anywhere." % f.name)
+
+
+## A world pose of canvas `f` made vertical: top edge up, facing you, about the same middle. A canvas lying on a desk is turned up about
+## its middle and lifted by half its height so it stands on the desk (not sunk into it); one already on a wall only has its roll taken out.
+func stood_up(world_xf: Transform3D, f: FrameData) -> Transform3D:
+	var mid := Vector3(f.offset.x, f.offset.y, 0.0) * f.scale        # the canvas's middle in its own frame
+	var centre := world_xf * mid
+	var n := world_xf.basis.orthonormalized().z
+	var out := Vector3(n.x, 0.0, n.z)                                # on a wall: it already faces horizontally
+	if absf(n.y) > 0.5:
+		centre += Vector3.UP * (f.size.y * f.scale * 0.5)
+		out = Vector3(board.head.origin.x - centre.x, 0.0, board.head.origin.z - centre.z)
+		if out.length() < 0.05:                                       # head right above it: face where its top edge pointed away from
+			var y := world_xf.basis.orthonormalized().y
+			out = Vector3(-y.x, 0.0, -y.z)
+	if out.length() < 0.05:
+		out = Vector3.BACK
+	var z := out.normalized()
+	var basis := Basis(Vector3.UP.cross(z), Vector3.UP, z)
+	return Transform3D(basis, centre - basis * mid)
 
 
 static func reason_text(reason: String) -> String:

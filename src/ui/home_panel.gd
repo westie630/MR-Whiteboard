@@ -393,6 +393,10 @@ func _refresh_canvas() -> void:
 			upd.scale = 1.0
 			b.history.do(History.op_frame(fr, upd)), 52.0))
 	hb.add_child(UiKit.button("pin", "Bring to me", func(): _bring_to_me(aid), 52.0))
+	if active.surface:
+		var ub := UiKit.button("desk", "Free it and stand it upright", func(): b.surface.release(aid, true), 52.0)
+		ub.tint = UITheme.DESK
+		_canvas_style.add_child(ub)
 
 
 ## A canvas on the desk is let go of it; any other feels for the desk with the stylus tip and lies down on it.

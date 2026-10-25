@@ -299,6 +299,29 @@ func run() -> void:
 	t.check(absf(dist_to(board.frame_nodes[other.id], p0, n0)) > 0.3, "a freed canvas goes wherever it is carried")
 	board.end_grab(og)
 
+	# ---- freed and stood upright: vertical, facing the head, standing on the desk
+	board.surface.begin(other.id)
+	await tap(on_desk(-0.3, -0.2))
+	await tap(on_desk(0.3, -0.2))
+	await tap(on_desk(0.0, 0.25))
+	t.check(board.surface.finish(), "the canvas is laid on the desk again")
+	await tick(30)
+	board.surface.release(other.id, true)
+	await tick(30)
+	var up_f: FrameData = board.doc.frames[other.id]
+	var up_fn: FrameNode = board.frame_nodes[other.id]
+	t.check(not up_f.surface, "freed and upright: no longer bound to the desk")
+	t.near(up_fn.global_transform.basis.y.dot(Vector3.UP), 1.0, 1e-3, "its top edge points straight up")
+	t.near(up_fn.global_transform.basis.z.y, 0.0, 1e-3, "it faces horizontally")
+	var to_head: Vector3 = board.head.origin - up_fn.global_transform * Vector3(up_f.offset.x, up_f.offset.y, 0.0)
+	to_head.y = 0.0
+	t.check(up_fn.global_transform.basis.z.dot(to_head.normalized()) > 0.99, "...towards the head")
+	var bottom: Vector3 = up_fn.global_transform * (Vector3(up_f.offset.x, up_f.offset.y - up_f.size.y * 0.5, 0.0) * up_f.scale)
+	t.near(n0.dot(bottom - p0), 0.0, 0.01, "its bottom edge rests on the desk")
+	board.undo()
+	await tick(5)
+	t.check(board.doc.frames[other.id].surface, "undo puts it back on the desk, lying")
+
 	# ---- reopening: the desk canvas is still bound
 	board.flush_save()
 	var saved := board.doc.to_dict() if board.doc.has_method("to_dict") else {}
