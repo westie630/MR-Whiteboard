@@ -438,6 +438,40 @@ Home > Settings > **Pointing line** switches it off (`stylus_ray`). Hands have n
 
 Both the sounds and the haptics follow one setting: **More > Feedback** (`haptics`).
 
+### 10.3 The curved desk
+
+A desk canvas that is curved up into a wall. Add (+) > **Curved desk** (the same search for the desk as 10.1, which must be level: the normal's up part at least `Board.CURVE_LEVEL` 0.9),
+Home > Canvases > **New curved desk**, or the curve button of a canvas that already lies on a level desk (it curves it, or flattens it again). [DeskBend](../src/core/desk_bend.gd).
+
+**Aligned to you.** The canvas's edge is put on the desk 15 cm in front of your chest (`Board.CHEST`), straight in front of the head, its top running away from you level along the desk. The
+canvas is the *window* on the surface: `FrameData.size` / `offset` are the shown part in surface coordinates (default 1.0 x 1.5 m: your width, the flat part, the bend and the wall). What is drawn is
+on the canvas as ever (same coordinates, same sizes); `bend_pan` is how far it has slid along the surface. A canvas that already had drawings is put so that they are in front of you on the flat part.
+
+**The surface.** Flat on the desk up to `bend_at` from your edge (40 cm), then a quarter circle of `bend_radius` (12 cm) with its concave side to you, then straight up. It is a cylinder, so
+the canvas is not stretched: a line keeps its length round the bend. Mapping canvas (x, y, height) to the room: u = x + pan.x, s = y + pan.y, and s along the surface ([DeskBend.to_node](../src/core/desk_bend.gd);
+the shaders in [bend.gdshaderinc](../shaders/bend.gdshaderinc) do the same, with the same numbers). Everything that is drawn (ink, shapes, fills, text, the grid, the selection) is bent by its
+material's vertex shader; ink and shapes are cut into strips of 8 mm (`DeskBend.PITCH`) when their mesh is built so a long line bends instead of cutting the corner, and text is the font's outlines as geometry
+(`TextMesh`) because a `Label3D` is a flat quad. What slides out of the window is hidden. The pen, the hands, the mouse and the rays all use `FrameNode.to_local_point`, `to_world_point` and `ray_hit`,
+which know the bend, so the nib at any part of the surface is at the canvas point under it, and a pointer at a distance is where its ray meets the surface.
+
+**Moving the contents.** A pinch (touching or pointing) on empty canvas or on the bar, or the stylus front button, then a drag: the contents slide along the surface by as far as the pointer moved *along the
+surface* (the page stays under the finger through the bend and up the wall; pointing from afar moves it further, as for any canvas). The desk itself does not move, does not turn and has no scale
+(two hands do nothing on it). One undo step on release. A corner changes the shown part.
+
+**The markers.** Two round amber handles stand 4 cm outside the left edge, with a dashed line across: the **distance** marker where the flat part ends and the **radius** marker at the foot of the wall.
+Touch one with the stylus tip (any tool), or pinch / front button on it; it lights up and says its number. The distance marker follows the nib's `y` on the desk (clamped 5 cm to 1.2 m); the radius marker
+slides on the diagonal from the start of the bend (so the radius is the height of the nib, clamped 4 to 60 cm). Pointing from afar, the ray is met against the desk plane or the diagonal plane of the bend, not
+the bent surface, so the marker does not run away from the pointer. One undo step on release; Home > Canvases shows both numbers with minus and plus (5 cm and 2 cm).
+
+**Desk tracking** (10.1) only listens to touches on the flat part. A curved desk is only curved on the desk: freeing it from the desk (or "Free it and stand it upright") flattens it where it is first. A PDF canvas cannot be curved.
+In a session the numbers are part of the canvas, so every headset shows the same bend (the desk's place in each room is the owner's, as for any canvas).
+
+| Tunable | |
+|---|---|
+| `DeskBend` | `PITCH` 8 mm · `MIN_AT` 5 cm · `MAX_AT` 1.2 m · `MIN_RADIUS` 4 cm · `MAX_RADIUS` 60 cm · `DEFAULT_AT` 40 cm · `DEFAULT_RADIUS` 12 cm · `DEFAULT_SIZE` 1.0 x 1.5 m |
+| `Board` | `CHEST` 15 cm · `CURVE_LEVEL` 0.9 · `CURVE_FRONT` 30 cm (where existing drawings are put) |
+| `InputTuning` | `MARKER_SIDE` 4 cm · `MARKER_R` 2.4 cm · `MARKER_HIT` 5 cm |
+
 ---
 
 ## 12. Every tunable number
@@ -448,7 +482,7 @@ All in [input_tuning.gd](../src/core/input_tuning.gd) (`InputTuning`). The scrip
 | Group | Constants |
 |---|---|
 | Pinch | `PINCH_ON` 0.9 · `PINCH_OFF` 0.6 · `CLOSE_START` 0.35 · `CLOSE_CANCEL` 0.2 · `RISE_STEP` 0.003 · `JOINT_ON` 22 mm · `JOINT_FAR` 65 mm · `LOST_GRACE` 0.15 s · `PINCH_HISTORY_S` 0.6 · `PALM_UP_Y` 0.6 · `AIM_DOT_PROFILE` 0 · `AIM_DOT_JOINT` 0.1 |
-| Desk | see 10.1: `PlaneFit` and `SurfaceController` constants (kept in those files: they are about measuring, not feel) |
+| Desk | see 10.1: `PlaneFit` and `SurfaceController` constants (kept in those files: they are about measuring, not feel); the curved desk: 10.3 |
 | Stylus | `TIP_ON` 0.035 · `TIP_OFF` 0.018 · `MID_ON` 0.09 · `MID_OFF` 0.05 · `NIB_SAMPLES` 45 (aligns the stylus model) · `PRESSURE_EXP` 0.75 · `STYLUS_FILTER` (2.2, 45) |
 | Menu | `POKE_PRESS` 15 mm · `POKE_RELEASE` 30 mm · `POKE_BEHIND` 5 cm · `POKE_FRONT` 8 cm · `POKE_MARGIN` 1 cm · `MENU_RAY_REACH` 1.4 m · `HANDLE_Y` 3 cm · `HANDLE_NEAR` 7 cm · `HANDLE_RAY_R` 6 cm · `MENU_MAX_DIST` 2.5 m · `SCROLL_DEADZONE` 14 px · `SCROLL_SIDE` 1.6 · `GLOVES_OFF_NEAR` 0.2 m |
 | Bringing the menu | `SUMMON_HOLD_S` 0.6 s · `PALM_SUMMON_DIST` 0.7 m · `PALM_REARM_S` 2 s · `SUMMON_AHEAD` 0.55 · `SUMMON_RIGHT` 0 · `SUMMON_UP` -0.3 · `SUMMON_STYLUS_CANVAS` 0.14 m |

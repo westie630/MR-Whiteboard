@@ -30,11 +30,26 @@ func begin(in_volume: bool, brush_id: String, col: Color, w: float, priority: in
 	_tail = MeshInstance3D.new()
 	_tail.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_tail.material_override = _material()
+	_uncull(_tail)
 	add_child(_tail)
 
 
 func _material() -> Material:
-	return Brushes.tube_material(brush) if volume else Brushes.canvas_material(brush, prio)
+	if volume:
+		return Brushes.tube_material(brush)
+	var m := Brushes.canvas_material(brush, prio)
+	var bend := _bend()
+	return bend.material(m) if bend != null else m
+
+
+## The curved desk of the canvas this stroke is drawn on, or null.
+func _bend() -> DeskBend:
+	var n: Node = get_parent()
+	while n != null:
+		if n is FrameNode:
+			return (n as FrameNode).bend
+		n = n.get_parent()
+	return null
 
 
 func add_point(x: float, y: float, z: float, pressure: float) -> void:
@@ -70,6 +85,7 @@ func _freeze(from: int, to: int) -> void:
 	var mi := MeshInstance3D.new()
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.material_override = _material()
+	_uncull(mi)
 	mi.mesh = _mesh_for(maxi(from - 2, 0), to + 1)
 	add_child(mi)
 
@@ -87,7 +103,15 @@ func _mesh_for(from: int, to: int) -> ArrayMesh:
 	else:
 		var def := Brushes.get_def(brush)
 		arrays = StrokeMesher.ribbon_arrays(p, w, col, false, bool(def.get("caps", true)), float(def.get("nib", -1.0)))
+		if _bend() != null:
+			arrays = DeskBend.slice(arrays)
 	return StrokeMesher.to_mesh(arrays)
+
+
+## On a curved desk the mesh lies far from where its (flat) bounds say: it must not be culled by them.
+func _uncull(mi: MeshInstance3D) -> void:
+	if not volume and _bend() != null:
+		mi.custom_aabb = AABB(Vector3.ONE * -DeskBend.FAR, Vector3.ONE * (2.0 * DeskBend.FAR))
 
 
 func clear_meshes() -> void:

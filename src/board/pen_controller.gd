@@ -5,7 +5,7 @@ extends RefCounted
 ## Works the same for the MX Ink stylus, the mouse and a pinch. Grabbing (moving and resizing canvases, dragging items with the front
 ## button) is the pointer's job, shared with the hands: see HandController.
 
-enum S { IDLE, DRAWING, ERASING, LASSO, DRAG_ITEMS, DRAG_HANDLE, SHAPE_DRAG }
+enum S { IDLE, DRAWING, ERASING, LASSO, DRAG_ITEMS, DRAG_HANDLE, SHAPE_DRAG, DRAG_MARKER }
 
 const MIN_STEP := InputTuning.MIN_STEP     # metres between stroke samples
 const HOLD_MOVE := InputTuning.HOLD_MOVE   # the pen counts as still while it stays within this
@@ -67,6 +67,8 @@ var _on_key := ""                          # what the undo / redo buttons' enabl
 var _on_undo := false
 var _on_redo := false
 var _lasso_tap_item: Item                  # the box under the pen when a selection loop started: a plain tap selects it
+var _marker := ""                          # the marker of a curved desk being moved ("d" distance, "r" radius); the frame is `_drag_fn`
+var _hot_fn: FrameNode                     # the curved desk whose marker the nib is on
 
 
 func _init(b: Board) -> void:
@@ -102,6 +104,8 @@ func update(pen: PenState, dt: float) -> void:
 				_step_handle(pen)
 			S.SHAPE_DRAG:
 				_step_shape(pen)
+			S.DRAG_MARKER:
+				_step_marker(pen)
 		if not pen.down:
 			_finish(pen)
 	_prev_down = pen.down
@@ -143,7 +147,7 @@ func live_view() -> Dictionary:
 
 ## The frame an item or handle drag is working on (a hand keeps pointing at its plane while the drag lasts), or null.
 func working_frame() -> FrameNode:
-	if state == S.DRAG_ITEMS or state == S.DRAG_HANDLE:
+	if state == S.DRAG_ITEMS or state == S.DRAG_HANDLE or state == S.DRAG_MARKER:
 		return _drag_fn if is_instance_valid(_drag_fn) else null
 	return null
 
@@ -172,11 +176,24 @@ func _update_cursor(pen: PenState) -> void:
 	var t := board.pen_target(pen.tip, HOVER_REACH, 0.3)
 	if t.is_empty():
 		cursor_frame = ""
+		_light_marker(null, "")
 		return
 	var fn := t.fn as FrameNode
 	cursor_frame = fn.data.id
 	cursor_pos = Vector2(t.local.x, t.local.y)
 	cursor_dist = float(t.dist)
+	_light_marker(fn, hit_marker(fn, cursor_pos) if cursor_dist < Board.CAPTURE else "")
+
+
+## The marker of a curved desk the nib is on lights up and says its number.
+func _light_marker(fn: FrameNode, which: String) -> void:
+	if hand_mode:
+		return
+	if _hot_fn != null and _hot_fn != fn and is_instance_valid(_hot_fn):
+		_hot_fn.set_marker_hot("")
+	_hot_fn = fn if which != "" else null
+	if fn != null:
+		fn.set_marker_hot(which)
 
 
 # ------------------------------------------------------------------------------------------------ beginnings
@@ -188,6 +205,8 @@ func _begin_down(pen: PenState) -> void:
 	_filter.reset()
 	_pressure = maxf(pen.pressure, 0.2)
 	if _begin_on_button(pen):
+		return
+	if _begin_on_marker(pen):
 		return
 	if hand_mode:
 		_begin_select(pen)
@@ -223,6 +242,80 @@ func _begin_on_button(pen: PenState) -> bool:
 	board.bar_action(id)
 	pen.tick(0.4, 0.02)
 	return true
+
+
+## A press whose nib is on a marker of a curved desk takes hold of it, whatever the tool is: its distance and its radius slide with the nib.
+func _begin_on_marker(pen: PenState) -> bool:
+	var t := board.pen_target(pen.tip, Board.CAPTURE, 0.3)
+	if t.is_empty() or (t.fn as FrameNode).bend == null:
+		return false
+	var fn := t.fn as FrameNode
+	var which := hit_marker(fn, Vector2(t.local.x, t.local.y))
+	if which == "":
+		return false
+	board.begin_grab(fn.data)
+	if not board.grabs.has(fn.data.id):
+		return true                                    # (a guest who may not edit: the press is consumed all the same)
+	_drag_fn = fn
+	_marker = which
+	fn.set_marker_hot(which)
+	state = S.DRAG_MARKER
+	pen.tick(0.3, 0.02)
+	return true
+
+
+## Which marker ("d" or "r") of a curved desk is on this point of its canvas, or "".
+func hit_marker(fn: FrameNode, l: Vector2) -> String:
+	if fn.bend == null:
+		return ""
+	var best := ""
+	var bd := InputTuning.MARKER_HIT * sqrt(reach)
+	for which: String in ["d", "r"]:
+		var d := fn.marker_pos(which).distance_to(l)
+		if d < bd:
+			bd = d
+			best = which
+	return best
+
+
+## The marker that is being moved ("d", "r"), or "" when none.
+func marker_drag() -> String:
+	return _marker if state == S.DRAG_MARKER else ""
+
+
+## The nib moves a marker: the distance marker slides on the desk (the flat part ends under it), the radius marker slides up the diagonal that
+## runs from the start of the bend to the corner of the wall (the bend is a quarter circle round the point radius above and radius short of it).
+func _step_marker(pen: PenState) -> void:
+	var fn := _drag_fn
+	if fn == null or not is_instance_valid(fn) or not board.grabs.has(fn.data.id):
+		state = S.IDLE
+		return
+	var g: Dictionary = board.grabs[fn.data.id]
+	var p := fn.global_transform.affine_inverse() * pen.tip
+	var at := float(g.get("bend_at", fn.data.bend_at))
+	var radius := float(g.get("bend_radius", fn.data.bend_radius))
+	if _marker == "d":
+		at = DeskBend.clamp_at(p.y)
+	else:
+		radius = DeskBend.clamp_radius(((p.y - at) + p.z) * 0.5)
+	if roundi(at * 100.0) != roundi(float(g.get("bend_at", at)) * 100.0) or roundi(radius * 100.0) != roundi(float(g.get("bend_radius", radius)) * 100.0):
+		pen.tick(0.1, 0.006)
+	g.bend_at = at
+	g.bend_radius = radius
+	fn.set_marker_hot(_marker)
+	cursor_frame = fn.data.id
+	cursor_pos = fn.marker_pos(_marker)
+	cursor_dist = 0.0
+
+
+func _finish_marker() -> void:
+	state = S.IDLE
+	_marker = ""
+	var fn := _drag_fn
+	if fn != null and is_instance_valid(fn):
+		fn.set_marker_hot("")
+		board.end_grab(fn.data)
+	_drag_fn = null
 
 
 ## A press whose nib is on a handle of the current selection starts dragging that handle, whatever the tool is.
@@ -1063,6 +1156,8 @@ func _finish(_pen: PenState) -> void:
 			_finish_handle()
 		S.SHAPE_DRAG:
 			_finish_shape()
+		S.DRAG_MARKER:
+			_finish_marker()
 
 
 func _abort() -> void:

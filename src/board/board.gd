@@ -286,6 +286,7 @@ func _on_frame_changed(f: FrameData) -> void:
 	var fn: FrameNode = frame_nodes.get(f.id)
 	if fn != null:
 		fn.data = f
+		fn.refresh_bend()
 		fn.apply_style()
 		fn.invalidate_bounds()
 		fn.refresh_pdf()
@@ -978,6 +979,12 @@ func _place_frames(dt: float) -> void:
 			if f.surface and grabs.has(fid):
 				xf = _on_surface_world(f, xf)               # carried or turned, a desk canvas slides along its surface
 			var sc: float = (grabs[fid] as Dictionary).scale if grabs.has(fid) else (float((remote_grabs[fid] as Dictionary).scale) if remote_grabs.has(fid) else f.scale)
+			if fn.bend != null:
+				# a curved desk stays where it is and keeps its size: what a hand carries is the contents, which slide along the surface
+				sc = 1.0
+				var g: Dictionary = grabs.get(fid, {})
+				fn.set_bend_live(float(g.get("bend_at", f.bend_at)), float(g.get("bend_radius", f.bend_radius)), g.get("pan", f.bend_pan))
+				xf = w as Transform3D
 			fn.transform = Transform3D(xf.basis.orthonormalized().scaled(Vector3.ONE * sc), xf.origin)
 
 
@@ -1051,14 +1058,13 @@ func dictation_spot() -> Dictionary:
 		if d < nearest_d:
 			nearest_d = d
 			nearest = n
-		var lh := n.to_local_point(head.origin)
-		var ld := n.global_transform.basis.inverse() * gaze
-		if absf(ld.z) < 0.05:
+		var hit := n.ray_hit(head.origin, gaze, 0.001)
+		if hit.is_empty():
 			continue
-		var t := -lh.z / ld.z
-		if t <= 0.0 or t >= best_t:
+		var t := float(hit.t)
+		if t >= best_t:
 			continue
-		var g := lh + ld * t
+		var g: Vector3 = hit.local
 		if n.bounds().has_point(Vector2(g.x, g.y)):
 			best_t = t
 			best = {"frame": n.data.id, "center": Vector2(g.x, g.y)}
@@ -1076,6 +1082,8 @@ func begin_grab(f: FrameData) -> void:
 	if w == null:
 		return
 	grabs[f.id] = {"xf": w, "scale": f.scale, "before": f.copy()}
+	if f.bend:
+		(grabs[f.id] as Dictionary).merge({"pan": f.bend_pan, "bend_at": f.bend_at, "bend_radius": f.bend_radius})
 	_dirty_overlay(f.id)
 
 
@@ -1083,6 +1091,9 @@ func end_grab(f: FrameData) -> void:
 	if not grabs.has(f.id):
 		return
 	var g: Dictionary = grabs[f.id]
+	if f.bend:
+		_end_bend_grab(f, g)
+		return
 	var rw: Variant = room_world(f.room)
 	var after := f.copy()
 	var xf := g.xf as Transform3D
@@ -1096,6 +1107,20 @@ func end_grab(f: FrameData) -> void:
 		_moved_unanchored[f.id] = true               # anchored right where it was put, although the room's place is a guess
 	history.do(History.op_frame(before, after))     # applies `after`: the anchor is then re-created at the new place by _reconcile()
 	_dirty_overlay(f.id)
+
+
+## A curved desk is let go: where the contents slid to, or the numbers of the bend a marker set, are kept (the desk itself did not move).
+func _end_bend_grab(f: FrameData, g: Dictionary) -> void:
+	var after := f.copy()
+	after.bend_pan = g.get("pan", f.bend_pan)
+	after.bend_at = DeskBend.clamp_at(float(g.get("bend_at", f.bend_at)))
+	after.bend_radius = DeskBend.clamp_radius(float(g.get("bend_radius", f.bend_radius)))
+	grabs.erase(f.id)
+	_dirty_overlay(f.id)
+	var before: FrameData = g.before
+	if after.bend_pan.is_equal_approx(before.bend_pan) and is_equal_approx(after.bend_at, before.bend_at) and is_equal_approx(after.bend_radius, before.bend_radius) 			and after.size.is_equal_approx(before.size) and after.offset.is_equal_approx(before.offset):
+		return                                          # a touch that moved nothing
+	history.do(History.op_frame(before, after))
 
 
 ## Bring the canvas you are looking at (else the active one, else the nearest) within reach of the stylus: its middle 0.6 m in front
@@ -1127,6 +1152,100 @@ func bring_canvas_here() -> void:
 	toast.emit("Canvas brought within reach.")
 
 
+# ------------------------------------------------------------------------------------------------ the curved desk
+
+const CHEST := 0.15                        # a curved desk starts this far in front of the head (horizontally), where the chest is
+const CURVE_LEVEL := 0.9                   # the desk must be this level (its normal's up component) to curve up into a wall
+const CURVE_FRONT := 0.3                   # the contents of a canvas that is curved are put this far along the surface, on the flat part
+
+## Is the desk this frame lies on level enough to curve up into a wall?
+func can_curve(f: FrameData) -> bool:
+	var rw: Variant = room_world(f.room)
+	if not f.surface or rw == null:
+		return false
+	return ((rw as Transform3D).basis * f.plane_normal).normalized().y >= CURVE_LEVEL
+
+
+## Make `f` (a canvas on a level desk; `rw` its room's world pose) a curved desk, aligned to the user: its edge in front of the chest, its
+## top (the way the surface runs) away from the head, level with the desk. Its contents are put on the flat part in front of you. Changes `f`.
+func make_curved(f: FrameData, rw: Transform3D) -> void:
+	var n := (rw.basis * f.plane_normal).normalized()
+	var p0 := rw * f.plane_point
+	var fwd := Vector3(-head.basis.z.x, 0.0, -head.basis.z.z)
+	fwd = fwd.normalized() if fwd.length() > 0.05 else Vector3.FORWARD
+	var edge := Vector3(head.origin.x, 0.0, head.origin.z) + fwd * CHEST
+	edge.y = p0.y - (n.x * (edge.x - p0.x) + n.z * (edge.z - p0.z)) / maxf(n.y, 0.1)       # the point of the desk under it
+	var y := (fwd - n * n.dot(fwd)).normalized()
+	var world := Transform3D(Basis(y.cross(n).normalized(), y, n), edge)
+	var content := Rect2()
+	var first := true
+	for it in doc.items_of(f.id):
+		var b: Rect2 = (it as Item).bounds()
+		content = b if first else content.merge(b)
+		first = false
+	var c := Vector2.ZERO if first else content.get_center()
+	f.xf = rw.affine_inverse() * world
+	f.scale = 1.0
+	f.bend = true
+	f.bend_at = DeskBend.DEFAULT_AT
+	f.bend_radius = DeskBend.DEFAULT_RADIUS
+	f.size = DeskBend.DEFAULT_SIZE
+	f.offset = Vector2(0.0, f.size.y * 0.5)
+	f.bend_pan = Vector2(-c.x, CURVE_FRONT - c.y) if not first else Vector2.ZERO
+
+
+## Make `f` (a curved desk) a flat canvas again: it keeps what it shows where it is on the desk (the contents have slid by `bend_pan`). Changes `f`.
+func make_flat(f: FrameData) -> void:
+	if not f.bend:
+		return
+	f.xf = Transform3D(f.xf.basis, f.xf.origin + f.xf.basis * Vector3(f.bend_pan.x, f.bend_pan.y, 0.0))
+	f.offset -= f.bend_pan
+	f.bend = false
+	f.bend_pan = Vector2.ZERO
+
+
+## A canvas lying on a level desk curves up into a wall (on), or lies flat again where it is (off). One undo step.
+func curve_frame(frame_id: String, on: bool) -> bool:
+	var f: FrameData = doc.frames.get(frame_id) if doc != null else null
+	if f == null or f.kind != FrameData.CANVAS or not canvas_edit_ok():
+		return false
+	if f.locked:
+		toast.emit("That canvas is locked.")
+		return false
+	if on == f.bend:
+		return true
+	var upd := f.copy()
+	if on:
+		if f.is_pdf():
+			toast.emit("A PDF stays flat.")
+			return false
+		if not can_curve(f):
+			toast.emit("Lay the canvas on a level desk first (Add > On my desk): only a level desk can curve up into a wall.")
+			return false
+		var rw: Variant = room_world(f.room)
+		make_curved(upd, rw as Transform3D)
+		toast.emit("\"%s\" curves up at the end of your desk. Move the markers on its left edge to set where, and how tight." % f.name)
+	else:
+		make_flat(upd)
+		toast.emit("\"%s\" lies flat on your desk again." % f.name)
+	history.do(History.op_frame(f, upd))
+	active_frame = f.id
+	return true
+
+
+## Set where the flat part of a curved desk ends and how round the bend is (one undo step).
+func set_bend(frame_id: String, at: float, radius: float) -> void:
+	var f: FrameData = doc.frames.get(frame_id) if doc != null else null
+	if f == null or not f.bend or not canvas_edit_ok():
+		return
+	var upd := f.copy()
+	upd.bend_at = DeskBend.clamp_at(at)
+	upd.bend_radius = DeskBend.clamp_radius(radius)
+	if is_equal_approx(upd.bend_at, f.bend_at) and is_equal_approx(upd.bend_radius, f.bend_radius):
+		return
+	history.do(History.op_frame(f, upd))
+
+
 ## `plane` ({point, normal, error, count}, world space) puts the new canvas on a physical surface (SurfaceController.finish).
 func add_frame(kind: String, world_xf: Transform3D, size: Vector2 = Vector2(1.2, 0.8), plane: Dictionary = {}, props: Dictionary = {}) -> FrameData:
 	if doc == null or not canvas_edit_ok():
@@ -1141,6 +1260,8 @@ func add_frame(kind: String, world_xf: Transform3D, size: Vector2 = Vector2(1.2,
 	if not plane.is_empty():
 		surface.apply_plane(f, rw, plane)
 		f.xf = f.on_surface(f.xf)
+		if f.bend:
+			make_curved(f, rw as Transform3D if rw != null else Transform3D.IDENTITY)
 	if room_guessed(current_room):
 		_moved_unanchored[f.id] = true
 	history.do(History.op_frame_add(f))
@@ -1577,16 +1698,12 @@ func ray_canvas(o: Vector3, d: Vector3) -> Dictionary:
 		var n := fn as FrameNode
 		if n.data.locked:
 			continue
-		var lo := n.to_local_point(o)
-		var ld := n.global_transform.basis.inverse() * d
-		if absf(ld.z) < 0.02:
+		var hit := n.ray_hit(o, d, 0.001)
+		if hit.is_empty() or float(hit.t) >= best_t:
 			continue
-		var t := -lo.z / ld.z
-		if t <= 0.0 or t >= best_t:
-			continue
-		var g := lo + ld * t
+		var g: Vector3 = hit.local
 		if n.bounds().has_point(Vector2(g.x, g.y)):
-			best_t = t
+			best_t = float(hit.t)
 			best = {"fn": n, "local": Vector2(g.x, g.y)}
 	return best
 
@@ -2101,13 +2218,11 @@ func _update_hover(pen: PenState, hands: Array, dt: float) -> void:
 		var lh := fn.to_local_point(gaze_o)
 		var head_dist := absf(lh.z) * s
 		if not have_focus and fn.is_canvas:
-			var ld := fn.global_transform.basis.inverse() * gaze_d
-			if absf(ld.z) > 0.05:
-				var t := -lh.z / ld.z
-				if t > 0.0:
-					var g := lh + ld * t
-					focus = Vector3(g.x, g.y, 0.0)
-					have_focus = true
+			var gh := fn.ray_hit(gaze_o, gaze_d, 0.001)
+			if not gh.is_empty():
+				var g: Vector3 = gh.local
+				focus = Vector3(g.x, g.y, 0.0)
+				have_focus = true
 		if not have_focus:
 			focus = Vector3(lh.x, lh.y, 0.0)
 		var fade_r := float(App.val("grid_fade_viewer"))

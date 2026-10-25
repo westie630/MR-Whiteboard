@@ -1,6 +1,8 @@
 shader_type spatial;
 render_mode unshaded, cull_disabled, depth_draw_never, blend_mix, shadows_disabled, fog_disabled;
 
+#include "bend.gdshaderinc"
+
 // The canvas grid: drawn on one quad in the frame's plane. It is only visible near the pen / hand (focus), it fades out as the
 // viewer walks away (view_alpha) and it fades at the canvas edges. All lengths are the frame's own metres.
 uniform vec4 bounds = vec4(-0.6, -0.4, 0.6, 0.4);   // xmin, ymin, xmax, ymax
@@ -15,11 +17,15 @@ uniform int style = 0;                              // 0 lines, 1 dots, 2 none
 uniform vec4 line_color : source_color = vec4(0.55, 0.9, 1.0, 1.0);
 uniform vec4 backing : source_color = vec4(1.0, 1.0, 1.0, 0.0);
 uniform float hover = 0.0;                          // 0..1: the border lights up when a pen or hand is near
+uniform vec2 canvas_shift = vec2(0.0);              // curved desk: the mesh is laid out in surface coordinates, the grid pattern belongs to the canvas
 
 varying vec2 lp;
+varying vec2 v_surf;
 
 void vertex() {
-	lp = VERTEX.xy;
+	lp = VERTEX.xy + canvas_shift;
+	v_surf = desk_surf(VERTEX);
+	VERTEX = desk_bend(VERTEX);
 }
 
 float line_mask(vec2 p, float cell, float thickness_px) {
@@ -30,6 +36,9 @@ float line_mask(vec2 p, float cell, float thickness_px) {
 }
 
 void fragment() {
+	if (desk_clipped(v_surf)) {
+		discard;
+	}
 	float dx = min(lp.x - bounds.x, bounds.z - lp.x);
 	float dy = min(lp.y - bounds.y, bounds.w - lp.y);
 	float d = min(dx, dy);

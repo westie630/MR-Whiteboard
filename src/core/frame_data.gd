@@ -30,6 +30,13 @@ var plane_point := Vector3.ZERO           # a point of the surface (room space)
 var plane_normal := Vector3.UP            # its normal, towards the side the canvas faces (room space)
 var plane_error := 0.0                    # how far the points it was found from strayed from flat (rms, m)
 var plane_points := 0                     # how many points it stands on
+## A curved desk (DeskBend): the canvas is the surface in front of you that lies on the desk, bends up at `bend_at` metres from your edge through a
+## quarter circle of `bend_radius` and climbs the wall. `offset` and `size` are then the shown window in surface coordinates (not in the canvas's),
+## and `bend_pan` is how far the contents have slid along the surface: moving them away from you is making `bend_pan.y` larger.
+var bend := false
+var bend_at := DeskBend.DEFAULT_AT
+var bend_radius := DeskBend.DEFAULT_RADIUS
+var bend_pan := Vector2.ZERO
 ## A canvas that shows a PDF: its pages are drawn on the canvas (sharp at any size) and what is drawn on it belongs to the page it was drawn on.
 var pdf := ""                             # the PDF's content id (PdfLibrary): "" for an ordinary canvas
 var page := 1                             # the page shown (1 = the first); everybody following the owner shows this one
@@ -54,7 +61,9 @@ func to_dict() -> Dictionary:
 		"locked": locked, "created": created, "surface": surface,
 		"plane": [snappedf(plane_point.x, 1e-5), snappedf(plane_point.y, 1e-5), snappedf(plane_point.z, 1e-5),
 			snappedf(plane_normal.x, 1e-6), snappedf(plane_normal.y, 1e-6), snappedf(plane_normal.z, 1e-6)],
-		"plane_error": snappedf(plane_error, 1e-5), "plane_points": plane_points, "pdf": pdf, "page": page, "pdf_pages": pdf_pages, "pdf_width": snappedf(pdf_width, 1e-5)}
+		"plane_error": snappedf(plane_error, 1e-5), "plane_points": plane_points,
+		"bend": [snappedf(bend_at, 1e-5), snappedf(bend_radius, 1e-5), snappedf(bend_pan.x, 1e-5), snappedf(bend_pan.y, 1e-5)] if bend else [],
+		"pdf": pdf, "page": page, "pdf_pages": pdf_pages, "pdf_width": snappedf(pdf_width, 1e-5)}
 
 
 static func from_dict(d: Dictionary) -> FrameData:
@@ -81,6 +90,12 @@ static func from_dict(d: Dictionary) -> FrameData:
 		f.plane_normal = Vector3(pl[3], pl[4], pl[5]).normalized()
 	f.plane_error = float(d.get("plane_error", 0.0))
 	f.plane_points = int(d.get("plane_points", 0))
+	var bd: Variant = d.get("bend")
+	if bd is Array and (bd as Array).size() >= 4:
+		f.bend = true
+		f.bend_at = DeskBend.clamp_at(float(bd[0]))
+		f.bend_radius = DeskBend.clamp_radius(float(bd[1]))
+		f.bend_pan = Vector2(clampf(float(bd[2]), -1e4, 1e4), clampf(float(bd[3]), -1e4, 1e4))
 	f.pdf = str(d.get("pdf", ""))
 	f.page = maxi(int(d.get("page", 1)), 1)
 	f.pdf_pages = maxi(int(d.get("pdf_pages", 0)), 0)
@@ -94,6 +109,11 @@ func copy() -> FrameData:
 
 func is_pdf() -> bool:
 	return pdf != ""
+
+
+## The part of a curved desk that is shown, in surface coordinates.
+func bend_window() -> Rect2:
+	return Rect2(offset - size * 0.5, size)
 
 
 ## Take another copy's spatial anchor (what only this device knows about the frame; not part of an undo or of what a session shares).

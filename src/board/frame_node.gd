@@ -14,6 +14,7 @@ var pdfs: PdfLibrary                       # where the PDF of a PDF canvas comes
 var pdf_state := ""                        # "" not a PDF | loading | ready | missing (not on this headset) | failed
 var pdf_note := ""                         # what the canvas says in place of a page that is not there
 var views: Dictionary = {}                 # item id -> ItemView
+var bend: DeskBend                         # the curved desk this canvas is (null for a flat canvas): see DeskBend
 var hover := 0.0                           # 0..1 how near a pen or hand is (the border and title fade in)
 var is_canvas: bool:
 	get:
@@ -41,6 +42,9 @@ var _pdf_label: Label3D
 var _pdf_key := ""                         # "id:page" of the page being shown or waited for
 var _items_page := -1                      # the page whose drawings the item views are of
 var _pdf_shown_size := Vector2.ZERO        # the page's size in points as it is shown
+var _grid_key := ""                        # what the grid mesh was built for
+var _bend_tag: Label3D                     # says the bend's numbers beside its marker while it is touched or moved
+var _marker_hot := ""                      # the marker ("d" distance, "r" radius) the pointer is on or moving, "" none
 
 
 func setup(d: FrameData, document: Document) -> void:
@@ -50,6 +54,7 @@ func setup(d: FrameData, document: Document) -> void:
 	_items = Node3D.new()
 	_items.name = "Items"
 	add_child(_items)
+	bend = _make_bend()
 	if is_canvas:
 		_grid = MeshInstance3D.new()
 		_grid.name = "Grid"
@@ -66,6 +71,20 @@ func setup(d: FrameData, document: Document) -> void:
 	_overlay.material_override = OverlayDraw.material()
 	_overlay.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_overlay)
+	_set_bend_nodes()
+	_bend_tag = Label3D.new()
+	_bend_tag.font = TextLayout.font(600)
+	_bend_tag.font_size = 64
+	_bend_tag.pixel_size = 0.026 / 64.0
+	_bend_tag.shaded = false
+	_bend_tag.no_depth_test = true
+	_bend_tag.render_priority = 125
+	_bend_tag.modulate = DESK_COLOR
+	_bend_tag.outline_size = 0
+	_bend_tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_bend_tag.double_sided = true
+	_bend_tag.visible = false
+	add_child(_bend_tag)
 	_title = Label3D.new()
 	_title.font = TextLayout.font()
 	_title.font_size = 64
@@ -185,8 +204,11 @@ func content_bounds() -> Rect2:
 	return r if not first else Rect2(Vector2.ZERO, Vector2.ZERO)
 
 
-## The extent of the canvas: the nominal rectangle, grown to hold everything drawn on it.
+## The extent of the canvas: the nominal rectangle, grown to hold everything drawn on it. A curved desk is the part of the canvas
+## that is on the shown part of the surface.
 func bounds() -> Rect2:
+	if bend != null:
+		return bend.canvas_window()
 	if _bounds_dirty:
 		var nominal := Rect2(data.offset - data.size * 0.5, data.size)
 		if data.is_pdf():
@@ -204,13 +226,119 @@ func invalidate_bounds() -> void:
 	refresh_frame()
 
 
-## Local position (frame metres) of a world point.
+## Local position (canvas metres, z the height above the canvas) of a world point.
 func to_local_point(world: Vector3) -> Vector3:
-	return global_transform.affine_inverse() * world
+	var l := global_transform.affine_inverse() * world
+	return bend.from_node(l) if bend != null else l
 
 
 func to_world_point(local: Vector3) -> Vector3:
-	return global_transform * local
+	return global_transform * (bend.to_node(local) if bend != null else local)
+
+
+## Where a world ray first meets the canvas (the plane of a flat one, the bent surface of a curved desk) at or after distance `tmin`:
+## {t, local (canvas coordinates, z = 0), point (world)}, or {} when it does not (a ray parallel to the plane, or pointing away).
+func ray_hit(o: Vector3, d: Vector3, tmin: float = 0.0) -> Dictionary:
+	var inv := global_transform.affine_inverse()
+	var lo := inv * o
+	var ld := inv.basis * d
+	if bend != null:
+		var h := bend.ray(lo, ld, tmin)
+		if h.is_empty():
+			return {}
+		return {"t": float(h.t), "local": h.canvas, "point": o + d * float(h.t)}
+	if absf(ld.z) < 1e-4:
+		return {}
+	var t := -lo.z / ld.z
+	if t < tmin:
+		return {}
+	var lp := lo + ld * t
+	return {"t": t, "local": Vector3(lp.x, lp.y, 0.0), "point": o + d * t}
+
+
+## The pose in world space a thing standing on the canvas at `c` has: x to the right, y up the canvas, z out of it. `lift` is the height off it.
+func world_frame_at(c: Vector2, lift: float = 0.0) -> Transform3D:
+	if bend != null:
+		return global_transform * bend.frame_at(c, lift)
+	return global_transform * Transform3D(Basis.IDENTITY, Vector3(c.x, c.y, lift))
+
+
+# ------------------------------------------------------------------------------------------------ curved desk
+
+func _make_bend() -> DeskBend:
+	if not (is_canvas and data.bend and not data.is_pdf()):
+		return null
+	return DeskBend.new(data.bend_at, data.bend_radius, data.bend_pan, data.bend_window())
+
+
+## The frame's data changed: follow its bend (its numbers, or it being switched on or off).
+func refresh_bend() -> void:
+	var want := is_canvas and data.bend and not data.is_pdf()
+	if want == (bend != null):
+		if want:
+			bend.set_params(data.bend_at, data.bend_radius, data.bend_pan, data.bend_window())
+			_after_bend_moved()
+		return
+	bend = _make_bend()
+	_grid_key = ""
+	_rebuild_for_bend()
+
+
+## The numbers of the bend as they are right now (a pointer is moving the contents or a marker, before it is let go and kept).
+func set_bend_live(at: float, radius: float, pan: Vector2) -> void:
+	if bend == null:
+		return
+	if is_equal_approx(bend.at, at) and is_equal_approx(bend.radius, radius) and bend.pan.is_equal_approx(pan):
+		return
+	bend.set_params(at, radius, pan, data.bend_window())
+	_after_bend_moved()
+
+
+func _after_bend_moved() -> void:
+	_bounds_dirty = true
+	refresh_frame()
+
+
+## The views are drawn differently on a curved desk (cut into strips, bent by their material, text as geometry): all of them again.
+func _rebuild_for_bend() -> void:
+	for id in views:
+		(views[id] as ItemView).rebuild()
+	for c in _ai.get_children():
+		if c is ItemView:
+			(c as ItemView).rebuild()
+	if _ghost != null:
+		_ghost.rebuild()
+	_bounds_dirty = true
+	apply_style()
+	refresh_frame()
+	_set_bend_nodes()
+	if bend == null:
+		_bend_tag.visible = false
+
+
+## The nodes the frame owns itself follow the bend: the overlay's material, and no culling by the unbent bounds (a bent surface lies far from them).
+func _set_bend_nodes() -> void:
+	_overlay.material_override = bend.overlay_material() if bend != null else OverlayDraw.material()
+	var box := AABB(Vector3.ONE * -DeskBend.FAR, Vector3.ONE * (2.0 * DeskBend.FAR)) if bend != null else AABB()
+	_overlay.custom_aabb = box
+	if _grid != null:
+		_grid.custom_aabb = box
+
+
+## Which marker the pointer is on (or moving): it lights up and says its number.
+func set_marker_hot(which: String) -> void:
+	if which != _marker_hot:
+		_marker_hot = which
+		_overlay_dirty = true
+
+
+## Where the markers of the bend stand, in canvas coordinates: "d" at the distance where the flat part ends, "r" where the wall starts
+## (the end of the quarter circle). Just outside the left edge of the shown part.
+func marker_pos(which: String) -> Vector2:
+	if bend == null:
+		return Vector2.ZERO
+	var x := bend.canvas_window().position.x - InputTuning.MARKER_SIDE
+	return Vector2(x, (bend.at if which == "d" else bend.wall_at()) - bend.pan.y)
 
 
 # ------------------------------------------------------------------------------------------------ look
@@ -238,6 +366,22 @@ func apply_style() -> void:
 	var light := backing == "white"
 	_grid_mat.set_shader_parameter("line_color", Color(0.2, 0.3, 0.45, 1.0) if light else Color(0.55, 0.9, 1.0, 1.0))
 	_grid.visible = not (style == "none" and bc.a == 0.0)
+	_apply_bend_to_grid()
+
+
+## The grid mesh of a curved desk is laid out on the surface (so it does not move when the contents slide); its pattern belongs to the canvas.
+func _apply_bend_to_grid() -> void:
+	if _grid_mat == null:
+		return
+	if bend == null:
+		_grid_mat.set_shader_parameter("bend_a", Vector4(0, 0, 0, 0))
+		_grid_mat.set_shader_parameter("canvas_shift", Vector2.ZERO)
+		return
+	_grid_mat.set_shader_parameter("bend_a", Vector4(1.0, bend.at, bend.radius, 0.0))
+	_grid_mat.set_shader_parameter("bend_pan", Vector2.ZERO)
+	_grid_mat.set_shader_parameter("canvas_shift", -bend.pan)
+	var w := bend.window
+	_grid_mat.set_shader_parameter("bend_win", Vector4(w.position.x, w.position.y, w.end.x, w.end.y))
 
 
 ## Update the shader inputs: where the pen / gaze is on the plane and how far away the viewer is.
@@ -260,18 +404,46 @@ func set_hover(h: float) -> void:
 
 ## Rebuild what depends on the bounds: the grid quad, the title position and the overlay.
 func refresh_frame() -> void:
-	_title.text = data.name + ("   on the desk" if data.surface else "")
+	_title.text = data.name + ("   curved desk" if bend != null else ("   on the desk" if data.surface else ""))
 	if is_canvas:
 		var b := bounds()
-		(_grid.mesh as QuadMesh).size = b.size + Vector2(0.02, 0.02)
-		(_grid.mesh as QuadMesh).center_offset = Vector3(b.get_center().x, b.get_center().y, 0.0)
+		_refresh_grid(b)
 		_grid_mat.set_shader_parameter("bounds", Vector4(b.position.x, b.position.y, b.end.x, b.end.y))
-		_title.position = Vector3(b.position.x + 0.02, b.end.y + 0.035, 0.001)
+		_apply_bend_to_grid()
+		if bend != null:
+			# at your edge of the surface, on the left: where the flat part begins
+			_title.transform = bend.frame_at(Vector2(b.position.x + 0.02, b.position.y - 0.035), 0.001)
+		else:
+			_title.transform = Transform3D(Basis.IDENTITY, Vector3(b.position.x + 0.02, b.end.y + 0.035, 0.001))
 	else:
 		_title.position = Vector3(0.0, 0.12, 0.0)
 		_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_place_pdf()
 	_overlay_dirty = true
+
+
+## The grid's mesh: one quad over the canvas; on a curved desk a strip mesh over the shown part of the surface, cut finely enough to bend.
+func _refresh_grid(b: Rect2) -> void:
+	if bend != null:
+		var w := bend.window
+		var key := "bent %s %s" % [w.position, w.size]
+		if key != _grid_key:
+			_grid_key = key
+			var pm := PlaneMesh.new()
+			pm.orientation = PlaneMesh.FACE_Z
+			pm.size = w.size + Vector2(0.02, 0.02)
+			pm.center_offset = Vector3(w.get_center().x, w.get_center().y, 0.0)
+			pm.subdivide_width = 0
+			pm.subdivide_depth = clampi(ceili(pm.size.y / DeskBend.PITCH), 1, 700)
+			_grid.mesh = pm
+		return
+	var key2 := "flat %s %s" % [b.position, b.size]
+	if key2 != _grid_key or not _grid.mesh is QuadMesh:
+		_grid_key = key2
+		if not _grid.mesh is QuadMesh:
+			_grid.mesh = QuadMesh.new()
+		(_grid.mesh as QuadMesh).size = b.size + Vector2(0.02, 0.02)
+		(_grid.mesh as QuadMesh).center_offset = Vector3(b.get_center().x, b.get_center().y, 0.0)
 
 
 func mark_overlay_dirty() -> void:
@@ -317,9 +489,57 @@ func _redraw_overlay() -> void:
 			if cb.size != Vector2.ZERO:
 				_draw.rect(cb.grow(0.03), 0.002, Color(0.65, 1.0, 0.95, 0.4 * hover))
 	_draw_ai_marks()
+	if bend != null:
+		_draw_bend_markers()
 	if _extra.is_valid():
 		_extra.call(_draw)
-	_draw.build(_overlay_mesh)
+	_draw.build(_overlay_mesh, bend != null)
+
+
+## The curved desk's markers: a line across where the flat part ends and another where the wall starts, each with a round handle outside the
+## left edge that slides along the surface. The first sets the distance, the second the radius of the bend.
+func _draw_bend_markers() -> void:
+	var win := bend.canvas_window()
+	var a := clampf(hover, 0.0, 1.0)
+	var amber := Color(DESK_COLOR.r, DESK_COLOR.g, DESK_COLOR.b, 1.0)
+	_draw.z = 0.0
+	for which: String in ["d", "r"]:
+		var hot := _marker_hot == which
+		var p := marker_pos(which)
+		var line_a := (0.9 if hot else (0.2 + 0.3 * a)) * (1.0 if which == "d" else 0.7)
+		var n := maxi(int(win.size.x / 0.03), 2)
+		for i in n:
+			if i % 2 == 0:
+				var x0 := win.position.x + win.size.x * float(i) / n
+				var x1 := win.position.x + win.size.x * float(i + 1) / n
+				_draw.segment(Vector2(x0, p.y), Vector2(x1, p.y), 0.0014, Color(amber.r, amber.g, amber.b, line_a))
+		_draw.segment(Vector2(p.x, p.y), Vector2(win.position.x, p.y), 0.0014, Color(amber.r, amber.g, amber.b, line_a))
+		var r := InputTuning.MARKER_R * (1.25 if hot else 1.0)
+		_draw.disc(p, r + 0.0025, Color(0.05, 0.06, 0.08, 0.85))
+		_draw.disc(p, r, Color(amber.r, amber.g, amber.b, 1.0 if hot else 0.55 + 0.4 * a))
+		var ink := Color(0.1, 0.08, 0.04, 0.95)
+		if which == "d":
+			# arrows up and down the surface: it slides along it
+			for sgn: float in [-1.0, 1.0]:
+				var tip: Vector2 = p + Vector2(0, sgn * r * 0.62)
+				_draw.polygon(PackedVector2Array([tip, tip - Vector2(r * 0.4, sgn * r * 0.4), tip - Vector2(-r * 0.4, sgn * r * 0.4)]), ink)
+		else:
+			# a quarter of a circle: the bend
+			var arc := PackedVector2Array()
+			var centre := p + Vector2(-0.3, 0.3) * r
+			for i in 9:
+				var t := -PI * 0.5 + PI * 0.5 * float(i) / 8.0
+				arc.append(centre + Vector2(cos(t), sin(t)) * (0.55 * r))
+			_draw.line(arc, r * 0.2, ink)
+	# the numbers beside the handle that is touched
+	if _marker_hot != "":
+		var q := marker_pos(_marker_hot)
+		_bend_tag.text = ("%d cm from you" % roundi(bend.at * 100.0)) if _marker_hot == "d" else ("radius %d cm" % roundi(bend.radius * 100.0))
+		_bend_tag.transform = bend.frame_at(q + Vector2(-0.03, 0.0), 0.004)
+		_bend_tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		_bend_tag.visible = true
+	else:
+		_bend_tag.visible = false
 
 
 # ------------------------------------------------------------------------------------------------ PDF

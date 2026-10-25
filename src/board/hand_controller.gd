@@ -72,18 +72,13 @@ func ray_target(o: Vector3, d: Vector3, slack: float = PLANE_SLACK) -> Dictionar
 		var fn := fn_any as FrameNode
 		if fn.data.locked:
 			continue
-		var inv := fn.global_transform.affine_inverse()
-		var lo := inv * o
-		var ld := inv.basis * d
-		if absf(ld.z) < 1e-4:
+		var hit := fn.ray_hit(o, d, 0.05)
+		if hit.is_empty() or float(hit.t) >= bt:
 			continue
-		var t := -lo.z / ld.z
-		if t < 0.05 or t >= bt:
-			continue
-		var lp := lo + ld * t
+		var lp: Vector3 = hit.local
 		if fn.bounds().grow(slack / fn.data.scale).has_point(Vector2(lp.x, lp.y)):
-			bt = t
-			best = {"fn": fn, "local": lp, "point": o + d * t, "t": t}
+			bt = float(hit.t)
+			best = {"fn": fn, "local": lp, "point": hit.point, "t": bt}
 	return best
 
 
@@ -116,17 +111,21 @@ func plane_hit(fn: FrameNode, h: HandInput, direct: bool) -> Variant:
 	return plane_point(fn, h.aim_o, h.aim_d)
 
 
+## Where a pointer is that moves a marker of a curved desk, a point in the world: the pinch point when touching, else where its ray meets the
+## plane the marker slides in (the desk for the distance, the diagonal plane of the bend for the radius), whatever the bend is now.
+func _marker_point(fn: FrameNode, h: HandInput, direct: bool, which: String) -> Variant:
+	if direct:
+		return h.pinch_point
+	var inv := fn.global_transform.affine_inverse()
+	var plane := Plane(Vector3(0, 0, 1), 0.0) if which == "d" else Plane(Vector3(0, 1, -1).normalized(), fn.bend.at / sqrt(2.0))
+	var hit: Variant = plane.intersects_ray(inv * h.aim_o, inv.basis * h.aim_d)
+	return null if hit == null else fn.global_transform * (hit as Vector3)
+
+
 ## Where a ray meets the plane of one canvas (anywhere on it, however far outside its extent), or null.
 static func plane_point(fn: FrameNode, o: Vector3, d: Vector3) -> Variant:
-	var inv := fn.global_transform.affine_inverse()
-	var lo := inv * o
-	var ld := inv.basis * d
-	if absf(ld.z) < 1e-4:
-		return null
-	var t := -lo.z / ld.z
-	if t < 0.05:
-		return null
-	return o + d * t
+	var hit := fn.ray_hit(o, d, 0.05)
+	return null if hit.is_empty() else hit.point
 
 
 ## What is at a point of a canvas: {kind: "item" | "bar" | "corner" | "canvas", corner}. Items win over the bar and the corners. The pick
@@ -135,6 +134,8 @@ func classify(fn: FrameNode, l: Vector3, side: String) -> Dictionary:
 	var s := fn.data.scale
 	var p := Vector2(l.x, l.y)
 	var pen := _pen(side)
+	if fn.bend != null and pen.hit_marker(fn, p) != "":
+		return {"kind": "item", "corner": -1}            # a marker of the curved desk: the stylus tip's controller moves it
 	if fn.data.id == board.sel_frame and not board.selection.is_empty() and not pen.hit_handle(fn, p).is_empty():
 		return {"kind": "item", "corner": -1}
 	if pen.hit_button(fn, p) != "":
@@ -307,7 +308,10 @@ func _update_hand(h: HandInput, dt: float) -> void:
 	var target := {}
 	if busy:
 		var wf: FrameNode = pen.working_frame()
-		var pp2: Variant = plane_hit(wf, h, bool(_direct.get(side, false))) if wf != null else null
+		var pp2: Variant = null
+		if wf != null:
+			var mk := pen.marker_drag()
+			pp2 = _marker_point(wf, h, bool(_direct.get(side, false)), mk) if mk != "" else plane_hit(wf, h, bool(_direct.get(side, false)))
 		if pp2 != null:
 			ps.tip = pp2
 	else:
@@ -388,6 +392,10 @@ func _press(h: HandInput) -> void:
 func _begin_hold(h: HandInput, fn: FrameNode, corner: int, direct: bool) -> void:
 	if fn.data.locked:
 		return
+	if fn.bend != null and corner < 0:
+		for s in _holds:
+			if (_holds[s] as Dictionary).fn == fn:
+				return                                     # (the contents of a curved desk slide under one pointer: two would pull against each other)
 	board.begin_grab(fn.data)
 	if not board.grabs.has(fn.data.id):
 		return
@@ -420,6 +428,14 @@ func _step_hold(side: String, h: HandInput) -> void:
 		if pp != null:
 			pt = pp
 			_resize(hold, pt)
+	elif fn.bend != null:
+		# the contents slide along the surface by as much as the pointer has moved along it (the page stays under the finger, round the bend too)
+		var g2: Dictionary = board.grabs[(hold.f as FrameData).id]
+		var gain := float(hold.get("gain", 1.0))
+		var p0 := hold.p0 as Vector3
+		var s0 := _surface_of(fn, p0)
+		var s1 := _surface_of(fn, p0 + (h.pinch_point - p0) * gain)
+		g2.pan = (hold.f as FrameData).bend_pan + Vector2(s1.x - s0.x, s1.y - s0.y)
 	elif _two.is_empty():
 		var g: Dictionary = board.grabs[(hold.f as FrameData).id]
 		var xf := g.xf as Transform3D
@@ -444,6 +460,9 @@ func _resize(hold: Dictionary, world_p: Vector3) -> void:
 	var far := opp + Vector2(sx * size.x, sy * size.y)
 	fn.data.size = size
 	fn.data.offset = (opp + far) * 0.5
+	if fn.bend != null:
+		fn.data.offset += fn.bend.pan                      # (the shown part of a curved desk is kept in surface coordinates)
+		fn.refresh_bend()
 	fn.invalidate_bounds()
 
 
@@ -474,7 +493,7 @@ func _two_pair(seen: Dictionary) -> Array:
 	var carrying: Dictionary = {}                      # frame id -> sides carrying it
 	for s in POINTERS:
 		var hold: Dictionary = _holds.get(s, {})
-		if hold.is_empty() or int(hold.corner) >= 0 or not seen.has(s):
+		if hold.is_empty() or int(hold.corner) >= 0 or not seen.has(s) or (hold.fn as FrameNode).bend != null:
 			continue
 		var id: String = (hold.f as FrameData).id
 		if not carrying.has(id):
@@ -525,6 +544,11 @@ func _update_two(seen: Dictionary) -> void:
 	xf.origin = mid + rot * (((_two.origin0 as Vector3) - (_two.mid0 as Vector3)) * ratio)
 	g.xf = xf
 	g.scale = clampf(float(_two.scale0) * ratio, InputTuning.CANVAS_SCALE.x, InputTuning.CANVAS_SCALE.y)
+
+
+## Where a world point is on the surface of a curved desk: (u, s, height off it).
+func _surface_of(fn: FrameNode, world: Vector3) -> Vector3:
+	return fn.bend.node_to_surface(fn.global_transform.affine_inverse() * world)
 
 
 func is_holding() -> bool:

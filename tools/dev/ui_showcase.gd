@@ -7,6 +7,8 @@ extends Node
 ##   ai        the assistant answered with a drawing: the suggestion bar on the canvas, the assistant panel open
 ##   desk      feeling for the desk: the mouse presses on the simulated table, the card shows the points and the fitted desk
 ##   deskcanvas ...and Done: the canvas lies on the table with a stroke drawn on it
+##   curved    ...as a curved desk: the canvas lies on the table, bends up and climbs the wall, with drawings across all of it
+##   curvedside ...seen from the side, with the markers lit
 
 class FakeInk extends InkRecognizer:
 	func name_of() -> String:
@@ -76,6 +78,8 @@ func _ready() -> void:
 				await _frames(60)
 		"desk", "deskcanvas":
 			await _desk(show == "deskcanvas")
+		"curved", "curvedside":
+			await _curved(show == "curvedside", float(args.get("pan", 0.0)), str(args.get("hot", "")))
 		"ai":
 			board.ai.client = FakeClient.new()
 			board.ai.set_key("anthropic", "sk-showcase-0000")
@@ -94,7 +98,7 @@ func _ready() -> void:
 
 
 ## The PC build's way of finding the desk: the mouse ray meets the simulated table, a held left button is the nib pressed on it.
-func _desk(finish: bool) -> void:
+func _desk(finish: bool, curved: bool = false) -> void:
 	rig.camera.position = Vector3(1.4, 1.3, -0.4)
 	rig._yaw = -0.4636
 	rig._pitch = -0.62
@@ -102,7 +106,7 @@ func _desk(finish: bool) -> void:
 	rig.ui.close_side("home")
 	rig.ui.close_side("assistant")
 	rig.ui.close_popover()
-	board.surface.begin("", Vector2(0.9, 0.6))
+	board.surface.begin("", Vector2(0.9, 0.6), curved)
 	await _frames(10)
 	var c := rig.view_container.size * 0.5
 	for off in [Vector2(-250, -30), Vector2(160, -70), Vector2(-60, 10), Vector2(80, -130), Vector2(-330, -110)]:
@@ -119,6 +123,8 @@ func _desk(finish: bool) -> void:
 	if finish:
 		board.surface.finish()
 		await _frames(30)
+		if curved:
+			return
 		var f: FrameNode = board.frame_nodes[board.active_frame]
 		_mouse(c + Vector2(-120, 0))
 		await _frames(2)
@@ -129,6 +135,57 @@ func _desk(finish: bool) -> void:
 		_button(c + Vector2(240, 0), false)
 		await _frames(60)
 		print("desk canvas: ", f.data.name, " surface=", f.data.surface, " items=", board.doc.items_of(f.data.id).size())
+
+
+## A curved desk with drawings that run over its flat part, its bend and its wall. `side`: seen from the side. `pan`: the contents slid this far.
+func _curved(side: bool, pan: float, hot: String) -> void:
+	await _desk(true, true)
+	var f: FrameNode = board.frame_nodes[board.active_frame]
+	var fid := f.data.id
+	var upd := f.data.copy()
+	upd.bend_pan = Vector2(0.0, pan)
+	board.history.do(History.op_frame(f.data, upd))
+	await _frames(5)
+	var items: Array = []
+	items.append(board.texts.make("Roadmap", fid))
+	(items[0] as Item).center = Vector2(-0.25, 0.22)
+	for spec in [["Across the bend", "rect", Vector2(0.0, 0.62), Vector2(0.5, 0.22)], ["On the wall", "rect", Vector2(-0.2, 1.0), Vector2(0.4, 0.2)], ["Done", "ellipse", Vector2(0.25, 1.05), Vector2(0.3, 0.2)]]:
+		var sh := board.make_shape(fid, {"shape": spec[1], "center": spec[2], "size": spec[3]})
+		sh.label = spec[0]
+		items.append(sh)
+	items.append(board.make_shape(fid, {"shape": "arrow", "a": Vector2(0.3, 0.1), "b": Vector2(0.3, 1.3)}))
+	var pts := PackedFloat32Array()
+	for i in 41:
+		pts.append_array(PackedFloat32Array([-0.38 + sin(float(i) * 0.5) * 0.04, 0.05 + float(i) * 0.03, 0.0, 0.8]))
+	items.append(Item.make_stroke(fid, pts, Color("#ffd166"), 0.004, "pen"))
+	var t2 := board.texts.make("Draw here, push it away", fid)
+	t2.center = Vector2(-0.1, 0.4)
+	items.append(t2)
+	for it in items:
+		if it != null:
+			board.history.do(History.op_add([it]))
+	await _frames(20)
+	if hot != "":
+		f.set_marker_hot(hot)
+	print("DBG pan data ", f.data.bend_pan, " live ", f.bend.pan, " views ", f.views.size(), " frames ", board.frame_nodes.size())
+	for fn2 in board.frame_nodes.values():
+		print("DBG frame ", (fn2 as FrameNode).data.id, " ", (fn2 as FrameNode).data.name, " bent=", (fn2 as FrameNode).bend != null, " visible=", (fn2 as FrameNode).visible)
+	if side:
+		var o := f.global_transform
+		var target := o * Vector3(-0.45, 0.45, 0.1)
+		rig.camera.position = o * Vector3(0.1, -0.35, 0.75)
+		var dir := (target - rig.camera.position).normalized()
+		rig._yaw = atan2(-dir.x, -dir.z)
+		rig._pitch = asin(dir.y)
+	else:
+		var o2 := f.global_transform
+		rig.camera.position = o2 * Vector3(0.0, -0.35, 0.65)
+		var tgt := o2 * Vector3(0.0, 0.65, 0.2)
+		var d2 := (tgt - rig.camera.position).normalized()
+		rig._yaw = atan2(-d2.x, -d2.z)
+		rig._pitch = asin(d2.y)
+	rig._apply_look()
+	await _frames(30)
 
 
 func _mouse(p: Vector2) -> void:

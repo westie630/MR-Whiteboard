@@ -163,7 +163,9 @@ func refresh() -> void:
 	for e in b.pdfs.list():
 		sig += "|" + str(e.id) + str(e.name)
 	for f in b.doc.frames.values():
-		sig += "/" + (f as FrameData).name + str((f as FrameData).locked) + str((f as FrameData).surface)
+		sig += "/" + (f as FrameData).name + str((f as FrameData).locked) + str((f as FrameData).surface) + str((f as FrameData).bend)
+		if (f as FrameData).bend:
+			sig += "%d,%d" % [roundi((f as FrameData).bend_at * 100.0), roundi((f as FrameData).bend_radius * 100.0)]
 	if sig != _lists_sig:
 		_lists_sig = sig
 		_kit_dynamic_reset()
@@ -333,6 +335,9 @@ func _build_canvas(p: VBoxContainer) -> void:
 	var desk := UiKit.button("desk", "New on my desk", func(): shell.board.surface.begin("", Popover.SIZES[shell.canvas_size_idx][2]), 52.0)
 	desk.tint = UITheme.DESK
 	rd.add_child(desk)
+	var curved := UiKit.button("curve", "New curved desk", func(): shell.board.surface.begin("", DeskBend.DEFAULT_SIZE, true), 52.0)
+	curved.tint = UITheme.DESK
+	rd.add_child(curved)
 	UiKit.header(p, "In this room")
 	_canvas_list = UiKit.vcol(p, 6)
 	UiKit.header(p, "Selected canvas")
@@ -366,6 +371,12 @@ func _refresh_canvas() -> void:
 			dk.on = fd.surface
 			dk.accent = UITheme.DESK
 			row.add_child(dk)
+			if fd.surface and not fd.is_pdf():
+				var cv := UiKit.tool("curve", "Flatten it again" if fd.bend else "Curve it: it bends up at the end of your desk and climbs the wall",
+					func(): b.curve_frame(fid, not fd.bend), 52.0)
+				cv.on = fd.bend
+				cv.accent = UITheme.DESK
+				row.add_child(cv)
 		var lk := UiKit.tool("lock", "Lock", func(): b.set_frame_prop(fid, "locked", not fd.locked), 52.0)
 		lk.on = fd.locked
 		row.add_child(lk)
@@ -393,10 +404,34 @@ func _refresh_canvas() -> void:
 			upd.scale = 1.0
 			b.history.do(History.op_frame(fr, upd)), 52.0))
 	hb.add_child(UiKit.button("pin", "Bring to me", func(): _bring_to_me(aid), 52.0))
+	if active.bend:
+		var cc := UiKit.card(_canvas_style)
+		UiKit.header(cc, "Curved desk")
+		_stepper(cc, "Bends at", "from your edge", func(): return (b.doc.frames[aid] as FrameData).bend_at, 0.05,
+			func(v: float): b.set_bend(aid, v, (b.doc.frames[aid] as FrameData).bend_radius))
+		_stepper(cc, "Radius", "of the bend", func(): return (b.doc.frames[aid] as FrameData).bend_radius, 0.02,
+			func(v: float): b.set_bend(aid, (b.doc.frames[aid] as FrameData).bend_at, v))
+		UiKit.note(cc, "Or move the two round markers on the canvas's left edge. Push the contents away from you with a pinch (or the stylus front button) on the canvas.")
 	if active.surface:
 		var ub := UiKit.button("desk", "Free it and stand it upright", func(): b.surface.release(aid, true), 52.0)
 		ub.tint = UITheme.DESK
 		_canvas_style.add_child(ub)
+
+
+## A number in centimetres with a minus and a plus (one undo step per press).
+func _stepper(parent: Control, title: String, sub: String, getter: Callable, step: float, setter: Callable) -> void:
+	var row := UiKit.hrow(parent, 8)
+	var texts := UiKit.vcol(row, 0)
+	texts.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	texts.add_child(UiKit.label(title, false, UITheme.FONT_SMALL, 600))
+	texts.add_child(UiKit.label(sub, true, UITheme.FONT_SMALL))
+	row.add_child(UiKit.chip("-", func(): setter.call(float(getter.call()) - step), "", 48.0))
+	var v := UiKit.label("", false, UITheme.FONT, 600)
+	v.custom_minimum_size = Vector2(84, 0)
+	v.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	row.add_child(v)
+	row.add_child(UiKit.chip("+", func(): setter.call(float(getter.call()) + step), "", 48.0))
+	_dyn.syncers.append(func(): v.text = "%d cm" % roundi(float(getter.call()) * 100.0))
 
 
 ## A canvas on the desk is let go of it; any other feels for the desk with the stylus tip and lies down on it.

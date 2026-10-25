@@ -40,8 +40,9 @@ func finding() -> bool:
 
 # ------------------------------------------------------------------------------------------------ finding the desk
 
-## Start finding the desk. `target` is a canvas to pin to it afterwards ("" = a new canvas of `size`).
-func begin(target: String = "", size: Vector2 = Vector2(1.2, 0.8)) -> void:
+## Start finding the desk. `target` is a canvas to pin to it afterwards ("" = a new canvas of `size`). `curved`: the canvas becomes a curved
+## desk (DeskBend): aligned to you, it lies on the desk and bends up into a wall.
+func begin(target: String = "", size: Vector2 = Vector2(1.2, 0.8), curved: bool = false) -> void:
 	if board.doc == null:
 		return
 	board.cancel_place()
@@ -63,10 +64,10 @@ func begin(target: String = "", size: Vector2 = Vector2(1.2, 0.8)) -> void:
 	var marks := Node3D.new()
 	marks.name = "SurfaceMarks"
 	board.add_child(marks)
-	calib = {"target": target, "size": size, "points": PackedVector3Array(), "fit": PlaneFit.fit(PackedVector3Array()), "ghost": ghost, "tmp": tmp,
+	calib = {"target": target, "size": size, "curved": curved, "points": PackedVector3Array(), "fit": PlaneFit.fit(PackedVector3Array()), "ghost": ghost, "tmp": tmp,
 		"marks": marks, "press": {"down": false, "acc": PackedVector3Array(), "t": 0.0, "added": false, "last": Vector3.ZERO}}
 	_was_back = false
-	board.toast.emit("Press the stylus tip on your desk in a few places, or rub it across. The canvas will lie on it.")
+	board.toast.emit("Press the stylus tip on your desk in a few places, or rub it across. The canvas will %s." % ("lie on it and curve up at its far end" if curved else "lie on it"))
 	board.changed.emit()
 
 
@@ -220,14 +221,18 @@ func finish() -> bool:
 		return false
 	var target := str(calib.target)
 	var size: Vector2 = calib.size
+	var curved := bool(calib.get("curved", false))
+	if curved and (fit.normal as Vector3).normalized().y < Board.CURVE_LEVEL:
+		board.toast.emit("A curved desk needs a level desk: this surface is too steep. Try the desk top.")
+		return false
 	var pose := pose_for(fit.point, fit.normal)
 	var plane := {"point": fit.point, "normal": fit.normal, "error": float(fit.rms), "count": (calib.points as PackedVector3Array).size()}
 	cancel()
 	var f: FrameData = board.doc.frames.get(target) if target != "" else null
 	if f == null:
-		var made := board.add_frame(FrameData.CANVAS, pose, size, plane)
+		var made := board.add_frame(FrameData.CANVAS, pose, size, plane, {"bend": true} if curved else {})
 		if made != null:
-			board.toast.emit("Canvas \"%s\" lies on your desk." % made.name)
+			board.toast.emit("Canvas \"%s\" curves up at the end of your desk. Move the markers on its left edge." % made.name if curved else "Canvas \"%s\" lies on your desk." % made.name)
 		return made != null
 	var rw: Variant = board.room_world(f.room)
 	if rw == null:
@@ -236,9 +241,11 @@ func finish() -> bool:
 	var upd := f.copy()
 	_set_plane(upd, rw as Transform3D, plane)
 	upd.xf = upd.on_surface((rw as Transform3D).affine_inverse() * pose)
+	if curved and not f.is_pdf():
+		board.make_curved(upd, rw as Transform3D)
 	board.history.do(History.op_frame(f, upd))
 	board.active_frame = f.id
-	board.toast.emit("\"%s\" now lies on your desk." % f.name)
+	board.toast.emit("\"%s\" now lies on your desk%s." % [f.name, " and curves up at its far end" if upd.bend else ""])
 	return true
 
 
@@ -263,10 +270,11 @@ func release(frame_id: String, upright: bool = false) -> void:
 		return
 	var upd := f.copy()
 	upd.surface = false
+	board.make_flat(upd)                                 # (a curved desk is only curved on the desk)
 	if upright:
 		var rw: Variant = board.room_world(f.room)
 		var w: Transform3D = rw as Transform3D if rw != null else Transform3D.IDENTITY
-		upd.xf = w.affine_inverse() * stood_up(w * f.xf, f)
+		upd.xf = w.affine_inverse() * stood_up(w * upd.xf, upd)
 	board.history.do(History.op_frame(f, upd))
 	_track.erase(frame_id)
 	if upright:
@@ -327,6 +335,9 @@ func track(pen: PenState, _dt: float) -> void:
 		var l := fn.to_local_point(pen.tip)
 		if absf(l.z) * f.scale > NEAR or not fn.bounds().grow(0.3 / f.scale).has_point(Vector2(l.x, l.y)):
 			st.down = false
+			continue
+		if fn.bend != null and l.y + fn.bend.pan.y > fn.bend.at:
+			st.down = false                                   # (on the bend or the wall the nib is not touching the desk)
 			continue
 		if bool(st.down) and pen.tip.distance_to(st.last) < TRACK_STEP:
 			continue

@@ -263,7 +263,11 @@ func _build_add(p: VBoxContainer) -> void:
 	desk.accent = UITheme.DESK
 	desk.tint = UITheme.DESK
 	rd.add_child(desk)
-	UiKit.note(p, "Press the stylus tip on your desk in a few places: the canvas then lies on it and can only slide, turn and scale along it.")
+	var curved := UiKit.button("curve", "Curved desk", func(): _find_curved_desk(), 64.0)
+	curved.accent = UITheme.DESK
+	curved.tint = UITheme.DESK
+	rd.add_child(curved)
+	UiKit.note(p, "Press the stylus tip on your desk in a few places: the canvas then lies on it and can only slide, turn and scale along it. A curved desk faces you, bends up where you set it and climbs the wall: push what you draw away from you.")
 	var r3 := UiKit.hrow(p, 8)
 	r3.add_child(UiKit.button("pin", "Bring the canvas to me", func():
 		shell.close_popover()
@@ -276,6 +280,11 @@ func _build_add(p: VBoxContainer) -> void:
 func _find_desk() -> void:
 	shell.close_popover()
 	shell.board.surface.begin("", SIZES[shell.canvas_size_idx][2])
+
+
+func _find_curved_desk() -> void:
+	shell.close_popover()
+	shell.board.surface.begin("", DeskBend.DEFAULT_SIZE, true)
 
 
 func _place(where: String) -> void:

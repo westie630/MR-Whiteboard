@@ -61,7 +61,8 @@ func _append(arrays: Array) -> void:
 		_idx.append(i + base)
 
 
-func build(mesh: ArrayMesh) -> void:
+## `bent`: the mesh is for a curved desk, so it is cut into strips (DeskBend.slice) for its material to bend.
+func build(mesh: ArrayMesh, bent: bool = false) -> void:
 	mesh.clear_surfaces()
 	if _verts.is_empty():
 		return
@@ -71,6 +72,8 @@ func build(mesh: ArrayMesh) -> void:
 	arrays[Mesh.ARRAY_TEX_UV] = _uvs
 	arrays[Mesh.ARRAY_COLOR] = _cols
 	arrays[Mesh.ARRAY_INDEX] = _idx
+	if bent:
+		arrays = DeskBend.slice(arrays)
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
 

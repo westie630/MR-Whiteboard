@@ -122,6 +122,16 @@ const TOPICS := [
 		]],
 		["try", [["desk", "Find my desk", "desk:"]]],
 	]},
+	{"id": "curved", "icon": "curve", "title": "The curved desk", "sum": "A canvas that bends up from your desk into a wall", "blocks": [
+		["steps", [
+			"Add (+), then Curved desk, and feel for your desk with the stylus tip like for any desk canvas. It needs a level desk.",
+			"The canvas then faces you: flat on the desk in front of you, bending up at a set distance, and climbing the wall. What you draw keeps its size; only where it appears changes.",
+			"Draw on any part of it. To move what is drawn, pinch on the canvas (or hold the stylus front button) and push it away from you: it slides along the desk, round the bend and up the wall, and the other way back.",
+			"Two round markers stand on its left edge. The one where the flat part ends slides on the desk and sets the distance; the one at the foot of the wall slides up and away and sets how round the bend is. Touch one with the stylus tip, or pinch it.",
+			"Home, Canvases has the curve button on a desk canvas, to curve or flatten it, and Bends at and Radius with minus and plus under Selected canvas. Everything is one undo step.",
+		]],
+		["try", [["curve", "Make a curved desk", "curved:"], ["canvas", "My canvases", "tab:canvas"]]],
+	]},
 	{"id": "ai", "icon": "ai", "title": "The assistant", "sum": "Ask about a canvas, get a suggestion drawn on it", "blocks": [
 		["steps", [
 			"Once: open the assistant (the spark on the toolbar), tap the model name at its top, then Set the API key for Claude, OpenAI or MiniMax. You can also paste the key on the Keys page of the Share web page, together with the Wit.ai token for speech to text.",
@@ -369,11 +379,14 @@ func do(action: String) -> void:
 		"desk":
 			sh.close_popover()
 			b.surface.begin("", Popover.SIZES[sh.canvas_size_idx][2])
+		"curved":
+			sh.close_popover()
+			b.surface.begin("", DeskBend.DEFAULT_SIZE, true)
 
 
 ## The actions the topics use, for the tests: every one must be one `do` knows.
 static func known_actions() -> PackedStringArray:
-	return PackedStringArray(["tool", "pop", "pulse", "all", "tab", "side", "type", "place", "desk"])
+	return PackedStringArray(["tool", "pop", "pulse", "all", "tab", "side", "type", "place", "desk", "curved"])
 
 
 # ------------------------------------------------------------------------------------------------ widgets

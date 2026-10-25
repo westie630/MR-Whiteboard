@@ -200,6 +200,12 @@ static func draw(ci: CanvasItem, id: String, r: Rect2, col: Color) -> void:
 			ci.draw_line(P.call(0.68, 0.72), P.call(0.68, 0.9), col, w, true)
 			ci.draw_line(P.call(0.66, 0.1), P.call(0.5, 0.5), col, w * 1.8, true)
 			ci.draw_circle(P.call(0.5, 0.58), s * 0.055, col)
+		"curve":
+			# the curved desk: the flat desk bends up through a quarter circle and climbs the wall
+			ci.draw_line(P.call(0.08, 0.84), P.call(0.4, 0.84), col, w, true)
+			ci.draw_arc(P.call(0.4, 0.54), s * 0.3, 0.0, PI * 0.5, 14, col, w, true)
+			ci.draw_line(P.call(0.7, 0.54), P.call(0.7, 0.12), col, w, true)
+			ci.draw_circle(P.call(0.4, 0.84), s * 0.06, col)
 		"pin":
 			ci.draw_circle(P.call(0.5, 0.36), s * 0.2, col)
 			ci.draw_colored_polygon(PackedVector2Array([P.call(0.4, 0.5), P.call(0.6, 0.5), P.call(0.5, 0.88)]), col)

@@ -176,7 +176,7 @@ func _place_ui() -> void:
 		if fn == null:
 			continue
 		var pos2: Vector2 = c.anchor.pos
-		var world := fn.global_transform * Vector3(pos2.x, pos2.y, 0.0)
+		var world := fn.to_world_point(Vector3(pos2.x, pos2.y, 0.0))
 		if camera.is_position_behind(world):
 			c.position = Vector2(-10000, -10000)
 			continue
@@ -436,17 +436,13 @@ func _update_pen() -> void:
 	var best_t := INF
 	for fn in board.visible_frames(FrameData.CANVAS):
 		var n := fn as FrameNode
-		var inv := n.global_transform.affine_inverse()
-		var lo := inv * o
-		var ld := inv.basis * d
-		if absf(ld.z) < 1e-5:
+		var hit := n.ray_hit(o, d, 0.05)
+		if hit.is_empty() or float(hit.t) >= best_t:
 			continue
-		var t := -lo.z / ld.z
-		if t > 0.05 and t < best_t:
-			var lp := lo + ld * t
-			if n.bounds().grow(0.6 / n.data.scale).has_point(Vector2(lp.x, lp.y)) and not n.data.locked:
-				best_t = t
-				tip = o + d * t
+		var lp: Vector3 = hit.local
+		if n.bounds().grow(0.6 / n.data.scale).has_point(Vector2(lp.x, lp.y)) and not n.data.locked:
+			best_t = float(hit.t)
+			tip = hit.point
 	var feels := true
 	if board.surface.finding() or board.session.aligning():
 		# feeling for the desk (or for the points a session lines up on): the nib lands on the simulated room's tables and walls, and feels nothing in the air
@@ -495,20 +491,16 @@ func _pick_for_hand(o: Vector3, d: Vector3) -> Dictionary:
 	var bt := INF
 	for fn in board.visible_frames():
 		var n := fn as FrameNode
-		var inv := n.global_transform.affine_inverse()
-		var lo := inv * o
-		var ld := inv.basis * d
-		if absf(ld.z) < 1e-5:
+		var hit := n.ray_hit(o, d, 0.05)
+		if hit.is_empty() or float(hit.t) >= bt:
 			continue
-		var t := -lo.z / ld.z
-		if t > 0.05 and t < bt:
-			var lp := lo + ld * t
-			var ok := false
-			if n.is_canvas:
-				ok = n.bounds().grow(0.05 / n.data.scale).has_point(Vector2(lp.x, lp.y))
-			else:
-				ok = n.content_bounds().grow(0.2).has_point(Vector2(lp.x, lp.y))
-			if ok:
-				bt = t
-				best = {"point": o + d * t}
+		var lp: Vector3 = hit.local
+		var ok := false
+		if n.is_canvas:
+			ok = n.bounds().grow(0.05 / n.data.scale).has_point(Vector2(lp.x, lp.y))
+		else:
+			ok = n.content_bounds().grow(0.2).has_point(Vector2(lp.x, lp.y))
+		if ok:
+			bt = float(hit.t)
+			best = {"point": hit.point}
 	return best

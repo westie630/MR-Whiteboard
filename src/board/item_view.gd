@@ -4,9 +4,13 @@ extends Node3D
 ## arrowheads and text labels. Rebuilt from the item whenever it changes. `set_preview` moves it while it is being dragged,
 ## before the move is committed to the item's own data.
 
+const TEXT_CURVE_STEP := 3.0              # how finely the outlines of the letters are followed on a curved desk (in pixels of a 64 px em)
+
 var item: Item
 var volume := false
 var _layers: Array = []                   # MeshInstance3D / Label3D children
+
+var _bend: DeskBend                       # the curved desk this view is on (found at every rebuild), or null
 
 
 func setup(it: Item, in_volume: bool) -> void:
@@ -22,6 +26,7 @@ func rebuild() -> void:
 			n.queue_free()
 	_layers.clear()
 	transform = Transform3D.IDENTITY
+	_bend = null if volume else _find_bend()
 	match item.kind:
 		Item.STROKE:
 			if volume:
@@ -34,8 +39,27 @@ func rebuild() -> void:
 			_build_text(item.text, item.center, item.rot, item.font_size, item.color, Brushes.priority("pen", item.z) + 1, item.weight, item.italic)
 
 
+## Move the view while it is dragged. `t` is a transform of the canvas (a move, a turn, a resize); on a curved desk the view follows it as a
+## whole along the bent surface: the same move seen from where the item stands, without bending the item again until it is let go.
 func set_preview(t: Transform3D) -> void:
-	transform = t
+	if _bend == null:
+		transform = t
+		return
+	var c0 := item.bounds().get_center()
+	var p1 := t * Vector3(c0.x, c0.y, 0.0)
+	var f0 := _bend.frame_at(c0)
+	var f1 := _bend.frame_at(Vector2(p1.x, p1.y), p1.z)
+	transform = f1 * Transform3D(t.basis, Vector3.ZERO) * f0.affine_inverse()
+
+
+## The curved desk of the frame this view is in.
+func _find_bend() -> DeskBend:
+	var n: Node = get_parent()
+	while n != null:
+		if n is FrameNode:
+			return (n as FrameNode).bend
+		n = n.get_parent()
+	return null
 
 
 # ------------------------------------------------------------------------------------------------ strokes
@@ -118,6 +142,9 @@ func _add_ribbon(pts: PackedVector2Array, closed: bool, col: Color, mat: Materia
 # ------------------------------------------------------------------------------------------------ text
 
 func _build_text(txt: String, center: Vector2, rot: float, em: float, col: Color, prio: int, weight: int = TextLayout.REGULAR, italic: bool = false) -> void:
+	if _bend != null:
+		_build_text_mesh(txt, center, rot, em, col, prio, weight, italic)
+		return
 	var l := Label3D.new()
 	l.text = txt
 	l.font = TextLayout.font(weight, italic)
@@ -137,12 +164,59 @@ func _build_text(txt: String, center: Vector2, rot: float, em: float, col: Color
 	_layers.append(l)
 
 
+## On a curved desk text is geometry, like ink: a Label3D is a flat quad that cannot bend. The letters are the font's outlines, so they stay
+## sharp at any size; the strips make them bend with the surface.
+func _build_text_mesh(txt: String, center: Vector2, rot: float, em: float, col: Color, prio: int, weight: int, italic: bool) -> void:
+	var tm := TextMesh.new()
+	tm.text = txt
+	tm.font = TextLayout.font(weight, italic)
+	tm.font_size = 64
+	tm.pixel_size = em / 64.0
+	tm.depth = 0.0
+	tm.curve_step = TEXT_CURVE_STEP
+	tm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tm.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	if tm.get_surface_count() == 0:
+		return
+	var src := tm.surface_get_arrays(0)
+	var sv: PackedVector3Array = src[Mesh.ARRAY_VERTEX]
+	var n := sv.size()
+	var verts := PackedVector3Array()
+	verts.resize(n)
+	var cs := cos(rot)
+	var sn := sin(rot)
+	for i in n:
+		var p := sv[i]
+		verts[i] = Vector3(center.x + p.x * cs - p.y * sn, center.y + p.x * sn + p.y * cs, 0.0003)
+	var uvs := PackedVector2Array()
+	uvs.resize(n)
+	var cols := PackedColorArray()
+	cols.resize(n)
+	cols.fill(col)
+	var idx: PackedInt32Array = src[Mesh.ARRAY_INDEX] if src[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+	if idx.is_empty():
+		idx.resize(n)
+		for i in n:
+			idx[i] = i
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_COLOR] = cols
+	arrays[Mesh.ARRAY_INDEX] = idx
+	_add_mesh(arrays, Brushes.canvas_material("pen", clampi(prio, -128, 126)))
+
+
 # ------------------------------------------------------------------------------------------------ helpers
 
 func _add_mesh(arrays: Array, mat: Material) -> void:
 	if arrays.is_empty():
 		return
 	var mi := MeshInstance3D.new()
+	if _bend != null:
+		arrays = DeskBend.slice(arrays)
+		mat = _bend.material(mat)
+		mi.custom_aabb = AABB(Vector3.ONE * -DeskBend.FAR, Vector3.ONE * (2.0 * DeskBend.FAR))
 	mi.mesh = StrokeMesher.to_mesh(arrays)
 	mi.material_override = mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

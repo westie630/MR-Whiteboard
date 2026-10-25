@@ -376,10 +376,10 @@ func _place_ui(delta: float) -> void:
 		if fn == null:
 			xp3.visible = false
 			continue
-		var fxf := fn.global_transform
-		var b := fxf.basis.orthonormalized()
 		var a: Vector2 = fp3.anchor.pos
-		xp3.global_transform = Transform3D(b, fxf * Vector3(a.x, a.y, 0.0) + b.z * float(fp3.anchor.get("lift", 0.012)))
+		var at := fn.world_frame_at(a)                  # (on a curved desk the bar stands on the surface, turned with it)
+		var b := at.basis.orthonormalized()
+		xp3.global_transform = Transform3D(b, at.origin + b.z * float(fp3.anchor.get("lift", 0.012)))
 	# messages: a little above the middle of the view, following the head lazily
 	var tp: XrPanel = panels["toast"]
 	if tp.visible:

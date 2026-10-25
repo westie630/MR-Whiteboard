@@ -194,7 +194,7 @@ func _chrome(s: Dictionary, hv: Dictionary) -> void:
 		var lit: bool = (kind == "corner" and int(hv.corner) == i) or (kind == "hold" and held == "corner" and int(hv.corner) == i)
 		var a := 1.0 if lit else (0.28 if kind == "item" else 0.5)
 		(s.corner_mats[i] as StandardMaterial3D).albedo_color = Color(COL_GRAB.r, COL_GRAB.g, COL_GRAB.b, a) if lit else Color(1, 1, 1, a)
-		c.global_transform = Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * (1.35 if lit else 1.0)), xf * Vector3((cs[i] as Vector2).x, (cs[i] as Vector2).y, 0.0))
+		c.global_transform = Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * (1.35 if lit else 1.0)), fn.to_world_point(Vector3((cs[i] as Vector2).x, (cs[i] as Vector2).y, 0.0)))
 		c.visible = true
 	var bc := HandController.bar_center(fn)
 	var bar := s.bar as MeshInstance3D
@@ -202,5 +202,5 @@ func _chrome(s: Dictionary, hv: Dictionary) -> void:
 	var ba := 1.0 if bar_lit else (0.28 if kind == "item" else 0.5)
 	(s.bar_mat as StandardMaterial3D).albedo_color = Color(COL_GRAB.r, COL_GRAB.g, COL_GRAB.b, ba) if bar_lit else Color(1, 1, 1, ba)
 	var x_dir := xf.basis.x.normalized()
-	bar.global_transform = Transform3D(Basis(Quaternion(Vector3.UP, x_dir)), xf * Vector3(bc.x, bc.y, 0.0))
+	bar.global_transform = Transform3D(Basis(Quaternion(Vector3.UP, x_dir)), fn.to_world_point(Vector3(bc.x, bc.y, 0.0)))
 	bar.visible = true
