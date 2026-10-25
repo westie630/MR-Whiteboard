@@ -37,6 +37,7 @@ static func shell(title: String, body: String, doc_name: String = "", rev: Strin
 	if signed_in:
 		out += "<a class='btn btn-ghost btn-sm' href='/live' title='Watch the canvases as they are drawn'>%s<span>Live view</span></a>" % ic("eye")
 		out += "<a class='btn btn-ghost btn-sm' href='/ai' title='Work on a canvas with an AI: keys, models, questions'>%s<span>AI</span></a>" % ic("spark")
+		out += "<a class='btn btn-ghost btn-sm' href='/keys' title='API keys for the AI assistant and speech to text'>%s<span>Keys</span></a>" % ic("lock")
 		out += "<span class=live title='Live connection to the headset'><i></i><span>Connected</span></span>"
 	out += "<button class='btn btn-ghost btn-sm' id=theme title='Light / dark'>%s</button>" % ic("moon")
 	if signed_in:
@@ -76,6 +77,7 @@ static func dashboard(snap: Dictionary, files: Array, pdfs: Array = []) -> Strin
 	b += "<button class='btn btn-primary' onclick=\"document.getElementById('file').click()\">%s Upload PDF or SVG</button>" % ic("upload")
 	b += "<a class='btn btn-primary' href='/live'>%s Live view</a>" % ic("eye")
 	b += "<a class=btn href='/ai'>%s AI assistant</a>" % ic("spark")
+	b += "<a class=btn href='/keys'>%s API keys</a>" % ic("lock")
 	if int(snap.total) > 0:
 		b += "<a class=btn href='/all.zip'>%s Download all</a><a class=btn href='/all'>%s Gallery</a>" % [ic("download"), ic("image")]
 	b += "</div></section>"
@@ -233,6 +235,23 @@ static func ai(doc_name: String) -> String:
 	b += "The headset sends each question, with a description and a picture of that one canvas, straight to the provider you chose; it is billed to your key.</p>"
 	b += "</div></section></div></section>"
 	return shell("AI assistant", b, doc_name, "", true, "ai")
+
+
+# ------------------------------------------------------------------------------------------------ API keys
+
+## The API keys page: an empty frame that the script (WebAssets.JS, "API keys") fills from /api/keys/state. A key typed here goes to
+## the headset and is never sent back (the page only learns its last four characters).
+static func keys(doc_name: String) -> String:
+	var b := "<section id=keys class=ai>"
+	b += "<div class=head><div><p class=eyebrow>Settings</p><h1>API keys</h1>"
+	b += "<div class=stats><span class=chip id=keys-stat>Connecting...</span></div></div></div>"
+	b += "<section class=panel><div class=panel-h>%s<h2>Keys for the app</h2><span>Typing in the headset is slow; paste them here instead.</span></div><div class=ai-body>" % ic("lock")
+	b += "<div id=keys-list class=ai-provs></div>"
+	b += "<p class=hint>A key goes from this page to the headset over your Wi-Fi and is kept only in the app's settings there; this page never shows it again. "
+	b += "The AI assistant sends each question to the provider you chose, and speech to text sends only the recorded audio to Wit.ai: both are billed to, or limited by, your own account. "
+	b += "Choose the model and thinking level on the <a href='/ai'>AI page</a>.</p>"
+	b += "</div></section></section>"
+	return shell("API keys", b, doc_name, "", true, "keys")
 
 
 # ------------------------------------------------------------------------------------------------ gallery and viewer

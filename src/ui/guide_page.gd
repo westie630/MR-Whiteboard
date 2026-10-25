@@ -124,7 +124,7 @@ const TOPICS := [
 	]},
 	{"id": "ai", "icon": "ai", "title": "The assistant", "sum": "Ask about a canvas, get a suggestion drawn on it", "blocks": [
 		["steps", [
-			"Once: open the assistant (the spark on the toolbar), tap the model name at its top, then Set the API key for Claude, OpenAI or MiniMax. You can also paste the key on the Share web page.",
+			"Once: open the assistant (the spark on the toolbar), tap the model name at its top, then Set the API key for Claude, OpenAI or MiniMax. You can also paste the key on the Keys page of the Share web page, together with the Wit.ai token for speech to text.",
 			"It looks at the canvas in front of you, or at what is selected. Tap Opinion, Improve it, Continue, Tidy up, Explain or Find mistakes, or write or say your own question.",
 			"A drawing comes back as a violet suggestion over the canvas. Accept it (one undo step), Discard it, or Hide it, from its card or from the bar at the top of the canvas.",
 			"Nothing leaves the headset until you ask. Each question sends that one canvas to the provider you chose.",

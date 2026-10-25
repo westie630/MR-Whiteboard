@@ -117,6 +117,7 @@ func _init() -> void:
 	share.pdf_library = pdfs
 	share.show_pdf = place_pdf
 	share.ai_api = func(cmd: String, data: Dictionary) -> Dictionary: return ai.api(cmd, data)
+	share.keys_api = func(cmd: String, data: Dictionary) -> Dictionary: return ApiKeys.new(ai).api(cmd, data)
 	share.state_changed.connect(func(): changed.emit())
 	add_child(share)
 	session = Session.new()

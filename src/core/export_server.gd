@@ -22,6 +22,7 @@ extends Node
 ##   GET  /ai                 the AI assistant: API keys, models and thinking levels, asking about a canvas, its suggestions
 ##   GET  /api/ai/state       what the AI page shows (keys only as their last four characters)
 ##   POST /api/ai/<command>   key | select | refresh | ask | accept | discard | show | forget  (see AiController.api)
+##   GET  /keys               the API keys page: Claude, OpenAI, MiniMax and Wit.ai (GET /api/keys/state; POST /api/keys/set)
 ##
 ## It listens only while it is switched on. Because it can change things, every page needs the 6-digit access code shown in the
 ## headset (a new one each time it is switched on; a wrong code five times in a row locks that address for a minute), and every
@@ -54,6 +55,7 @@ var import_svg := Callable()              # (svg text, file name) -> {ok, messag
 var active_source := Callable()           # -> String: the canvas drawn on last (the live view can follow it)
 var backing_source := Callable()          # -> String: the backing canvases have unless they say otherwise (none | glass | dark | white)
 var ai_api := Callable()                  # (command, data) -> Dictionary: the AI assistant's page (AiController.api)
+var keys_api := Callable()                # (command, data) -> Dictionary: the API keys page (ApiKeys.api)
 var pdf_library: PdfLibrary               # the PDFs of the headset (null: no PDF section)
 var show_pdf := Callable()                # (pdf id) -> {ok, message, id, name}: puts one in front of the viewer
 var require_pin := true
@@ -414,6 +416,12 @@ func route(target: String) -> Dictionary:
 		return _html(200, WebPages.live(doc.name))
 	if path == "/ai":
 		return _html(200, WebPages.ai(doc.name))
+	if path == "/keys":
+		return _html(200, WebPages.keys(doc.name))
+	if path == "/api/keys/state":
+		if not keys_api.is_valid():
+			return _json_plain(501, {"ok": false, "message": "The keys page is not available."})
+		return _json_plain(200, keys_api.call("state", {}))
 	if path == "/api/ai/state":
 		if not ai_api.is_valid():
 			return _json_plain(501, {"ok": false, "message": "The assistant is not available."})
@@ -832,6 +840,11 @@ func _api(path: String, qs: String, body: PackedByteArray) -> Dictionary:
 	var doc: Document = doc_source.call() if doc_source.is_valid() else null
 	if doc == null:
 		return _json(503, {"ok": false, "message": "No document is open in the app."})
+	if path.begins_with("/api/keys/"):
+		if not keys_api.is_valid():
+			return _json_plain(501, {"ok": false, "message": "The keys page is not available."})
+		var kres: Dictionary = keys_api.call(path.substr(10), _json_body(body))
+		return _json_plain(200 if bool(kres.get("ok", false)) else 422, kres)
 	if path.begins_with("/api/ai/"):
 		if not ai_api.is_valid():
 			return _json_plain(501, {"ok": false, "message": "The assistant is not available."})

@@ -3,7 +3,7 @@ extends RefCounted
 ## The stylesheet, the script and the icons of the web pages the app serves (see ExportServer / WebPages). Kept as strings so they
 ## travel inside the app without any extra files in the export.
 
-const VERSION := 8                       # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
+const VERSION := 9                      # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
 
 const LOGO := r"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#g)"/><path d="M14 40c6-14 11-14 14-4s8 10 12-4 6-8 10-2" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="50" cy="19" r="4" fill="#fff" opacity=".85"/></svg>"""
 
@@ -984,6 +984,74 @@ const JS := r"""
     });
     document.addEventListener('visibilitychange', function () { if (!document.hidden) soon(); });
     load();
+  }
+
+  // ---- API keys: one box per service (the AI providers and Wit.ai); a saved key is only ever shown as its last four characters
+  var keysPage = $('#keys');
+  if (keysPage) {
+    var kBox = $('#keys-list'), kTimer = null, kFails = 0, kBuilt = false, kList = [];
+    var kSoon = function (ms) { clearTimeout(kTimer); kTimer = setTimeout(kLoad, ms || 250); };
+    var kRender = function () {
+      if (!kBuilt) {
+        kBox.innerHTML = '';
+        kList.forEach(function (s) {
+          var el = document.createElement('div');
+          el.className = 'prov';
+          el.setAttribute('data-s', s.id);
+          el.innerHTML = '<div class="prov-h"><b>' + esc(s.name) + '</b><span class="chip">' + esc(s.what) + '</span><span class="chip keyhint"></span>' +
+            '<a class="get" target="_blank" rel="noopener" href="' + esc(s.keys_url) + '">Get a key</a></div>' +
+            '<div class="ai-row"><input class="field key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your ' + esc(s.name) + (s.id === 'wit' ? ' server access token' : ' API key') + '">' +
+            '<button class="btn" data-k="save">Save</button><button class="icon-btn danger" data-k="remove" title="Remove the key">' + icon('trash') + '</button></div>' +
+            '<div class="note"></div>';
+          kBox.appendChild(el);
+        });
+        kBuilt = true;
+      }
+      kList.forEach(function (s) {
+        var el = $('.prov[data-s="' + s.id + '"]', kBox);
+        if (!el) return;
+        var kh = $('.keyhint', el);
+        kh.textContent = s.has_key ? 'Key ' + s.key_hint : 'No key';
+        kh.classList.toggle('here', s.has_key);
+        $('.note', el).textContent = s.note;
+        $('[data-k=remove]', el).hidden = !s.has_key;
+      });
+      var n = kList.filter(function (s) { return s.has_key; }).length;
+      $('#keys-stat').textContent = n + ' of ' + kList.length + ' keys saved';
+    };
+    var kLoad = function () {
+      fetch('/api/keys/state', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) {
+        if (r.status === 401) { location.href = '/login'; return null; }
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      }).then(function (j) {
+        if (!j) return;
+        kFails = 0; kList = j.services; kRender();
+        var live = $('.live'); if (live) live.classList.remove('off');
+      }).catch(function () {
+        if (++kFails > 1) { var live = $('.live'); if (live) live.classList.add('off'); }
+      }).then(function () { kSoon(document.hidden ? 8000 : 4000); });
+    };
+    var kSave = function (el) {
+      var inp = $('.key', el), v = inp.value.trim();
+      if (!v) { inp.focus(); return; }
+      api('/api/keys/set', { service: el.getAttribute('data-s'), key: v, use: '1' }).then(function (j) { inp.value = ''; toast(j.message); kSoon(); }).catch(function (e) { toast(e.message, true); });
+    };
+    keysPage.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      var el = b.closest('.prov'), k = b.getAttribute('data-k');
+      if (k === 'save') kSave(el);
+      else if (k === 'remove') {
+        dialog({ title: 'Remove the ' + $('b', el).textContent + ' key?', text: 'The headset forgets it.', ok: 'Remove', danger: true }).then(function (yes) {
+          if (yes) api('/api/keys/set', { service: el.getAttribute('data-s'), key: '' }).then(function (j) { toast(j.message); kSoon(); }).catch(function (err) { toast(err.message, true); });
+        });
+      }
+    });
+    keysPage.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && e.target.classList.contains('key')) { e.preventDefault(); kSave(e.target.closest('.prov')); }
+    });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) kSoon(); });
+    kLoad();
   }
 
   bind();
