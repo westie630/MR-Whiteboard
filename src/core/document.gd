@@ -25,6 +25,7 @@ var items: Dictionary = {}                # id -> Item
 var next_z := 1
 var last_room := ""
 var path := ""
+var transient := false                    # a copy that belongs to a shared session (DocSync): never written to the documents folder
 
 var _by_frame: Dictionary = {}            # frame id -> Array of item ids (kept in z order lazily)
 var _dirty_index := true
@@ -209,7 +210,7 @@ func items_of(frame_id: String) -> Array:
 				_by_frame[fid] = []
 			_by_frame[fid].append(it)
 		for k in _by_frame.keys():
-			(_by_frame[k] as Array).sort_custom(func(a, b): return a.z < b.z)
+			(_by_frame[k] as Array).sort_custom(func(a, b): return a.z < b.z or (a.z == b.z and a.id < b.id))   # the id breaks a tie the same way on every headset
 		_dirty_index = false
 	return (_by_frame.get(frame_id, []) as Array).duplicate()
 
@@ -292,6 +293,8 @@ static func from_dict(d: Dictionary) -> Document:
 
 
 func save(file_path: String = "") -> Error:
+	if transient and file_path == "":
+		return OK
 	if file_path != "":
 		path = file_path
 	if path == "":
@@ -310,12 +313,38 @@ func save(file_path: String = "") -> Error:
 
 
 static func load_file(file_path: String) -> Document:
-	if not FileAccess.file_exists(file_path):
-		return null
-	var text := FileAccess.get_file_as_string(file_path)
-	var parsed: Variant = JSON.parse_string(text)
-	if not (parsed is Dictionary) or (parsed as Dictionary).get("format", "") != "mr-whiteboard":
+	var parsed: Variant = _parse(file_path)
+	if parsed == null and recover_file(file_path):
+		parsed = _parse(file_path)
+	if parsed == null:
 		return null
 	var doc := Document.from_dict(parsed)
 	doc.path = file_path
 	return doc
+
+
+## The file's contents if it is a whole document, else null.
+static func _parse(file_path: String) -> Variant:
+	if not FileAccess.file_exists(file_path):
+		return null
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(file_path))
+	if not (parsed is Dictionary) or (parsed as Dictionary).get("format", "") != "mr-whiteboard":
+		return null
+	return parsed
+
+
+## A save cut short (the app killed or the headset switched off between writing the new file and putting it in place) leaves the
+## document missing, or damaged, with a whole copy beside it: the new one (.tmp, written completely but not yet renamed) or the one
+## before (.bak). The newest whole copy is put back in place; a damaged file is kept aside as .damaged. False if there is none.
+static func recover_file(file_path: String) -> bool:
+	for cand in [file_path + ".tmp", file_path + ".bak"]:
+		if _parse(cand) == null:
+			continue
+		if FileAccess.file_exists(file_path):
+			DirAccess.remove_absolute(file_path + ".damaged")
+			DirAccess.rename_absolute(file_path, file_path + ".damaged")
+		if DirAccess.copy_absolute(cand, file_path) != OK:
+			return false
+		print("[docs] %s was recovered from %s" % [file_path.get_file(), cand.get_file()])
+		return true
+	return false

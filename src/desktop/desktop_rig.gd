@@ -142,6 +142,9 @@ func _place_ui() -> void:
 	var sf := ui.surface_card
 	if sf.visible:
 		sf.position = Vector2(win.x - MARGIN - sf.size.x * sc, maxf(dock_top - 14.0 - sf.size.y * sc, MARGIN))
+	var ac := ui.align_card
+	if ac.visible:
+		ac.position = Vector2(win.x - MARGIN - ac.size.x * sc, maxf(dock_top - 14.0 - ac.size.y * sc, MARGIN))
 	# Home on the left, the assistant on the right, as tall as there is room above the dock
 	var avail := (dock_top - 2.0 * MARGIN) / sc
 	for sp in [ui.home, ui.assistant]:
@@ -442,8 +445,8 @@ func _update_pen() -> void:
 				best_t = t
 				tip = o + d * t
 	var feels := true
-	if board.surface.finding():
-		# feeling for the desk: the nib lands on the simulated room's tables and walls, and feels nothing in the air
+	if board.surface.finding() or board.session.aligning():
+		# feeling for the desk (or for the points a session lines up on): the nib lands on the simulated room's tables and walls, and feels nothing in the air
 		var hit := _surface_hit(o, d)
 		feels = not hit.is_empty()
 		if feels:

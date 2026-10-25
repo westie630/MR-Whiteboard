@@ -19,6 +19,7 @@ static func ai_path(id: String) -> String:
 static func list() -> Array:
 	var out: Array = []
 	DirAccess.make_dir_recursive_absolute(dir())
+	_recover()
 	for f in DirAccess.get_files_at(dir()):
 		if not f.ends_with("." + Document.EXT):
 			continue
@@ -28,6 +29,16 @@ static func list() -> Array:
 			out.append(d)
 	out.sort_custom(func(a, b): return a.modified > b.modified)
 	return out
+
+
+## Documents whose save was cut short exist only as their .tmp or .bak copy: put them back (see Document.recover_file).
+static func _recover() -> void:
+	for f in DirAccess.get_files_at(dir()):
+		for ext in [".tmp", ".bak"]:
+			if f.ends_with("." + Document.EXT + ext):
+				var main := dir() + "/" + f.trim_suffix(ext)
+				if not FileAccess.file_exists(main):
+					Document.recover_file(main)
 
 
 static func _summary(p: String) -> Dictionary:
@@ -100,8 +111,8 @@ static func delete(id: String) -> Array:
 	if d != null:
 		mine = anchors_of(d)
 	var p := path_for(id)
-	DirAccess.remove_absolute(p)
-	DirAccess.remove_absolute(p + ".bak")
+	for ext in ["", ".bak", ".tmp", ".damaged"]:              # (every copy: a left-over one would be recovered, see _recover)
+		DirAccess.remove_absolute(p + ext)
 	if FileAccess.file_exists(ai_path(id)):
 		DirAccess.remove_absolute(ai_path(id))
 	var shared := {}

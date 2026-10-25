@@ -34,6 +34,7 @@ var cursor_pos := Vector2.ZERO
 var cursor_dist := 0.0
 var lasso := PackedVector2Array()
 var snapped_shape := ""                    # id of the shape the stroke has snapped to (for the toast / UI)
+var live_id := ""                          # the id the item of the stroke being drawn will get: what the others of a session see it by meanwhile
 
 var _live: LiveStroke
 var _live_fn: FrameNode
@@ -106,6 +107,40 @@ func update(pen: PenState, dt: float) -> void:
 	_prev_down = pen.down
 
 
+## What this pointer is in the middle of, as plain data for a session to show to the others (LiveOut): {} when it is idle. Keys:
+##   stroke  the stroke being drawn: {id, frame, brush, color, width, pts, n, vis}
+##   drag    items being carried or resized as a group: {f, ids, t: the transform they are shown with}
+##   work    one shape being reshaped, or a stencil being dragged out: {f, item (a dictionary), ghost}
+##   erase   what the eraser has touched: {ids}
+func live_view() -> Dictionary:
+	var out := {}
+	match state:
+		S.DRAWING:
+			if _live != null and not _live_volume and is_instance_valid(_live_fn) and live_id != "":
+				out["stroke"] = {"id": live_id, "frame": _live_fn.data.id, "brush": _live.brush, "color": _live.color.to_html(), "width": _live.width,
+					"pts": _live.pts, "n": _live.point_count(), "vis": _live.visible}
+				if _ghost_item != null:
+					out["work"] = {"f": _live_fn.data.id, "item": _ghost_item.to_dict(), "ghost": true}
+		S.DRAG_ITEMS:
+			if is_instance_valid(_drag_fn) and _drag_fn.is_canvas:
+				out["drag"] = {"f": _drag_fn.data.id, "ids": _drag_ids.duplicate(), "t": Transform3D(Basis.IDENTITY, Vector3(_drag_delta.x, _drag_delta.y, 0.0))}
+		S.DRAG_HANDLE:
+			if is_instance_valid(_drag_fn) and _drag_fn.is_canvas:
+				if _work != null:
+					out["work"] = {"f": _drag_fn.data.id, "item": _work.to_dict(), "ghost": false}
+				else:
+					var xf := _drag_xf
+					out["drag"] = {"f": _drag_fn.data.id, "ids": _drag_ids.duplicate(),
+						"t": Transform3D(Basis(Vector3(xf.x.x, xf.x.y, 0), Vector3(xf.y.x, xf.y.y, 0), Vector3(0, 0, 1)), Vector3(xf.origin.x, xf.origin.y, 0))}
+		S.SHAPE_DRAG:
+			if is_instance_valid(_shape_fn) and _ghost_item != null:
+				out["work"] = {"f": _shape_fn.data.id, "item": _ghost_item.to_dict(), "ghost": true}
+		S.ERASING:
+			if not _erase_set.is_empty():
+				out["erase"] = {"ids": _erase_set.keys()}
+	return out
+
+
 ## The frame an item or handle drag is working on (a hand keeps pointing at its plane while the drag lasts), or null.
 func working_frame() -> FrameNode:
 	if state == S.DRAG_ITEMS or state == S.DRAG_HANDLE:
@@ -147,6 +182,9 @@ func _update_cursor(pen: PenState) -> void:
 # ------------------------------------------------------------------------------------------------ beginnings
 
 func _begin_down(pen: PenState) -> void:
+	if not board.can_edit():
+		board.deny_edit()
+		return
 	_filter.reset()
 	_pressure = maxf(pen.pressure, 0.2)
 	if _begin_on_button(pen):
@@ -225,6 +263,7 @@ func _begin_draw(pen: PenState, write: bool) -> void:
 	if write:
 		brush = "pen"
 	_live.begin(volume, brush, col, _brush_width(fn), Brushes.priority(brush, board.doc.next_z))
+	live_id = U.uid("i")
 	_add_sample(pen, fn, 0.011, true)
 	_snap = {}
 	_hold_t = 0.0
@@ -392,6 +431,7 @@ func _try_snap(pen: PenState) -> void:
 	_snap = rec
 	_snap_anchor = _live.last_point()
 	_ghost_item = board.make_shape(_live_fn.data.id, rec)
+	_ghost_item.id = live_id
 	_ghost_view = ItemView.new()
 	_live_fn.add_live(_ghost_view)
 	_ghost_view.setup(_ghost_item, false)
@@ -441,6 +481,8 @@ func _finish_draw() -> void:
 				pts = _straighten_3d(pts)
 			var brush := _live.brush
 			item = Item.make_stroke(fn.data.id, pts, _live.color, _live.width, brush)
+	if live_id != "":
+		item.id = live_id                           # a stroke, a recognised shape or a snapped one: the others have been watching this id
 	var times := _live.times.duplicate()
 	var write := _write_mode
 	_clear_live()

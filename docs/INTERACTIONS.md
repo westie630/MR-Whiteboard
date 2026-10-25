@@ -17,7 +17,7 @@ Contents: [1 Vocabulary](#1-vocabulary) · [2 One vocabulary for both tools](#2-
 |---|---|
 | **Pointer** | Anything that can act on the board: a hand, or the stylus. |
 | **Nib** / **tip** | The 3D position of the stylus tip (`PenState.tip`). |
-| **Stylus ray** | A line from the nib along the body of the stylus (`PenState.dir`). The direction is learnt once from grip to nib (45 frames), so twisting the stylus does not swing it. |
+| **Stylus ray** | A line from the nib along the body of the stylus (`PenState.dir`): −Z of the runtime's aim pose for the stylus, which on the MX Ink is −Z of the nib pose too, so twisting the stylus does not swing it. Not the line from the grip pose to the nib: the grip pose sits 3 cm off the stylus's centre line, so that line is 18° off (measured on a Quest 3). |
 | **Hand ray** | The runtime's *aim pose* for a hand (the same ray Quest's own menus use). Falls back to knuckle-to-fingertip when the runtime does not report the hand interaction profile. |
 | **Pinch** | Thumb and index finger closed (`HandInput`). The hand's "click" and "grab". |
 | **Pinch point** | The point between thumb tip and index tip. For the stylus it is the nib. It is what *carries* things. |
@@ -35,7 +35,7 @@ Five verbs. Each is the same gesture for every tool, so what you learn on one ca
 
 | Verb | Hands | Stylus | What it does |
 |---|---|---|---|
-| **Point** | hand ray; a ring shows where | stylus ray (nib away from the canvas); the same ring | shows what a grab would pick up |
+| **Point** | hand ray; a ring shows where | stylus ray (nib away from the canvas); the same ring, and a beam out of the nib | shows what a grab would pick up |
 | **Act** | (hands never draw; with "Draw with a pinch" the right hand's pinch is the nib) | tip or middle button | the current tool: draw, write, erase, select, shape |
 | **Grab** | pinch | front button | select and drag an item · carry a canvas (bar, empty canvas) · resize (corner) · move the menu (its bar) |
 | **Undo** | menu buttons | back button; menu buttons | undo (redo: front and back together, or the menu button) |
@@ -171,10 +171,10 @@ when in [ui_shell.gd](../src/ui/ui_shell.gd).
 
 | Panel | Where it floats | Shown |
 |---|---|---|
-| **Dock** (tools, brush, undo / redo, Add, assistant, Home) | low in front of you (section 7); has a handle | always |
+| **Dock** (tools, brush, undo / redo, Add, assistant, Home) | low in front of you (section 7) until you move it by its handle; then where you left it in the room, kept by an anchor across restarts, the headset off and on and recentring (it comes in front at start only if that place is over 2.5 m away or not found in 5 s) | always |
 | **Popover** (Brush, Shapes, Handwriting, Add) | standing on the dock, over the button it came from | tap the active tool again, the brush chip, or Add; drawing on a canvas closes it |
 | **Typing card** (text box + keyboard) | standing on the dock | Type, renaming, keys |
-| **Home**, **Assistant** | beside the dock (left / right), a little higher, turned to you; each has a handle | from the dock; Esc / close |
+| **Home**, **Assistant** | beside the dock (left / right), a little higher, turned to you; each has a handle, and once moved opens where it was left (if within 2.5 m) | from the dock; Esc / close; open again after a restart if they were open |
 | **Selection bar**, **ink chip**, **suggestion bar** | pinned to the canvas, 12 mm in front of it: above the selection, right of handwriting, inside the top of a canvas with an AI suggestion | while there is one; they step away while the pen draws or a hand carries something |
 | **Message** | 0.75 m ahead, a little above the eyes, following the head lazily | a few seconds |
 
@@ -373,7 +373,8 @@ PC: **F** starts it; the mouse ray lands on the simulated room's table top or wa
 
 ### 11.1 Cursors, [hand_cursor.gd](../src/xr/hand_cursor.gd)
 
-A ring on the target, facing the head, **the same apparent size at any distance** (clamped 6 to 50 mm). **No line is drawn from the hand to the ring.**
+A ring on the target, facing the head, **the same apparent size at any distance** (clamped 6 to 50 mm). **No line is drawn from a hand to its ring**
+(the stylus has one, below).
 
 | Ring colour | Meaning |
 |---|---|
@@ -389,6 +390,20 @@ Plus, over any canvas a hand is on: four **corner dots** and the **bar capsule**
 The stylus gets the same ring and chrome **while it points from a distance or holds something**, and a ring on the menu. Touching a canvas it
 draws: its cursor is drawn *into the canvas* by the tool (dot + ring for brushes, red ring for erase, white dot for select, cross for shape)
 and brightens as the nib approaches.
+
+**The stylus's beam** ([stylus_ray.gd](../src/xr/stylus_ray.gd)), like the Quest's own controller ray: a line out of the nib along the
+stylus (the aim pose's -Z), 4 mm wide with a faint dark edge so it reads on a white canvas or wall, never thinner than 1.5 px on the screen
+(fainter instead). It starts 4 mm out of the nib, comes up to 80 % over 2 cm, and fades along its length:
+
+| The stylus is | The beam |
+|---|---|
+| pointing at the menu, a canvas, a drawing, a corner or the bar of a panel | runs to the ring (stops at its edge), fading to 40 %, white at the nib and the ring's colour at the end |
+| carrying a canvas or a panel from afar | runs to the canvas's plane / to the panel's bar |
+| pointing at nothing | 0.5 m long, fading out |
+| pressing (front button) | the ring's green over the whole beam |
+| touching a canvas (within 12 cm), the menu or a bar, or the nib pressed on a real surface | none |
+
+Home > Settings > **Pointing line** switches it off (`stylus_ray`). Hands have no beam.
 
 ### 11.2 Gloves, sounds and haptics
 
@@ -420,7 +435,7 @@ All in [input_tuning.gd](../src/core/input_tuning.gd) (`InputTuning`). The scrip
 |---|---|
 | Pinch | `PINCH_ON` 0.9 · `PINCH_OFF` 0.6 · `CLOSE_START` 0.35 · `CLOSE_CANCEL` 0.2 · `RISE_STEP` 0.003 · `JOINT_ON` 22 mm · `JOINT_FAR` 65 mm · `LOST_GRACE` 0.15 s · `PINCH_HISTORY_S` 0.6 · `PALM_UP_Y` 0.6 · `AIM_DOT_PROFILE` 0 · `AIM_DOT_JOINT` 0.1 |
 | Desk | see 10.1: `PlaneFit` and `SurfaceController` constants (kept in those files: they are about measuring, not feel) |
-| Stylus | `TIP_ON` 0.035 · `TIP_OFF` 0.018 · `MID_ON` 0.09 · `MID_OFF` 0.05 · `AXIS_SAMPLES` 45 · `PRESSURE_EXP` 0.75 · `STYLUS_FILTER` (2.2, 45) |
+| Stylus | `TIP_ON` 0.035 · `TIP_OFF` 0.018 · `MID_ON` 0.09 · `MID_OFF` 0.05 · `NIB_SAMPLES` 45 (aligns the stylus model) · `PRESSURE_EXP` 0.75 · `STYLUS_FILTER` (2.2, 45) |
 | Menu | `POKE_PRESS` 15 mm · `POKE_RELEASE` 30 mm · `POKE_BEHIND` 5 cm · `POKE_FRONT` 8 cm · `POKE_MARGIN` 1 cm · `MENU_RAY_REACH` 1.4 m · `HANDLE_Y` 3 cm · `HANDLE_NEAR` 7 cm · `HANDLE_RAY_R` 6 cm · `MENU_MAX_DIST` 2.5 m · `SCROLL_DEADZONE` 14 px · `SCROLL_SIDE` 1.6 · `GLOVES_OFF_NEAR` 0.2 m |
 | Bringing the menu | `SUMMON_HOLD_S` 0.6 s · `PALM_SUMMON_DIST` 0.7 m · `PALM_REARM_S` 2 s · `SUMMON_AHEAD` 0.55 · `SUMMON_RIGHT` 0 · `SUMMON_UP` -0.3 · `SUMMON_STYLUS_CANVAS` 0.14 m |
 | Pen on the board | `CAPTURE` 0.12 m · `SLACK` 0.6 m · `HOVER_RANGE` 0.28 m · `MIN_STEP` 0.9 mm · `HOLD_MOVE` 4 mm · `UNSNAP_MOVE` 12 mm (×2 in use) · `ERASE_R` 14 mm · `PICK_R` 13 mm · `HANDLE_HIT` 34 mm · `BTN_HIT` 28 mm · `LASSO_INSIDE` 0.6 · `SHAPE_TAP` 25 mm · `MIN_LINE` 2 cm · `hold_seconds` setting 0.55 s |

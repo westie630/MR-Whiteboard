@@ -74,7 +74,7 @@ func _ready() -> void:
 	ui.close_popover()
 	# every Home tab
 	ui.open_side("home")
-	for tab in ["docs", "canvas", "rooms", "share", "settings"]:
+	for tab in ["docs", "canvas", "rooms", "share", "settings", "guide"]:
 		ui.home.select_tab(tab)
 		await _frames(4)
 		pressed += await _press_all(ui.home, func():
@@ -110,6 +110,7 @@ func _ready() -> void:
 	await _selection_bar()
 	await _flow_rules()
 	await _desk_card()
+	await _guide()
 	await _chat()
 
 	# Quit needs a second press: the first only arms it (and times out again)
@@ -289,6 +290,72 @@ func _desk_card() -> void:
 	t.check(board.surface.finding() and str(board.surface.calib.target) != "", "...which feels for the desk to lay that canvas on it")
 	board.surface.cancel()
 	ui.close_side("home")
+	await _frames(4)
+
+
+## The guide: the ? in Home's header opens it, every topic opens, its Try-it buttons only use actions the guide knows and do their
+## thing for real (a tool, a popover, a ring round a dock button, a tab, placing a canvas ...), and the first start opens it once.
+func _guide() -> void:
+	ui.open_side("home")
+	ui.home.select_tab("docs")
+	await _frames(4)
+	ui.home.help_btn.pressed.emit()
+	t.check(ui.home.tab == "guide" and ui.home.help_btn.on, "the ? in Home's header opens the guide")
+	var g: GuidePage = ui.home.guide_page
+	g.show_topic("")
+	t.check(g.open_topic() == "" and _btn(ui.home, "Draw") != null, "the list of topics")
+	var topics := GuidePage.topics()
+	t.check(topics.size() >= 12, "there is a topic for every feature (%d)" % topics.size())
+	var tries := 0
+	for tp in topics:
+		g.show_topic(tp.id)
+		await _frames(2)
+		t.eq(g.open_topic(), str(tp.id), "the topic %s opens" % tp.id)
+		for blk in tp.blocks:
+			if blk[0] == "try":
+				for a in blk[1]:
+					tries += 1
+					t.check(GuidePage.known_actions().has(str(a[2]).get_slice(":", 0)), "%s: \"%s\" is an action the guide does" % [tp.id, a[1]])
+	t.check(tries >= 15, "the topics offer %d things to try" % tries)
+	g.show_topic("draw")
+	t.check(_btn(ui.home, "Next: Shapes and diagrams") != null, "a topic leads on to the next one")
+	g.show_topic("")
+	g.do("tool:erase")
+	t.check(App.val("tool") == "erase" and ui.dock.tool_btns["erase"].is_pulsing(), "Try it: a tool is picked and its button breathes")
+	g.do("pop:brush")
+	t.check(ui.popover_id == "brush" and ui.dock.brush_chip.is_pulsing(), "...the brush opens with a ring round the colour dot")
+	ui.close_popover()
+	g.do("pulse:undo")
+	t.check(ui.dock.undo_btn.is_pulsing(), "...a ring on Undo")
+	g.do("all:")
+	t.check(ui.dock.home_btn.is_pulsing() and ui.dock.add_btn.is_pulsing() and ui.dock.ai_btn.is_pulsing(), "...or on the whole toolbar")
+	g.do("tab:canvas")
+	t.eq(ui.home.tab, "canvas", "...a tab of Home")
+	g.do("place:wall")
+	t.check(not board.placing.is_empty(), "...a canvas ghost to put on a wall")
+	board.cancel_place()
+	g.do("type:")
+	t.check(ui.entry_open(), "...the typing card")
+	ui.close_entry()
+	g.do("side:assistant")
+	t.check(ui.is_side_open("assistant") and ui.is_side_open("home"), "...the assistant, beside the guide")
+	ui.close_side("assistant")
+	g.do("desk:")
+	t.check(board.surface.finding(), "...the search for the desk")
+	board.surface.cancel()
+	# a visit to the guide is not the tab Home opens on
+	ui.home.select_tab("rooms")
+	ui.home.select_tab("guide")
+	t.eq(str(App.val("menu_tab")), "rooms", "the guide is not remembered as Home's tab")
+	ui.home.help_btn.pressed.emit()
+	t.eq(ui.home.tab, "docs", "the ? again goes back")
+	# the first start shows it, once
+	ui.close_side("home")
+	App.put("guide_seen", false)
+	t.check(ui.welcome(), "the first start opens the guide")
+	t.check(ui.is_side_open("home") and ui.home.tab == "guide" and ui.dock.home_btn.is_pulsing() and bool(App.val("guide_seen")), "...beside the dock, with a ring round Home")
+	ui.close_side("home")
+	t.check(not ui.welcome() and not ui.is_side_open("home"), "...and never again")
 	await _frames(4)
 
 

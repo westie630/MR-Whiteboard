@@ -8,10 +8,19 @@ signal toast(text: String)
 signal changed()                           # tool, selection, room or document state changed: the UI refreshes
 signal document_opened()
 
-const ROOM_SEARCH_S := 7.0                 # how long to look for a known room before showing the last one in front of the user
+const ROOM_SEARCH_S := 10.0                # how long to look for a known room (with the headset on) before showing the last one in front of the user
+const ROOM_HOLD_S := 2.0                   # a room whose anchors drop out for less than this (the headset re-localising) stays where it was
+const ROOM_PICK_S := 3.0                   # after the start (or the headset put back on) the room shown may still change this long (see _pick_room)...
+const ROOM_NEARER_M := 0.5                 # ...to a room the user is at least this much nearer to
 const REACH_DIST := 0.6                    # metres in front of the eyes where a canvas is put to be drawn on (arm's length)
+const DESK_DIST := 0.45                    # ...and along the floor where a canvas lying flat is put (on a desk in front of you)
 const RECONCILE_S := 0.6
 const ANCHOR_LOST_S := 14.0                # a frame anchor without a pose for this long, in a room that is here, is considered lost
+const REFRESH_M := 0.01                    # a canvas's place in its room is corrected from its own anchor when they disagree by more than this...
+const REFRESH_DEG := 0.5                   # ...or this
+const AGREE_M := 0.05                      # anchors that put a room within this of each other agree on where it is
+const RETRY_MIN_S := 3.0                   # an anchor that could not be made is tried again after this, doubling up to RETRY_MAX_S
+const RETRY_MAX_S := 60.0
 const AUTOSAVE_S := 1.5
 const CAPTURE := InputTuning.CAPTURE       # a pen this close (m) to a canvas draws on it
 const HOVER_RANGE := InputTuning.HOVER_RANGE
@@ -24,7 +33,17 @@ var surface_hit := Callable()              # (origin, dir) -> {point, normal} fo
 
 var current_room := ""
 var room_state := "none"                   # none | searching | found | assumed (anchors not found: shown in front) | unanchored
+## False while the headset is off or its session is not running (set by the XR rig): anchors have no pose then, and that is not a
+## reason to give up on the room.
+var tracking_live := true
 var _assumed := {}                         # room id -> world pose it is shown at while its anchors are not found
+var _located := {}                         # room id -> world pose from its anchors this tick (or held through a short dropout)
+var _located_by := {}                      # room id -> "room" (its own anchor) | "frame" (a canvas's anchor) | "hold"
+var _last_world := {}                      # room id -> {xf, age}: the last pose its anchors gave
+var _moved_unanchored := {}                # frame id -> true: put somewhere while its room was only assumed; it gets its own anchor there
+var _retry_at := {}                        # anchor tag -> msec before which it is not tried again (after a failure)
+var _fails := {}                           # anchor tag -> failures in a row
+var _fail_toast_ms := -100000
 var frame_nodes: Dictionary = {}           # frame id -> FrameNode
 var active_frame := ""                     # the canvas last drawn on / selected: the one Home > Canvases styles
 var selection: Array = []                  # selected item ids (all on sel_frame)
@@ -35,6 +54,7 @@ var bar_ghost: Dictionary = {}
 var stencil := "rect"
 var placing: Dictionary = {}               # canvas placement in progress: {kind, ghost, size}
 var grabs: Dictionary = {}                 # frame id -> {xf: Transform3D (world), scale: float} while a hand holds it
+var remote_grabs: Dictionary = {}          # frame id -> {xf: Transform3D (in its room), scale} while somebody else of the session carries it (LivePreview)
 var pen_ctl: PenController
 var hand_ctl: HandController
 var ink: InkController
@@ -43,6 +63,7 @@ var texts: TextController
 var ai: AiController                       # the AI assistant (ask a language model about a canvas; its suggestion layers)
 var surface: SurfaceController             # the desk: canvases bound to a physical surface found with the stylus nib
 var share: ExportServer                   # the web server that lets a PC browser view / download the canvases (off until switched on)
+var session: Session                       # a session: this headset hosting one (the owner) or in one (a guest); see Session
 var head := Transform3D(Basis.IDENTITY, Vector3(0, 1.6, 0))
 
 var _import_time := -100000                # when a canvas was last added from the web page, and where its right edge is (metres along the viewer's right)
@@ -53,12 +74,16 @@ var _no_room_t := 0.0
 var _reconcile_t := 0.0
 var _save_due := -1.0
 var _room_auto_t := 0.0
+var _picking := true                       # the board is still choosing which of the rooms found the user is in (see _pick_room)
+var _pick_t := 0.0
 var _overlay_cb: Dictionary = {}
 var _lost_t: Dictionary = {}
 var _pending_pose: Dictionary = {}
+var _pending_guess: Dictionary = {}        # anchor tag -> true when it is made while the room's place is only guessed
 var _orphans: Array = []
 var _was_down := false
 var _was_back := false
+var _denied_t := -100000                   # when the guest was last told that editing is off (ticks, ms)
 
 
 func _init() -> void:
@@ -82,21 +107,31 @@ func _init() -> void:
 	share.ai_api = func(cmd: String, data: Dictionary) -> Dictionary: return ai.api(cmd, data)
 	share.state_changed.connect(func(): changed.emit())
 	add_child(share)
+	session = Session.new()
+	session.board = self
+	session.said.connect(func(t: String): toast.emit(t))
+	session.changed.connect(_on_session_changed)
+	add_child(session)
 
 
 func setup(anchor_service: AnchorService) -> void:
 	anchors = anchor_service
 	anchors.created.connect(_on_anchor_created)
 	anchors.create_failed.connect(_on_anchor_failed)
+	session.bind(anchors)
 	App.setting_changed.connect(_on_setting)
 
 
 # ------------------------------------------------------------------------------------------------ documents
 
 func open(d: Document) -> void:
+	if session.role == Session.Role.CLIENT and d != session.client_doc and not session.opening:
+		session.leave(true, false)                 # a guest who opens a document of their own has left the session
 	close_document()
 	doc = d
 	history = History.new(d)
+	history.read_only = not can_edit()
+	history.refused.connect(deny_edit)
 	history.changed.connect(func(): changed.emit())
 	doc.item_added.connect(_on_item_added)
 	doc.item_removed.connect(_on_item_removed)
@@ -110,14 +145,23 @@ func open(d: Document) -> void:
 	current_room = ""
 	room_state = "searching" if not doc.rooms.is_empty() else "none"
 	_assumed.clear()
+	_located.clear()
+	_located_by.clear()
+	_last_world.clear()
+	_moved_unanchored.clear()
+	_retry_at.clear()
+	_fails.clear()
 	_no_room_t = 0.0
 	_room_auto_t = 0.0
+	_picking = true
+	_pick_t = 0.0
 	selection.clear()
 	sel_frame = ""
 	active_frame = ""
 	if anchors != null:
 		anchors.track(DocStore.anchors_of(doc))
-	App.put("last_doc", doc.id)
+	if not doc.transient:
+		App.put("last_doc", doc.id)
 	ai.open_doc()
 	document_opened.emit()
 	changed.emit()
@@ -127,15 +171,16 @@ func close_document() -> void:
 	if doc == null:
 		return
 	flush_save()
-	if anchors != null:
-		for a in DocStore.anchors_of(doc):
-			anchors.untrack(a)
+	# the document's anchors stay tracked: going back to it later finds its room at once instead of searching again
 	for fn in frame_nodes.values():
 		(fn as Node).queue_free()
 	frame_nodes.clear()
 	grabs.clear()
+	remote_grabs.clear()
 	_held.clear()
 	_pending.clear()
+	_pending_pose.clear()
+	_pending_guess.clear()
 	ink.reset()
 	cancel_place()
 	surface.reset()
@@ -256,6 +301,38 @@ func _on_item_changed(it: Item) -> void:
 		_dirty_overlay(it.frame)
 
 
+## May this headset change what is on the canvases? Always, unless it is a guest whose owner has switched editing off.
+func can_edit() -> bool:
+	return session == null or session.can_edit()
+
+
+## May it add, remove, restyle or move canvases? A guest only with the owner's say-so; `announce` tells them when not.
+func canvas_edit_ok(announce: bool = true) -> bool:
+	if session == null or session.can_edit_canvases():
+		return true
+	if announce:
+		deny_edit()
+	return false
+
+
+## Say, at most every few seconds, why nothing happened.
+func deny_edit() -> void:
+	var now := Time.get_ticks_msec()
+	if now - _denied_t < 3000:
+		return
+	_denied_t = now
+	if session != null and session.is_client() and not session.can_edit():
+		toast.emit("The owner has switched editing off: you can look, not change.")
+	else:
+		toast.emit("Only the owner can add, remove or move canvases.")
+
+
+func _on_session_changed() -> void:
+	if history != null:
+		history.read_only = not can_edit()
+	changed.emit()
+
+
 func _on_setting(key: String) -> void:
 	if key in ["grid", "grid_minor", "backing", "grid_focus"]:
 		for fn in frame_nodes.values():
@@ -272,19 +349,105 @@ func _on_setting(key: String) -> void:
 func room_world(room_id: String) -> Variant:
 	if room_id == "" or doc == null:
 		return null
+	if session.is_client():
+		return session.room_world(room_id)         # the session's room is wherever this guest's alignment puts it
 	if anchors == null or not anchors.is_supported():
 		return Transform3D.IDENTITY
 	var r := doc.room(room_id)
 	if r.is_empty():
 		return null
-	var a := str(r.anchor)
-	if a != "" and anchors.has_pose(a):
-		return _smooth("room:" + room_id, anchors.pose(a), 0.016)
+	if _located.has(room_id):
+		return _located[room_id]               # where its anchors put it this tick (see _locate_rooms)
 	if _assumed.has(room_id):
 		return _assumed[room_id]               # its anchors are not found: shown where the board put it (see _assume_room)
-	if a == "":
+	if str(r.anchor) == "":
 		return r.anchor_xf                    # made this session, its anchor is still being created
 	return null
+
+
+## Where a room is, from its anchors: its own anchor when that is tracked; failing that, any canvas of the room whose own anchor is
+## tracked (each was made at a known place in the room, anchor_xf), the place most of them agree on. Anchors made while the room's
+## place was only guessed count only when there is nothing else ("guess": the room is then where it was guessed to be, which is where
+## the user last saw it). Only the turn about the vertical is kept: rooms stand level, and the tilt a tracked anchor wobbles by would
+## swing canvases metres away by centimetres. {xf, by: room | frame | guess} or {} when none of them is tracked.
+func _anchored_room(room_id: String) -> Dictionary:
+	var r := doc.room(room_id)
+	if r.is_empty():
+		return {}
+	var a := str(r.anchor)
+	if a != "" and anchors.has_pose(a):
+		return {"xf": _level(anchors.pose(a)), "by": "room"}
+	var cands: Array = []
+	var guesses: Array = []
+	var ids: Array = doc.frames_in(room_id).map(func(f): return (f as FrameData).id)
+	ids.sort()
+	for fid in ids:
+		var fd: FrameData = doc.frames[fid]
+		if fd.anchor != "" and not _pending.has("frame:" + fd.id) and anchors.has_pose(fd.anchor):
+			(guesses if fd.anchor_guess else cands).append(_level(anchors.pose(fd.anchor) * fd.anchor_xf.affine_inverse()))
+	var by := "frame"
+	if cands.is_empty():
+		cands = guesses
+		by = "guess"
+	if cands.is_empty():
+		return {}
+	var best: Transform3D = cands[0]
+	var best_n := -1
+	for c in cands:
+		var n := 0
+		for o in cands:
+			if (c as Transform3D).origin.distance_to((o as Transform3D).origin) < AGREE_M:
+				n += 1
+		if n > best_n:
+			best_n = n
+			best = c
+	return {"xf": best, "by": by}
+
+
+static func _level(xf: Transform3D) -> Transform3D:
+	var f := -xf.basis.z
+	if Vector2(f.x, f.z).length() < 0.2:                # (an anchor lying flat: its y axis is the heading)
+		f = xf.basis.y
+	return Transform3D(Basis(Vector3.UP, atan2(-f.x, -f.z)), xf.origin)
+
+
+## Every room's pose for this tick, from its anchors; a room whose anchors dropped out a moment ago keeps its last pose for ROOM_HOLD_S
+## (the headset re-localising), unless tracking was reset meanwhile (see tracking_reset).
+func _locate_rooms(dt: float) -> void:
+	_located.clear()
+	_located_by.clear()
+	for r in doc.rooms:
+		var rid := str(r.id)
+		var got := _anchored_room(rid)
+		if not got.is_empty():
+			var xf := _smooth("room:" + rid, got.xf, dt)
+			_located[rid] = xf
+			_located_by[rid] = got.by
+			_last_world[rid] = {"xf": xf, "age": 0.0}
+		elif _last_world.has(rid):
+			var lw: Dictionary = _last_world[rid]
+			lw.age = float(lw.age) + (dt if tracking_live else 0.0)
+			if float(lw.age) < ROOM_HOLD_S:
+				_located[rid] = lw.xf
+				_located_by[rid] = "hold"
+			else:
+				_last_world.erase(rid)
+				_held.erase("room:" + rid)
+
+
+## The headset's tracking space moved under the room (it was recentred, or the headset was taken off and put back on): every pose
+## remembered in tracking space is wrong now. What is anchored is found again through its anchors; a room only assumed is put in front
+## of the user again. The user may have walked into another room meanwhile: the room is chosen again (see _pick_room).
+func tracking_reset() -> void:
+	_last_world.clear()
+	_located.clear()
+	_located_by.clear()
+	_held.clear()
+	_no_room_t = 0.0
+	_picking = true
+	_pick_t = 0.0
+	if doc != null and room_state == "assumed" and current_room != "":
+		_assume_room(current_room, false)
 
 
 func _smooth(key: String, target: Transform3D, dt: float) -> Transform3D:
@@ -308,7 +471,11 @@ func _smooth(key: String, target: Transform3D, dt: float) -> Transform3D:
 func frame_world(f: FrameData, dt: float = 0.016) -> Variant:
 	if grabs.has(f.id):
 		return (grabs[f.id] as Dictionary).xf
-	if anchors != null and anchors.is_supported() and f.anchor != "" and not f.anchor_stale() and anchors.has_pose(f.anchor):
+	if remote_grabs.has(f.id):
+		var rwg: Variant = room_world(f.room)
+		if rwg != null:
+			return (rwg as Transform3D) * ((remote_grabs[f.id] as Dictionary).xf as Transform3D)
+	if anchors != null and anchors.is_supported() and f.anchor != "" and not f.anchor_stale() and anchors.has_pose(f.anchor) and not session.is_client():
 		return _smooth("frame:" + f.id, anchors.pose(f.anchor), dt)
 	var rw: Variant = room_world(f.room)
 	if rw != null:
@@ -317,6 +484,16 @@ func frame_world(f: FrameData, dt: float = 0.016) -> Variant:
 
 
 func _update_rooms(dt: float) -> void:
+	if session.is_client():
+		# a guest sees the owner's room, wherever their alignment puts it: it is "found" once that place is known
+		if current_room != session.room_id:
+			current_room = session.room_id
+			changed.emit()
+		var st := "found" if session.room_world(current_room) != null else "searching"
+		if st != room_state:
+			room_state = st
+			changed.emit()
+		return
 	if anchors == null or not anchors.is_supported():
 		room_state = "unanchored"
 		if doc.rooms.is_empty():
@@ -325,34 +502,40 @@ func _update_rooms(dt: float) -> void:
 			current_room = str(doc.rooms[0].id)
 			changed.emit()
 		return
+	_locate_rooms(dt)
 	var present: Array = []
 	for r in doc.rooms:
-		if str(r.anchor) == "" and r.id == current_room:
-			present.append(r.id)                 # just created here, anchor pending
-		elif str(r.anchor) != "" and anchors.has_pose(str(r.anchor)):
+		if _located.has(r.id):
 			present.append(r.id)
+		elif str(r.anchor) == "" and r.id == current_room:
+			present.append(r.id)                 # just created here, anchor pending
 	# a room that has no anchor yet (imported, or made while anchors were unavailable) can only be "here": it adopts this place
 	if present.is_empty() or (present.size() == 1 and str(doc.room(str(present[0])).get("anchor", "x")) == ""):
 		for r in doc.rooms:
 			if str(r.anchor) == "" and not present.has(r.id):
 				present.append(r.id)
 				break
-	if current_room != "" and str(doc.room(current_room).get("anchor", "x")) == "" and not _pending.has("room:" + current_room):
+	if current_room != "" and str(doc.room(current_room).get("anchor", "x")) == "" and _may_create("room:" + current_room):
 		_pending["room:" + current_room] = true
-		anchors.create(doc.room(current_room).anchor_xf, "room:" + current_room)
+		var at: Variant = room_world(current_room)
+		anchors.create(at if at != null else doc.room(current_room).anchor_xf, "room:" + current_room)
 	var before := current_room
 	var before_state := room_state
-	if present.has(current_room):
-		room_state = "found"
-		_no_room_t = 0.0
-		_assumed.erase(current_room)
-	elif not present.is_empty():
-		current_room = doc.last_room if present.has(doc.last_room) else str(present[0])
+	var pick := _pick_room(present, dt)
+	if pick != "" and pick != current_room:
+		current_room = pick
 		room_state = "found"
 		_no_room_t = 0.0
 		_assumed.clear()
 		doc.set_room_field(current_room, "used", int(Time.get_unix_time_from_system()))
 		doc.last_room = current_room
+		_log_room(present)
+	elif present.has(current_room):
+		room_state = "found"
+		_no_room_t = 0.0
+		_assumed.erase(current_room)
+		if not room_guessed(current_room):
+			_moved_unanchored.clear()
 	elif room_state == "assumed" and not doc.room(current_room).is_empty():
 		pass                                     # keep showing the assumed room until its anchors (or another room's) turn up
 	else:
@@ -363,14 +546,93 @@ func _update_rooms(dt: float) -> void:
 			if _room_auto_t > 1.2:
 				create_room_here("", true)          # a new document: the first room is made where you stand
 		else:
-			_no_room_t += dt
+			if tracking_live:
+				_no_room_t += dt                   # (with the headset off its anchors cannot be found: that is no reason to give up)
 			room_state = "searching"
-			if _no_room_t >= ROOM_SEARCH_S:
+			if _no_room_t >= ROOM_SEARCH_S and not _locating():
 				# nothing anchored is found (the headset lost its map, or this is another room): never leave the user with an empty
-				# board, show the last room in front of them
+				# board, show the last room in front of them. Not while the headset is still placing anchors it has found: that is
+				# only slow (a Quest 3 just put on), and showing the room in front then was showing it in the wrong place
 				_assume_room(doc.last_room if not doc.room(doc.last_room).is_empty() else str(doc.rooms[0].id))
 	if before != current_room or before_state != room_state:
 		changed.emit()
+
+
+## Is the headset still placing one of the document's anchors (found on the device, no pose yet)? See AnchorService.locating.
+func _locating() -> bool:
+	for r in doc.rooms:
+		if str(r.anchor) != "" and anchors.locating(str(r.anchor)):
+			return true
+	for fid in doc.frames:
+		var f: FrameData = doc.frames[fid]
+		if f.anchor != "" and anchors.locating(f.anchor):
+			return true
+	return false
+
+
+## The room the user is in, of those whose anchors are here ("" when there is none). A headset's map can span the whole home (a
+## Quest 3 maps every room it has been in), and then the anchors of the rooms next door are found too: the user is in the one they are
+## nearest to (_room_dist), not the one used last. At the start, and with the headset put back on, the rooms are found one after the
+## other, so for ROOM_PICK_S after the first one (longer while the headset is still placing anchors) a room the user is clearly nearer
+## to takes over. After that the room stays until its anchors are gone or the user picks another (Home > Rooms). It never changes while
+## something is drawn, carried or placed, nor during a session (the owner's room is everybody's).
+func _pick_room(present: Array, dt: float) -> String:
+	if present.is_empty():
+		return ""
+	if not present.has(current_room):
+		return _nearest_room(present)
+	if not _picking:
+		return current_room
+	if session.is_active():
+		_picking = false
+		return current_room
+	if tracking_live:
+		_pick_t += dt
+	var pick := current_room
+	if grabs.is_empty() and placing.is_empty() and pen_ctl.state == PenController.S.IDLE and not surface.finding():
+		var near := _nearest_room(present)
+		if near == session.resume_room() or _room_dist(near) + ROOM_NEARER_M < _room_dist(current_room):
+			pick = near
+	if _pick_t > ROOM_PICK_S and not _locating():
+		_picking = false                         # (a room placed late was looked at above, in the tick it was placed)
+	return pick
+
+
+## Of these rooms, the one the user is nearest to; the room of a session that is being started again when it is one of them.
+func _nearest_room(rooms: Array) -> String:
+	if rooms.has(session.resume_room()):
+		return session.resume_room()
+	var best := str(rooms[0])
+	var best_d := INF
+	for rid in rooms:
+		var d := _room_dist(str(rid))
+		if d < best_d:
+			best = str(rid)
+			best_d = d
+	return best
+
+
+## How far the user stands from a room, along the floor: from the nearest of the place it was made at (where its maker stood) and its
+## canvases.
+func _room_dist(room_id: String) -> float:
+	var rw: Variant = room_world(room_id)
+	if rw == null:
+		return INF
+	var me := Vector2(head.origin.x, head.origin.z)
+	var o := (rw as Transform3D).origin
+	var d := me.distance_to(Vector2(o.x, o.z))
+	for f in doc.frames_in(room_id):
+		if (f as FrameData).kind == FrameData.CANVAS:
+			var p := (rw as Transform3D) * (f as FrameData).xf.origin
+			d = minf(d, me.distance_to(Vector2(p.x, p.z)))
+	return d
+
+
+func _log_room(present: Array) -> void:
+	var seen := PackedStringArray()
+	for rid in present:
+		seen.append("%s %.1f m" % [str(doc.room(str(rid)).get("name", rid)), _room_dist(str(rid))])
+	print("[board] in room %s (found: %s)" % [str(doc.room(current_room).get("name", current_room)), ", ".join(seen)])
 
 
 ## Make a new room at the user's feet (the floor under the head), with its own anchor, and move into it.
@@ -382,6 +644,7 @@ func create_room_here(room_name: String = "", announce: bool = true) -> void:
 	current_room = r.id
 	room_state = "found"
 	_no_room_t = 0.0
+	_picking = false
 	if anchors != null and anchors.is_supported():
 		_pending["room:" + r.id] = true
 		anchors.create(pose, "room:" + r.id)
@@ -391,9 +654,11 @@ func create_room_here(room_name: String = "", announce: bool = true) -> void:
 
 
 ## Show a room whose anchors are not found in front of the user: its main canvas within reach (REACH_DIST), facing them, the room's
-## other frames around it as they were. Nothing is changed in the document; if the real anchors turn up, everything moves back to its
-## anchored place. Re-anchor room keeps it where it is shown.
-func _assume_room(room_id: String) -> void:
+## other frames around it as they were. The room is only turned about the vertical, so it stays level: a canvas lying on a desk still
+## lies flat (in front of the user, at its height in the room: on the desk if the floor is where it was), one on a wall still stands.
+## Nothing is changed in the document; if the real anchors turn up, everything moves back to its anchored place. Re-anchor room keeps it
+## where it is shown.
+func _assume_room(room_id: String, announce: bool = true) -> void:
 	if doc == null or doc.room(room_id).is_empty():
 		return
 	var yaw := _head_yaw()
@@ -402,18 +667,27 @@ func _assume_room(room_id: String) -> void:
 	var pose := Transform3D(Basis(Vector3.UP, yaw), Vector3(head.origin.x, 0.0, head.origin.z))
 	var main := _main_canvas(room_id)
 	if main != null:
-		var want := Transform3D(Basis(Vector3.UP, yaw), head.origin + fwd * REACH_DIST + Vector3(0.0, -0.2, 0.0))
-		pose = want * main.xf.affine_inverse()
+		var turn := Basis(Vector3.UP, yaw - SharedSpace.heading(-SharedSpace.facing_of(main.xf)))
+		var at := head.origin + fwd * REACH_DIST + Vector3(0.0, -0.2, 0.0)
+		if absf(main.xf.basis.z.normalized().y) > 0.85:
+			at = head.origin + fwd * DESK_DIST
+			at.y = clampf(main.xf.origin.y, head.origin.y - 1.2, head.origin.y - 0.15)
+		pose = Transform3D(turn, at - turn * main.xf.origin)
 	_assumed[room_id] = pose
 	_held.clear()
 	current_room = room_id
 	room_state = "assumed"
 	doc.last_room = room_id
-	toast.emit("The anchors of \"%s\" were not found, so it is shown in front of you. Home > Rooms > Re-anchor keeps it here." % str(doc.room(room_id).get("name", "the room")))
+	if announce:
+		toast.emit("The anchors of \"%s\" were not found, so it is shown in front of you. Home > Rooms > Re-anchor keeps it here." % str(doc.room(room_id).get("name", "the room")))
 	changed.emit()
 
 
 ## The canvas a room is shown by when it has to be placed by hand: the active one, else the one with the most on it.
+func main_canvas(room_id: String) -> FrameData:
+	return _main_canvas(room_id)
+
+
 func _main_canvas(room_id: String) -> FrameData:
 	var best: FrameData = null
 	var most := -1
@@ -439,9 +713,10 @@ func select_room(room_id: String) -> void:
 	## Manually declare which room this is (when the anchors cannot be found): the room's frames are then placed by its remembered pose.
 	if doc == null or doc.room(room_id).is_empty():
 		return
+	_picking = false                           # the user's choice: not changed for them
 	var a := str(doc.room(room_id).anchor)
-	if anchors != null and anchors.is_supported() and a != "" and not anchors.has_pose(a):
-		_assume_room(room_id)                  # its anchor is not here: show it in front of the user
+	if anchors != null and anchors.is_supported() and a != "" and not _located.has(room_id) and not anchors.has_pose(a):
+		_assume_room(room_id)                  # its anchors are not here: show it in front of the user
 		return
 	current_room = room_id
 	room_state = "found"
@@ -474,14 +749,24 @@ func reanchor_room() -> void:
 	var old := str(doc.room(current_room).anchor)
 	var yaw := _head_yaw()
 	var pose := Transform3D(Basis(Vector3.UP, yaw), Vector3(head.origin.x, 0.0, head.origin.z))
-	var shown: bool = _assumed.has(current_room)
+	var by := str(_located_by.get(current_room, ""))
+	var shown: bool = _assumed.has(current_room) or by == "frame" or by == "guess" or by == "hold"
 	if shown:
-		pose = _assumed[current_room]            # keep the room where it is shown now
+		pose = _assumed[current_room] if _assumed.has(current_room) else _located[current_room]   # keep the room where it is shown now
 	doc.set_room_field(current_room, "anchor", "")
 	doc.set_room_field(current_room, "anchor_xf", pose)
 	if old != "":
 		anchors.untrack(old)
 		anchors.erase(old)
+	# the room's guessed place is its real place from now on: the canvases anchored under the guess agree with it
+	for f in doc.frames_in(current_room):
+		if (f as FrameData).anchor_guess:
+			var upd := (f as FrameData).copy()
+			upd.anchor_guess = false
+			doc.replace_frame(upd)
+	_moved_unanchored.clear()
+	_retry_at.erase("room:" + current_room)
+	_fails.erase("room:" + current_room)
 	if anchors.is_supported():
 		_pending["room:" + current_room] = true
 		anchors.create(pose, "room:" + current_room)
@@ -493,9 +778,13 @@ func reanchor_room() -> void:
 
 
 func _on_anchor_created(tag: String, uuid: String) -> void:
-	_pending.erase(tag)
 	var parts := tag.split(":")
-	if doc == null or parts.size() < 2:
+	if parts.size() < 2 or not (parts[0] in ["room", "frame"]):
+		return                                   # someone else's (the session's alignment, the panels)
+	_pending.erase(tag)
+	_retry_at.erase(tag)
+	_fails.erase(tag)
+	if doc == null:
 		anchors.erase(uuid)
 		return
 	if parts[0] == "room":
@@ -512,40 +801,95 @@ func _on_anchor_created(tag: String, uuid: String) -> void:
 		var upd := f.copy()
 		upd.anchor = uuid
 		upd.anchor_xf = _pending_pose.get(tag, f.xf)
+		upd.anchor_guess = bool(_pending_guess.get(tag, false))
 		doc.replace_frame(upd)
 		_pending_pose.erase(tag)
+		_pending_guess.erase(tag)
 		_held.erase("frame:" + f.id)
+		_moved_unanchored.erase(f.id)
 		if old != "" and old != uuid:
 			anchors.untrack(old)
 			anchors.erase(old)
 
 
+## An anchor could not be made (no Space Setup yet, the permission not granted yet, the headset still mapping the room): it is tried
+## again later, waiting longer each time, and the user is told now and then, not on every try.
 func _on_anchor_failed(tag: String) -> void:
+	var parts := tag.split(":")
+	if parts.size() < 2 or not (parts[0] in ["room", "frame"]):
+		return
 	_pending.erase(tag)
 	_pending_pose.erase(tag)
-	toast.emit("Could not create a spatial anchor. Is the Space Setup done for this room?")
+	_pending_guess.erase(tag)
+	var n := int(_fails.get(tag, 0)) + 1
+	_fails[tag] = n
+	_retry_at[tag] = Time.get_ticks_msec() + int(minf(RETRY_MIN_S * pow(2.0, n - 1), RETRY_MAX_S) * 1000.0)
+	if Time.get_ticks_msec() - _fail_toast_ms > 30000:
+		_fail_toast_ms = Time.get_ticks_msec()
+		toast.emit("Could not create a spatial anchor (trying again). Is the Space Setup done for this room?")
 
 
-## Frames whose pose differs from the one their anchor was made at (or that have none) get a new anchor at their current place.
+## Is a room shown at a guessed place (its anchors not found: in front of the user, or where anchors made under such a guess say)?
+## What the user puts somewhere then is anchored right there, but nothing else is.
+func room_guessed(room_id: String) -> bool:
+	return (room_state == "assumed" and room_id == current_room) or str(_located_by.get(room_id, "")) == "guess"
+
+
+## May an anchor with this tag be asked for now (none in flight, and not waiting after a failure)?
+func _may_create(tag: String) -> bool:
+	return not _pending.has(tag) and Time.get_ticks_msec() >= int(_retry_at.get(tag, 0))
+
+
+## Frames whose pose differs from the one their anchor was made at (or that have none) get a new anchor at their current place. Anchors
+## that are lost (never tracked although the room is here) are replaced, the room's own included. And while the room's own anchor is
+## tracked, each canvas's place in the room is kept true to its own anchor, so the room alone still puts it in the right place (when
+## its anchor is lost, and on the guests' headsets in a session, which see canvases by their place in the room).
 func _reconcile(dt: float) -> void:
 	_reconcile_t += dt
 	if _reconcile_t < RECONCILE_S:
 		return
 	_reconcile_t = 0.0
-	if anchors == null or not anchors.is_supported() or room_state != "found" or current_room == "":
+	if anchors == null or not anchors.is_supported() or current_room == "" or session.is_client() or not tracking_live:
 		return
 	var r := doc.room(current_room)
 	if r.is_empty():
 		return
-	if str(r.anchor) != "" and not anchors.has_pose(str(r.anchor)):
+	if room_guessed(current_room):
+		# the room's anchors are not found: only what the user puts somewhere meanwhile is anchored, right where they put it (the
+		# rest would be anchored at a guessed place)
+		for fid in _moved_unanchored.keys():
+			var fa: FrameData = doc.frames.get(fid)
+			if fa == null or fa.room != current_room:
+				_moved_unanchored.erase(fid)
+			else:
+				_anchor_frame(fa, true)
 		return
+	if room_state != "found":
+		return
+	var by := str(_located_by.get(current_room, ""))
+	if by == "hold" or (by == "" and str(r.anchor) != ""):
+		return                                           # no fresh pose to make anchors at
+	# the room's own anchor lost while its canvases' anchors still find the room: a new one where they say the room is
+	if by == "frame" and str(r.anchor) != "" and _may_create("room:" + current_room):
+		_lost_t["room:" + current_room] = float(_lost_t.get("room:" + current_room, 0.0)) + RECONCILE_S
+		if float(_lost_t["room:" + current_room]) > ANCHOR_LOST_S:
+			_lost_t.erase("room:" + current_room)
+			var gone := str(r.anchor)
+			doc.set_room_field(current_room, "anchor", "")
+			doc.set_room_field(current_room, "anchor_xf", _located[current_room])
+			anchors.untrack(gone)
+			print("[board] the anchor of room %s was lost: making a new one where its canvases are" % current_room)
+	else:
+		_lost_t.erase("room:" + current_room)
 	for f in doc.frames_in(current_room):
 		var fd: FrameData = f
 		var tag := "frame:" + fd.id
 		# an anchor that never gets a pose although the room is here has been lost (the headset's space map was reset): make a new one
+		# (one the headset is still placing is not lost yet)
 		if fd.anchor != "" and not anchors.has_pose(fd.anchor):
-			_lost_t[fd.id] = float(_lost_t.get(fd.id, 0.0)) + RECONCILE_S
-			if float(_lost_t[fd.id]) > ANCHOR_LOST_S and not _pending.has(tag):
+			if not anchors.locating(fd.anchor):
+				_lost_t[fd.id] = float(_lost_t.get(fd.id, 0.0)) + RECONCILE_S
+			if float(_lost_t.get(fd.id, 0.0)) > ANCHOR_LOST_S and not _pending.has(tag):
 				var lost := fd.copy()
 				lost.anchor = ""
 				doc.replace_frame(lost)
@@ -553,15 +897,44 @@ func _reconcile(dt: float) -> void:
 				fd = lost
 		else:
 			_lost_t.erase(fd.id)
-		if grabs.has(fd.id) or _pending.has(tag) or not fd.anchor_stale():
-			continue
-		var w: Variant = frame_world(fd)
-		if w == null:
-			continue
-		var pose := Transform3D((w as Transform3D).basis.orthonormalized(), (w as Transform3D).origin)
-		_pending[tag] = true
-		_pending_pose[tag] = fd.xf
-		anchors.create(pose, tag)
+			if by == "room" and fd.anchor != "" and not fd.anchor_stale() and not grabs.has(fd.id) and not remote_grabs.has(fd.id) and not _pending.has(tag) \
+					and (not fd.surface or fd.anchor_guess):
+				fd = _refresh_from_anchor(fd)
+		_anchor_frame(fd)
+
+
+## A new anchor for a frame at the place it is shown now, if it has none or it moved since its anchor was made. `guess`: the room is
+## only shown at a guessed place (see FrameData.anchor_guess).
+func _anchor_frame(fd: FrameData, guess: bool = false) -> void:
+	var tag := "frame:" + fd.id
+	if grabs.has(fd.id) or not _may_create(tag) or not fd.anchor_stale():
+		return
+	var w: Variant = frame_world(fd)
+	if w == null:
+		return
+	_pending[tag] = true
+	_pending_pose[tag] = fd.xf
+	_pending_guess[tag] = guess
+	anchors.create(Transform3D((w as Transform3D).basis.orthonormalized(), (w as Transform3D).origin), tag)
+
+
+## The headset refines its map and the anchors shift against each other by a little: when a canvas's own anchor and the room's
+## disagree about where in the room the canvas is, the anchor on the canvas is right. Its place in the room follows (not an undo step).
+## An anchor made while the room was guessed gets its true place in the room this way. Returns the frame as it is now.
+func _refresh_from_anchor(fd: FrameData) -> FrameData:
+	var rel: Transform3D = (_located[current_room] as Transform3D).affine_inverse() * anchors.pose(fd.anchor)
+	rel = Transform3D(rel.basis.orthonormalized(), rel.origin)
+	var moved := rel.origin.distance_to(fd.xf.origin)
+	var turned := rel.basis.get_rotation_quaternion().angle_to(fd.xf.basis.get_rotation_quaternion())
+	if moved < REFRESH_M and turned < deg_to_rad(REFRESH_DEG) and not fd.anchor_guess:
+		return fd
+	var upd := fd.copy()
+	upd.xf = upd.on_surface(rel) if fd.surface else rel
+	upd.anchor_xf = upd.xf
+	upd.anchor_guess = false
+	doc.replace_frame(upd)
+	print("[board] %s: its place in the room follows its anchor (%.1f cm, %.2f deg)" % [fd.name, moved * 100.0, rad_to_deg(turned)])
+	return upd
 
 
 # ------------------------------------------------------------------------------------------------ frames
@@ -579,7 +952,7 @@ func _place_frames(dt: float) -> void:
 			var xf := w as Transform3D
 			if f.surface and grabs.has(fid):
 				xf = _on_surface_world(f, xf)               # carried or turned, a desk canvas slides along its surface
-			var sc: float = (grabs[fid] as Dictionary).scale if grabs.has(fid) else f.scale
+			var sc: float = (grabs[fid] as Dictionary).scale if grabs.has(fid) else (float((remote_grabs[fid] as Dictionary).scale) if remote_grabs.has(fid) else f.scale)
 			fn.transform = Transform3D(xf.basis.orthonormalized().scaled(Vector3.ONE * sc), xf.origin)
 
 
@@ -672,6 +1045,8 @@ func dictation_spot() -> Dictionary:
 func begin_grab(f: FrameData) -> void:
 	if grabs.has(f.id) or f.locked:
 		return
+	if not canvas_edit_ok():
+		return
 	var w: Variant = frame_world(f)
 	if w == null:
 		return
@@ -692,6 +1067,8 @@ func end_grab(f: FrameData) -> void:
 	grabs.erase(f.id)
 	_held.erase("frame:" + f.id)
 	var before: FrameData = g.before
+	if room_guessed(f.room):
+		_moved_unanchored[f.id] = true               # anchored right where it was put, although the room's place is a guess
 	history.do(History.op_frame(before, after))     # applies `after`: the anchor is then re-created at the new place by _reconcile()
 	_dirty_overlay(f.id)
 
@@ -727,7 +1104,7 @@ func bring_canvas_here() -> void:
 
 ## `plane` ({point, normal, error, count}, world space) puts the new canvas on a physical surface (SurfaceController.finish).
 func add_frame(kind: String, world_xf: Transform3D, size: Vector2 = Vector2(1.2, 0.8), plane: Dictionary = {}) -> FrameData:
-	if doc == null:
+	if doc == null or not canvas_edit_ok():
 		return null
 	if current_room == "":
 		create_room_here("", false)
@@ -737,6 +1114,8 @@ func add_frame(kind: String, world_xf: Transform3D, size: Vector2 = Vector2(1.2,
 	if not plane.is_empty():
 		surface.apply_plane(f, rw, plane)
 		f.xf = f.on_surface(f.xf)
+	if room_guessed(current_room):
+		_moved_unanchored[f.id] = true
 	history.do(History.op_frame_add(f))
 	var made: FrameData = doc.frames.get(f.id)
 	if kind == FrameData.CANVAS:
@@ -747,7 +1126,7 @@ func add_frame(kind: String, world_xf: Transform3D, size: Vector2 = Vector2(1.2,
 
 func delete_frame(frame_id: String) -> void:
 	var f: FrameData = doc.frames.get(frame_id)
-	if f == null:
+	if f == null or not canvas_edit_ok():
 		return
 	var items := doc.items_of(frame_id)
 	var old_anchor := f.anchor
@@ -760,7 +1139,7 @@ func delete_frame(frame_id: String) -> void:
 
 func rename_frame(frame_id: String, new_name: String) -> void:
 	var f: FrameData = doc.frames.get(frame_id)
-	if f != null and new_name.strip_edges() != "":
+	if f != null and new_name.strip_edges() != "" and canvas_edit_ok():
 		var upd := f.copy()
 		upd.name = new_name.strip_edges()
 		history.do(History.op_frame(f, upd))
@@ -835,7 +1214,7 @@ func import_svg(svg: String, canvas_name: String = "") -> Dictionary:
 
 func set_frame_prop(frame_id: String, key: String, value: Variant) -> void:
 	var f: FrameData = doc.frames.get(frame_id)
-	if f == null:
+	if f == null or not canvas_edit_ok():
 		return
 	var upd := f.copy()
 	upd.set(key, value)
@@ -854,6 +1233,8 @@ func clear_frame(frame_id: String) -> void:
 
 ## Start placing a new canvas: a ghost follows the pen / hand ray until it is confirmed (kind: "wall" | "table").
 func begin_place(kind: String = "wall", size: Vector2 = Vector2(1.2, 0.8)) -> void:
+	if not canvas_edit_ok():
+		return
 	cancel_place()
 	surface.cancel()
 	var tmp := Document.create("ghost")
@@ -1342,10 +1723,13 @@ func tick(pen: PenState, hands: Array, dt: float) -> void:
 	_update_rooms(dt)
 	_place_frames(dt)
 	_reconcile(dt)
+	session.tick(pen, hands, dt)
 	if not placing.is_empty():
 		_update_placing(pen, hands, dt)
 	elif surface.finding():
 		surface.update(pen, dt)                       # the nib is feeling for the desk: it neither draws nor grabs meanwhile
+	elif session.aligning():
+		session.align_update(pen, hands, dt)          # the nib (or a pinch) is touching the two points the session lines up on: nothing draws or grabs
 	else:
 		# the front button grabs with the same rules as a pinch (HandController); while it holds something no stroke may start
 		hand_ctl.update(hands, dt, pen)

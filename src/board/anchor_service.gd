@@ -37,6 +37,13 @@ func has_pose(_uuid: String) -> bool:
 	return false
 
 
+## Has the headset found this anchor in its storage and is it still placing it in the room? Then it is worth waiting for: it is not
+## missing (after being put on, a Quest 3 took well over 5 s to place its anchors). False once it has a pose, and after a while without
+## one (it is somewhere else then: another room, or a reset Space Setup).
+func locating(_uuid: String) -> bool:
+	return false
+
+
 func pose(_uuid: String) -> Transform3D:
 	return Transform3D.IDENTITY
 

@@ -55,6 +55,8 @@ var _hover := false
 var _down := false
 var _spin := 0.0
 var _hover_t := 0.0
+var _pulse := 0.0                           # seconds of "look here" ring left (the guide points at buttons with it)
+var _pulse_t := 0.0
 
 
 func _init(icon_id: String = "", label: String = "", toggle: bool = false) -> void:
@@ -75,7 +77,7 @@ func _init(icon_id: String = "", label: String = "", toggle: bool = false) -> vo
 		_hover = false
 		_down = false
 		z_index = 0
-		set_process(busy)
+		set_process(busy or _pulse > 0.0)
 		queue_redraw())
 
 
@@ -83,7 +85,25 @@ func is_hovered() -> bool:
 	return _hover
 
 
+## A ring that breathes around the button for a few seconds: "this one".
+func pulse(seconds: float = 4.0) -> void:
+	_pulse = seconds
+	_pulse_t = 0.0
+	set_process(true)
+	queue_redraw()
+
+
+func is_pulsing() -> bool:
+	return _pulse > 0.0
+
+
 func _process(delta: float) -> void:
+	if _pulse > 0.0:
+		_pulse = maxf(_pulse - delta, 0.0)
+		_pulse_t += delta
+		queue_redraw()
+		if _pulse <= 0.0 and not busy and not (_hover and hint != ""):
+			set_process(false)
 	if busy:
 		_spin = fmod(_spin + delta * 5.0, TAU)
 		queue_redraw()
@@ -174,7 +194,19 @@ func _draw() -> void:
 	if busy:
 		var rad := minf(size.x, size.y) * 0.42
 		draw_arc(r.get_center(), rad, _spin, _spin + PI * 1.2, 32, Color(accent.r, accent.g, accent.b, 0.9), 2.5, true)
+	_draw_pulse()
 	_draw_hint_if_needed()
+
+
+func _draw_pulse() -> void:
+	if _pulse <= 0.0:
+		return
+	var fade := minf(_pulse, 0.6) / 0.6                  # the last moments fade out
+	var k := 0.5 + 0.5 * sin(_pulse_t * 6.0)
+	var rad := int(minf(size.x, size.y) * 0.3) + 4
+	var grow := 2.0 + 4.0 * k                            # stays inside the dock's 8 px padding, so the panel's texture does not cut it
+	draw_style_box(UITheme.box(Color(UITheme.WARN.r, UITheme.WARN.g, UITheme.WARN.b, 0.10 * fade), rad, Color(UITheme.WARN.r, UITheme.WARN.g, UITheme.WARN.b, (0.55 + 0.4 * k) * fade), 3),
+		Rect2(Vector2(-grow, -grow), size + Vector2(grow, grow) * 2.0))
 
 
 func _draw_hint_if_needed() -> void:

@@ -23,7 +23,7 @@ const TIP_ON := 0.035
 const TIP_OFF := 0.018
 const MID_ON := 0.09
 const MID_OFF := 0.05
-const AXIS_SAMPLES := 45                   # frames over which the stylus axis (grip -> nib) is learnt
+const NIB_SAMPLES := 45                    # frames over which the nib is averaged in the grip pose's frame to align the stylus model
 const PRESSURE_EXP := 0.75
 const STYLUS_FILTER := Vector2(2.2, 45.0)  # One-Euro (min cutoff, beta) of the nib
 
@@ -94,6 +94,10 @@ const BAR_R := 0.0075
 const RING_R := 0.011                      # ring radius at 0.7 m...
 const RING_MIN := 0.006                    # ...clamped to this range
 const RING_MAX := 0.05
+const RAY_W := 0.004                       # the stylus's beam (StylusRay): width, its dark edge included...
+const RAY_MIN_PX := 1.5                    # ...never thinner than this on the screen (fainter instead)
+const RAY_IDLE_LEN := 0.5                  # pointing at nothing: a beam this long that fades out, like the Quest's own
+const RAY_MAX_LEN := 12.0
 
 
 ## How much further a carried thing moves than the hand carrying it: the ratio of its distance from the head to the hand's, 1 to MAX_GAIN.

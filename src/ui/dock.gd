@@ -1,7 +1,8 @@
 class_name Dock
 extends FloatPanel
 ## The toolbar: the one surface that is always there. Tools on the left (tap the active tool again for its options), the current
-## brush as a chip, undo and redo, then Add (text, dictation, a canvas), the assistant and Home (documents, rooms, settings).
+## brush as a chip, undo and redo, then Add (text, dictation, a canvas), the assistant and Home (documents, rooms, settings), and the
+## device's battery when it has one.
 ## Icons only; each says what it is when hovered.
 
 const TOOLS := [["draw", "draw", "Pen", "1"], ["write", "write", "Write: handwriting to text", "3"], ["shape", "shapes", "Shapes", "2"],
@@ -15,7 +16,9 @@ var redo_btn: Btn
 var add_btn: Btn
 var ai_btn: Btn
 var home_btn: Btn
+var session_btn: Btn
 var grip: Grip
+var battery: BatteryGauge
 
 
 func _init() -> void:
@@ -24,7 +27,7 @@ func _init() -> void:
 	kind = "dock"
 	movable = true
 	pivot = Vector2(0.5, 1.0)
-	max_size = Vector2(860, 140)               # room above the bar for the tooltips
+	max_size = Vector2(1010, 140)              # room above the bar for the tooltips
 	ppm = 1650.0
 	add_theme_stylebox_override("panel", _pill())
 	var row := HBoxContainer.new()
@@ -56,8 +59,16 @@ func _init() -> void:
 	ai_btn = UiKit.tool("ai", "Assistant", func(): shell.toggle_side("assistant"))
 	ai_btn.accent = UITheme.AI
 	row.add_child(ai_btn)
-	home_btn = UiKit.tool("menu", "Documents, rooms, settings", func(): shell.toggle_side("home"))
+	home_btn = UiKit.tool("menu", "Home: documents, rooms, settings, guide", func(): shell.toggle_side("home"))
 	row.add_child(home_btn)
+	session_btn = UiKit.tool("session", "The session", func(): shell.show_home("session"))
+	session_btn.visible = false
+	row.add_child(session_btn)
+	var bat_div := UiKit.divider(row)
+	battery = BatteryGauge.new()
+	row.add_child(battery)
+	bat_div.visible = battery.visible
+	battery.visibility_changed.connect(func(): bat_div.visible = battery.visible)
 
 
 func _pill() -> StyleBoxFlat:
@@ -82,7 +93,34 @@ func refresh() -> void:
 	ai_btn.busy = b.ai.busy
 	ai_btn.badge = UITheme.AI if not b.ai.current_layer().is_empty() else Color(0, 0, 0, 0)
 	home_btn.on = shell.is_side_open("home")
+	var cs := b.session
+	session_btn.visible = cs.is_active()
+	session_btn.on = shell.is_side_open("home") and shell.home.tab == "session"
+	session_btn.accent = UITheme.GOOD
+	session_btn.hint = ("Your session: %d here" % maxi(cs.peers.size(), 1)) if cs.phase == "live" else cs.phase_text()
+	session_btn.badge = UITheme.WARN if cs.is_client() and cs.phase != "live" else (UITheme.GOOD if cs.phase == "live" else Color(0, 0, 0, 0))
 	grip.visible = not App.xr_active
+
+
+## Make a ring breathe around one of the dock's buttons (the guide points at them): a tool id (draw, write, shape, select, erase),
+## "brush", "undo", "redo", "add", "ai" or "home".
+func pulse(what: String) -> void:
+	var b: Btn = tool_btns.get(what)
+	match what:
+		"brush":
+			b = brush_chip
+		"undo":
+			b = undo_btn
+		"redo":
+			b = redo_btn
+		"add":
+			b = add_btn
+		"ai":
+			b = ai_btn
+		"home":
+			b = home_btn
+	if b != null:
+		b.pulse()
 
 
 ## The x (in dock pixels) of a button's middle: where its popover's arrow points.
@@ -121,6 +159,7 @@ class BrushChip extends Btn:
 		var dot := clampf(1.5 + w_mm * 0.45, 2.0, rad * 0.8)
 		var ink := Color(0, 0, 0, 0.55) if col.get_luminance() > 0.55 else Color(1, 1, 1, 0.8)
 		draw_circle(c, dot, ink)
+		super._draw_pulse()
 		super._draw_hint_if_needed()
 
 

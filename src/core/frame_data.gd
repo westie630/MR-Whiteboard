@@ -18,6 +18,8 @@ var size := Vector2(1.2, 0.8)             # nominal canvas size (m at scale 1); 
 var offset := Vector2.ZERO                # centre of the nominal rectangle in the frame (it is not always on the origin after a resize)
 var anchor := ""                          # uuid of this frame's own spatial anchor ("" = none yet)
 var anchor_xf := Transform3D.IDENTITY     # the room-space pose the anchor was created at
+var anchor_guess := false                 # the anchor was made while the room's place was only guessed (its anchors not found): it is
+                                          # where the user put the canvas, but anchor_xf is relative to the guess
 var grid := ""                            # "" = app default
 var backing := ""
 var locked := false
@@ -43,7 +45,7 @@ static func make(kind_id: String, room_id: String, pose: Transform3D, frame_name
 
 func to_dict() -> Dictionary:
 	return {"id": id, "name": name, "kind": kind, "room": room, "xf": U.xf_to_array(xf), "scale": snappedf(scale, 1e-5),
-		"size": U.v2_to_array(size), "offset": U.v2_to_array(offset), "anchor": anchor, "anchor_xf": U.xf_to_array(anchor_xf), "grid": grid, "backing": backing,
+		"size": U.v2_to_array(size), "offset": U.v2_to_array(offset), "anchor": anchor, "anchor_xf": U.xf_to_array(anchor_xf), "anchor_guess": anchor_guess, "grid": grid, "backing": backing,
 		"locked": locked, "created": created, "surface": surface,
 		"plane": [snappedf(plane_point.x, 1e-5), snappedf(plane_point.y, 1e-5), snappedf(plane_point.z, 1e-5),
 			snappedf(plane_normal.x, 1e-6), snappedf(plane_normal.y, 1e-6), snappedf(plane_normal.z, 1e-6)],
@@ -62,6 +64,7 @@ static func from_dict(d: Dictionary) -> FrameData:
 	f.offset = U.v2_from(d.get("offset"))
 	f.anchor = str(d.get("anchor", ""))
 	f.anchor_xf = U.xf_from_array(d.get("anchor_xf"))
+	f.anchor_guess = bool(d.get("anchor_guess", false))
 	f.grid = str(d.get("grid", ""))
 	f.backing = str(d.get("backing", ""))
 	f.locked = bool(d.get("locked", false))
@@ -78,6 +81,13 @@ static func from_dict(d: Dictionary) -> FrameData:
 
 func copy() -> FrameData:
 	return FrameData.from_dict(to_dict())
+
+
+## Take another copy's spatial anchor (what only this device knows about the frame; not part of an undo or of what a session shares).
+func keep_anchor_of(other: FrameData) -> void:
+	anchor = other.anchor if other != null else ""
+	anchor_xf = other.anchor_xf if other != null else Transform3D.IDENTITY
+	anchor_guess = other.anchor_guess if other != null else false
 
 
 ## A pose in room space put onto the surface: the origin slides to the nearest point of it, the canvas's z axis is the surface's

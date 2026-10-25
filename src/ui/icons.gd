@@ -254,6 +254,18 @@ static func draw(ci: CanvasItem, id: String, r: Rect2, col: Color) -> void:
 			var plane := PackedVector2Array([P.call(0.14, 0.48), P.call(0.86, 0.18), P.call(0.6, 0.86), P.call(0.46, 0.56)])
 			ci.draw_polyline(plane + PackedVector2Array([plane[0]]), col, w, true)
 			ci.draw_line(P.call(0.46, 0.56), P.call(0.86, 0.18), col, w, true)
+		"session":
+			# an owner and a guest: two heads over two pairs of shoulders
+			ci.draw_circle(P.call(0.38, 0.3), s * 0.14, col)
+			ci.draw_arc(P.call(0.38, 0.92), s * 0.28, PI * 1.1, PI * 1.9, 20, col, w * 1.1, true)
+			ci.draw_circle(P.call(0.76, 0.38), s * 0.1, Color(col.r, col.g, col.b, 0.7))
+			ci.draw_arc(P.call(0.76, 0.92), s * 0.19, PI * 1.12, PI * 1.88, 16, Color(col.r, col.g, col.b, 0.7), w, true)
+		"align":
+			# two points joined by a line, each with a ring: two places to touch
+			ci.draw_line(P.call(0.2, 0.7), P.call(0.8, 0.3), col, w, true)
+			for q in [P.call(0.2, 0.7), P.call(0.8, 0.3)]:
+				ci.draw_circle(q, s * 0.085, col)
+				ci.draw_arc(q, s * 0.17, 0.0, TAU, 20, Color(col.r, col.g, col.b, 0.5), w * 0.8, true)
 		"layers":
 			for k in 2:
 				var ly := 0.38 + float(k) * 0.2

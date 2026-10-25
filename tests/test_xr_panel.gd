@@ -31,6 +31,12 @@ func _ready() -> void:
 	t.eq(panel.viewport.size, Vector2i((home.max_size * 2.0).ceil()), "the panel texture is twice the logical size")
 	t.check(home.visible and home.size.x >= HomePanel.W, "the Home panel shows (%s)" % str(home.size))
 	t.check(panel.widget_rect().get_center().distance_to(home.max_size * 0.5) < 1.0, "a centred surface sits in the middle of its texture")
+	# covers(): a point nearer the eye than the panel and seen over its face is in front of it; behind it, or off to the side, is not
+	var cov_eye := panel.widget_center() + panel.global_transform.basis.z * 0.8
+	var cov_mid := panel.widget_center()
+	t.check(panel.covers(cov_eye, cov_mid + panel.global_transform.basis.z * 0.3, 0.04), "a hand between the cov_eye and the panel is in front of it")
+	t.check(not panel.covers(cov_eye, cov_mid - panel.global_transform.basis.z * 0.3, 0.04), "a hand behind the panel is not")
+	t.check(not panel.covers(cov_eye, cov_mid + panel.global_transform.basis.x * 3.0 + panel.global_transform.basis.z * 0.3, 0.04), "a hand far to the side is not")
 	# poke the Settings tab
 	await _tap(panel, home._tab_btns["settings"])
 	t.eq(home.tab, "settings", "poking a tab chip switches the tab")

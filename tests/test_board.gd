@@ -834,6 +834,8 @@ func run() -> void:
 	var room_a: String = board.current_room
 	App.put("sim_room", "B")
 	await tick(10)
+	t.eq(board.room_state, "found", "a room whose anchors drop out for a moment stays where it was (the headset re-localising)")
+	await tick(int(Board.ROOM_HOLD_S / 0.016) + 5)
 	t.eq(board.room_state, "searching", "in an unknown room the app searches")
 	t.check(not board.frame_nodes[g.id].visible, "room A's canvas is hidden in room B")
 	await tick(int(Board.ROOM_SEARCH_S / 0.016) + 20)
@@ -849,7 +851,7 @@ func run() -> void:
 	await tick(60)
 	t.check(board.frame_nodes[fb.id].visible and not board.frame_nodes[g.id].visible, "only room B's canvas is shown in room B")
 	App.put("sim_room", "A")
-	await tick(10)
+	await tick(int(Board.ROOM_HOLD_S / 0.016) + 10)
 	t.eq(board.current_room, room_a, "back in room A the app recognises it by its anchors")
 	t.check(board.frame_nodes[g.id].visible and not board.frame_nodes[fb.id].visible, "room A's canvas is back, room B's is hidden")
 

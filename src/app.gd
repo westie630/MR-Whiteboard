@@ -44,19 +44,27 @@ const DEFAULTS := {
 	"vkeyboard": true,              # show the on-screen keyboard while a text field is being edited (a physical keyboard always works)
 	"haptics": true,
 	"stylus_hand": "auto",           # auto | left | right
+	"stylus_model": true,            # draw Logitech's own MX Ink model over the stylus in the headset
+	"stylus_ray": true,              # a beam out of the stylus's nib to what it points at (StylusRay), like the Quest's own
 	"finger_draw": false,            # draw with a pinch of the right hand when there is no stylus (off: both hands point and select)
+	"net_name": "",                  # the name the others in a session see ("" = Owner / Guest)
+	"net_code": true,                # a session asks its guests for a four-digit code
+	"net_last": "",                  # the last address typed to join a session
+	"session_resume": {},              # the session this headset was in when the app stopped: started / joined again at the next start (Session)
 	"ui_scale": 1.0,                 # size of the interface (PC: its scale; headset: the panels' size)
 	"ui_fade": true,                 # the panels fade back while you draw
 	"panel_pos": {},                 # PC: where the movable panels were dragged to (id -> offset from their home position)
 	"last_doc": "",
 	"sim_room": "A",                 # PC: which simulated room the anchors belong to
 	"menu_tab": "docs",              # the Home panel's tab
+	"guide_seen": false,             # the guide has been opened by itself once, on the first start
 	"text_style": "body",            # TextLayout style id for new typed and dictated text (the last one chosen)
 	"xr_quality": "sharp",           # performance | sharp | ultra: render resolution in the headset
 }
 
 var settings_path := SETTINGS_PATH
 var docs_dir := DOCS_DIR              # dev runs and tests point this at a scratch folder
+var panel_places_path := "user://panel_places.json"   # where the headset's panels were left (PanelPlaces; tests point it elsewhere)
 var _s: Dictionary = {}
 var _cfg := ConfigFile.new()
 var xr_active := false               # set by the XR rig when an OpenXR session is running
@@ -77,6 +85,11 @@ func reload() -> void:
 
 func val(key: String) -> Variant:
 	return _s.get(key, DEFAULTS.get(key))
+
+
+## Has the user ever chosen this setting (as opposed to it having its default)?
+func is_set(key: String) -> bool:
+	return _cfg.has_section_key("settings", key)
 
 
 func put(key: String, v: Variant, save: bool = true) -> void:

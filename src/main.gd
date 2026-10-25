@@ -1,8 +1,9 @@
 extends Node3D
 ## Entry point. In the headset (OpenXR started by the engine on Android) the XR rig runs; on the PC the desktop rig does.
 ## Development switches (after `--`): --demo  open the demo document;  --screenshot=PATH [--tab=NAME] [--type] [--frames=N] [--cam=x,y,z,yaw,pitch]
-## saves a picture after N frames and quits (--tab: brush, shapes, write, add, ai, docs, canvas, rooms, share, settings; --select=text|shape|stroke
-## selects the first such item first).  --share  starts the web server for the canvases (as the Docs tab's switch does); --share=nopin leaves out the access code (for scripts).
+## saves a picture after N frames and quits (--tab: brush, shapes, write, add, ai, docs, canvas, rooms, share, settings, guide [--topic=ID], --welcome: as on the very first start, the guide opens on its own; --select=text|shape|stroke
+## selects the first such item first);  --battery=NN[c]  shows a made-up battery level (c: charging).  --host[=NAME] [--session=TITLE] [--code=NNNN|none]  starts a
+## session as soon as the room is found (--align then opens the card for lining up with the room);  --join=ADDRESS[:PORT] [--code=NNNN] [--guest=NAME]  joins one (for trying a session with several copies on one PC; --tab=session shows it).  --share  starts the web server for the canvases (as the Docs tab's switch does); --share=nopin leaves out the access code (for scripts).
 
 var board: Board
 var rig: Node
@@ -15,6 +16,8 @@ func _ready() -> void:
 	if args.has("settings"):
 		App.settings_path = str(args["settings"])
 		App.reload()
+	if args.has("battery"):
+		Battery.set_fake(str(args["battery"]))
 	var headset := _headset_active()
 	App.xr_active = headset
 	board = Board.new()
@@ -35,6 +38,16 @@ func _ready() -> void:
 		(rig as DesktopRig).setup(board)
 	board.toast.connect(func(t: String): print("[board] ", t))
 	_open_document(args)
+	if args.has("welcome") or not (args.has("demo") or args.has("new") or args.has("screenshot") or args.has("host") or args.has("join")):
+		(rig.get("ui") as UiShell).welcome()                # a real start: the first one shows the guide
+	if args.has("host"):
+		_host_later(args)
+	if args.has("join"):
+		_join_later(args)
+	if not (args.has("host") or args.has("join") or args.has("demo") or args.has("new") or args.has("screenshot")):
+		board.session.resume_saved()                     # the session this headset was in when the app stopped
+	elif not (App.val("session_resume") as Dictionary).is_empty():
+		print("[session] not going back to the saved session (a development switch was given)")
 	if args.has("share"):
 		board.share.require_pin = str(args["share"]) != "nopin"
 		board.share.start()
@@ -50,6 +63,32 @@ func _args() -> Dictionary:
 		var kv := s.split("=", true, 1)
 		out[kv[0]] = kv[1] if kv.size() > 1 else "1"
 	return out
+
+
+## --host: wait for the room to be found, then start the session.
+func _host_later(args: Dictionary) -> void:
+	for i in 600:
+		await get_tree().process_frame
+		if board.current_room != "":
+			break
+	var who := str(args.host) if str(args.host) != "1" else "Owner"
+	var code := str(args.get("code", ""))
+	var err := board.session.start_hosting(who, str(args.get("session", "")), code != "none")
+	if err == OK and code.is_valid_int() and code.length() == 4:
+		board.session.code = code
+	print("[session] hosting: error %d, code %s, port %d, document \"%s\"" % [err, board.session.code, board.session.net.port, board.doc.name])
+	if err == OK and args.has("align"):
+		board.session.align_begin()
+
+
+## --join: join a session at an address (the code and a name can be given too).
+func _join_later(args: Dictionary) -> void:
+	for i in 60:
+		await get_tree().process_frame
+	var target := str(args.join).split(":")
+	var port := int(target[1]) if target.size() > 1 else Session.PORT
+	var err := board.session.join(target[0], port, str(args.get("code", "")), str(args.get("guest", "Guest")))
+	print("[session] joining %s:%d: error %d" % [target[0], port, err])
 
 
 func _headset_active() -> bool:
@@ -81,6 +120,8 @@ func _open_document(args: Dictionary) -> void:
 func _screenshot_later(args: Dictionary) -> void:
 	if args.has("tab") and rig is DesktopRig:
 		_show_tab((rig as DesktopRig).ui, str(args.tab))
+	if args.has("topic") and rig is DesktopRig:
+		(rig as DesktopRig).ui.home.guide_page.show_topic(str(args.topic))
 	if args.has("cam") and rig is DesktopRig:
 		var c := String(args.cam).split(",")
 		var cam := (rig as DesktopRig).camera

@@ -2,8 +2,9 @@ class_name HandCursor
 extends Node3D
 ## What a hand (or the stylus) shows where it points or touches: a ring on the target, on the menu or on a canvas, and on a canvas the
 ## things it can pinch there, the four corners (change the extent) and the bar under it (carry it). Whichever it is on lights up. There is
-## no line from the hand to the ring. The stylus shows this only while it points from a distance or holds something: touching a canvas it
-## draws (the tool's own cursor is drawn into the canvas).
+## no line from a hand to its ring. The stylus shows this only while it points from a distance or holds something: touching a canvas it
+## draws (the tool's own cursor is drawn into the canvas). While it points it also has a beam out of the nib (StylusRay), up to its ring,
+## or a short one into nothing; none while the nib touches a canvas, the menu or a real surface ("stylus_ray" setting).
 
 const CORNER_R := InputTuning.CORNER_R
 const BAR_LEN := InputTuning.BAR_LEN
@@ -16,6 +17,7 @@ const COL_ITEM := Color(0.45, 0.95, 1.0, 0.95)        # a shape, line or stroke:
 const COL_DOWN := Color(0.4, 1.0, 0.7, 1.0)           # pressed
 
 var _sides := {}
+var beam: StylusRay
 
 
 func _ready() -> void:
@@ -33,6 +35,9 @@ func _ready() -> void:
 		s.bar_mat = _mat(COL_IDLE)
 		s.bar = _mesh(_capsule(), s.bar_mat)
 		_sides[side] = s
+	beam = StylusRay.new()
+	beam.name = "StylusRay"
+	add_child(beam)
 
 
 func _mat(c: Color) -> StandardMaterial3D:
@@ -85,6 +90,7 @@ func _capsule() -> Mesh:
 func hide_all() -> void:
 	for side in _sides:
 		_hide_side(_sides[side])
+	beam.visible = false
 
 
 func _hide_side(s: Dictionary) -> void:
@@ -96,8 +102,9 @@ func _hide_side(s: Dictionary) -> void:
 
 
 ## hands: side -> HandInput; menu: source ("left" | "right" | "pen") -> {point, poke} for what is on the menu; hover: HandController.hover;
-## head: the head position; stylus_side: the hand holding the stylus; pen: the stylus (its ring is shown while it points at the menu).
-func update(hands: Dictionary, menu: Dictionary, hover: Dictionary, head: Vector3, stylus_side: String, pen: PenState = null) -> void:
+## head: the head position; stylus_side: the hand holding the stylus; pen: the stylus (its ring is shown while it points at the menu);
+## handles: source -> {point, touch} for the bar under a panel that a source is on or carries (the stylus's beam runs to it).
+func update(hands: Dictionary, menu: Dictionary, hover: Dictionary, head: Vector3, stylus_side: String, pen: PenState = null, handles: Dictionary = {}) -> void:
 	for side in ["left", "right"]:
 		var s: Dictionary = _sides[side]
 		var h: HandInput = hands[side]
@@ -113,31 +120,56 @@ func update(hands: Dictionary, menu: Dictionary, hover: Dictionary, head: Vector
 			_chrome(s, hv)
 	var ps: Dictionary = _sides["pen"]
 	_hide_side(ps)
+	beam.visible = false
 	if pen != null and pen.tracked:
 		var pv: Dictionary = hover.get("pen", {})
+		var rays := bool(App.val("stylus_ray")) and not pen.contact
 		if menu.has("pen"):
 			var pm: Dictionary = menu["pen"]
-			_ring(ps, pm.point, "ui", pen.front or pen.down, bool(pm.poke), head)
+			var pressed := pen.front or pen.down
+			_ring(ps, pm.point, "ui", pressed, bool(pm.poke), head)
+			if rays and not bool(pm.poke):
+				beam.aim(pen.tip, pen.dir, pm.point, _color("ui", pressed), pressed, _ring_r(head, pm.point))
+		elif handles.has("pen"):
+			var hh: Dictionary = handles["pen"]
+			if rays and not bool(hh.touch):
+				beam.aim(pen.tip, pen.dir, hh.point, _color("ui", pen.front), pen.front)
 		elif not pv.is_empty() and is_instance_valid(pv.fn) and (not bool(pv.get("direct", false)) or str(pv.kind) == "hold"):
 			_ring(ps, pv.point, str(pv.kind), pen.front, false, head)
 			_chrome(ps, pv)
+			if rays and not bool(pv.get("direct", false)):
+				var end: Variant = pv.point
+				var gap := _ring_r(head, pv.point)
+				if str(pv.kind) == "hold" and str(pv.get("held", "")) == "bar":
+					end = HandController.plane_point(pv.fn, pen.tip, pen.dir)    # carrying: its ring is at the nib, the beam meets the canvas
+					gap = 0.0
+				beam.aim(pen.tip, pen.dir, end, _color(str(pv.kind), pen.front), pen.front, gap)
+		elif pv.is_empty() and rays:
+			beam.aim(pen.tip, pen.dir, null, COL_RING, pen.front)
+
+
+static func _color(kind: String, pressed: bool) -> Color:
+	if pressed:
+		return COL_DOWN
+	match kind:
+		"ui":
+			return COL_UI
+		"item":
+			return COL_ITEM
+		"bar", "corner", "hold":
+			return COL_GRAB
+	return COL_RING
+
+
+static func _ring_r(head: Vector3, target: Vector3) -> float:
+	return clampf(InputTuning.RING_R * head.distance_to(target) / 0.7, InputTuning.RING_MIN, InputTuning.RING_MAX)
 
 
 ## A ring on the target, facing the head and the same size on the eye at any distance; a dot in it while pressed or poking.
 func _ring(s: Dictionary, target: Vector3, kind: String, pressed: bool, poke: bool, head: Vector3) -> void:
-	var col := COL_RING
-	match kind:
-		"ui":
-			col = COL_UI
-		"item":
-			col = COL_ITEM
-		"bar", "corner", "hold":
-			col = COL_GRAB
-	if pressed:
-		col = COL_DOWN
+	var col := _color(kind, pressed)
 	(s.ring_mat as StandardMaterial3D).albedo_color = col
-	var dist := head.distance_to(target)
-	var r := clampf(InputTuning.RING_R * dist / 0.7, InputTuning.RING_MIN, InputTuning.RING_MAX)
+	var r := _ring_r(head, target)
 	var n := (head - target).normalized()
 	var up := Vector3.UP if absf(n.y) < 0.95 else Vector3.RIGHT
 	var x := up.cross(n).normalized()

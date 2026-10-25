@@ -5,6 +5,7 @@ extends RefCounted
 ## frame (frame snapshots before/after), frame_add / frame_remove (frame with its items), group (several of these).
 
 signal changed()
+signal refused()                           # something was tried while editing is switched off (a guest whose owner has said no)
 
 const LIMIT := 200
 
@@ -12,6 +13,7 @@ var doc: Document
 var undo_stack: Array = []
 var redo_stack: Array = []
 var serial := 0                            # counts new operations (not undo / redo): tells "nothing has been done since" apart
+var read_only := false                     # nothing is done, undone or redone while this is set (see Session.can_edit)
 var _group: Array = []
 var _grouping := 0
 
@@ -38,12 +40,18 @@ func clear() -> void:
 
 ## Apply an operation and remember it.
 func do(op: Dictionary) -> void:
+	if read_only:
+		refused.emit()
+		return
 	_apply(op, false)
 	_record(op)
 
 
 ## Remember an operation that has already been applied (live edits such as a drag).
 func record(op: Dictionary) -> void:
+	if read_only:
+		refused.emit()
+		return
 	_record(op)
 
 
@@ -72,6 +80,9 @@ func end_group() -> void:
 
 
 func undo() -> bool:
+	if read_only:
+		refused.emit()
+		return false
 	if undo_stack.is_empty():
 		return false
 	var op: Dictionary = undo_stack.pop_back()
@@ -82,6 +93,9 @@ func undo() -> bool:
 
 
 func redo() -> bool:
+	if read_only:
+		refused.emit()
+		return false
 	if redo_stack.is_empty():
 		return false
 	var op: Dictionary = redo_stack.pop_back()
@@ -97,6 +111,9 @@ func redo() -> bool:
 ## left alone. Returns the operation, or {} when there is none. An operation that touches `ids` together with other items blocks
 ## the search (undoing something older on those items could overwrite it).
 func undo_local(ids: Array) -> Dictionary:
+	if read_only:
+		refused.emit()
+		return {}
 	var i := _find_local(undo_stack, ids)
 	if i < 0:
 		return {}
@@ -109,6 +126,9 @@ func undo_local(ids: Array) -> Dictionary:
 
 ## The same for redo: the latest undone operation that touches only `ids`.
 func redo_local(ids: Array) -> Dictionary:
+	if read_only:
+		refused.emit()
+		return {}
 	var i := _find_local(redo_stack, ids)
 	if i < 0:
 		return {}
@@ -234,7 +254,13 @@ func _apply(op: Dictionary, reverse: bool) -> void:
 					it.apply_xform3((op["t3"] as Transform3D).affine_inverse() if reverse else op["t3"])
 				doc.item_touched(it)
 		"frame":
-			doc.replace_frame(FrameData.from_dict(op["before"] if reverse else op["after"]))
+			# the frame's spatial anchor is not part of what is undone: the snapshot's may have been replaced (and erased) since. The
+			# anchor the frame has now stays; if the pose changes, the board makes a new one where the frame is put back
+			var fd := FrameData.from_dict(op["before"] if reverse else op["after"])
+			var live: FrameData = doc.frames.get(fd.id)
+			if live != null:
+				fd.keep_anchor_of(live)
+			doc.replace_frame(fd)
 		"frame_add":
 			if reverse:
 				doc.remove_frame(str(op["frame"].id))

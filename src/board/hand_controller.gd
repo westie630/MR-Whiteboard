@@ -117,7 +117,7 @@ func plane_hit(fn: FrameNode, h: HandInput, direct: bool) -> Variant:
 
 
 ## Where a ray meets the plane of one canvas (anywhere on it, however far outside its extent), or null.
-func plane_point(fn: FrameNode, o: Vector3, d: Vector3) -> Variant:
+static func plane_point(fn: FrameNode, o: Vector3, d: Vector3) -> Variant:
 	var inv := fn.global_transform.affine_inverse()
 	var lo := inv * o
 	var ld := inv.basis * d

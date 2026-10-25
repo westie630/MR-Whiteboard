@@ -10,6 +10,7 @@ extends Node
 ##   Assistant     the AI assistant (opened from the dock)
 ##   Compose       the typing card with its keyboard
 ##   SurfaceCard   finding the desk with the stylus nib (stands on the dock like the typing card)
+##   AlignCard     touching the two points a session lines up on with the stylus nib (the same)
 ##   Toast         short messages
 ## While the pen draws or a hand carries something, the surfaces fade back and the ones on the canvas step away, so the interface
 ## never covers the work. The shell owns no layout: the rig puts each surface on the screen (PC) or in the room (headset).
@@ -30,6 +31,7 @@ var home: HomePanel
 var assistant: AssistantPanel
 var compose: ComposePanel
 var surface_card: SurfaceCard
+var align_card: AlignCard
 var toast: ToastView
 var panels: Array = []                     # every surface, back to front
 var popover_id := ""
@@ -54,8 +56,9 @@ func setup(b: Board) -> void:
 	assistant = AssistantPanel.new()
 	compose = ComposePanel.new()
 	surface_card = SurfaceCard.new()
+	align_card = AlignCard.new()
 	toast = ToastView.new()
-	panels = [context, ink_chip, suggestion, dock, home, assistant, popover, compose, surface_card, toast]
+	panels = [context, ink_chip, suggestion, dock, home, assistant, popover, compose, surface_card, align_card, toast]
 	for p in panels:
 		(p as FloatPanel).shell = self
 	compose.entry.accepted.connect(_entry_ok)
@@ -105,6 +108,7 @@ func update(delta: float) -> void:
 		p.dim = 1.0 if (calm or not fade) else SIDE_FADED
 	compose.wanted = typing
 	surface_card.wanted = board.surface.finding() and not hidden and not typing
+	align_card.wanted = board.session.aligning() and not hidden and not typing
 	var on_canvas := not hidden and calm and has_doc and not typing
 	var sel_sig := ",".join(PackedStringArray(board.selection))
 	if sel_sig != _sel_sig:
@@ -221,6 +225,9 @@ func back() -> bool:
 	if board.surface.finding():
 		board.surface.cancel()
 		return true
+	if board.session.aligning():
+		board.session.align_cancel()
+		return true
 	if popover_id != "":
 		close_popover()
 		return true
@@ -243,6 +250,17 @@ func show_toast(text: String) -> void:
 func show_home(tab: String) -> void:
 	home.select_tab(tab)
 	open_side("home")
+
+
+## The very first start: the guide opens beside the dock, once, and a ring shows where Home (and so the guide) is for later.
+## Returns whether it did anything.
+func welcome() -> bool:
+	if bool(App.val("guide_seen")) or board == null or board.doc == null:
+		return false
+	App.put("guide_seen", true)
+	show_home("guide")
+	dock.pulse("home")
+	return true
 
 
 # ------------------------------------------------------------------------------------------------ typing

@@ -9,6 +9,8 @@ extends Node3D
 ##    a fingertip, point and pinch (stylus: front button) from a distance, grab the bar under the dock or a side panel to move it,
 ##    open your palm facing up to bring the dock to you
 ##  - spatial anchors (MetaAnchors) and the room scan (MetaScene)
+##  - the panels stay where they were left, in the real room (PanelPlaces): after a restart, with the headset taken off and put back
+##    on, after recentring. The board keeps its canvases there through their anchors; the rig tells it when tracking stops and restarts
 
 const HAND_JOINTS := 26
 const J_PALM := 0
@@ -21,25 +23,32 @@ const QUALITY := {"performance": 1.0, "sharp": 1.4, "ultra": 1.8}
 const POKE_PRESS := InputTuning.POKE_PRESS     # a fingertip or nib this close in front of the menu presses (the tracked tip sits inside the finger)...
 const POKE_RELEASE := InputTuning.POKE_RELEASE # ...and lets go this far out
 const GLOVES_OFF_NEAR := InputTuning.GLOVES_OFF_NEAR   # the gloves hide while the stylus nib is this close to a canvas
-## Ghost hands: grey, faint in the middle and denser at the silhouette (fresnel), like the Quest's own hand gloves.
+## Ghost hands: a filled dark silhouette, no outline. Shown only while a hand is between the eye and a panel (the panel would hide the real
+## hand behind it); `fade` brings it in and out.
 const GHOST_SHADER := """
 shader_type spatial;
-render_mode unshaded, blend_mix, depth_prepass_alpha, cull_back, shadows_disabled;
-uniform vec3 tint : source_color = vec3(0.2, 0.21, 0.24);
+render_mode unshaded, blend_mix, depth_draw_always, cull_back, shadows_disabled;
+uniform vec3 tint : source_color = vec3(0.05, 0.055, 0.065);
+uniform float fade = 0.0;
 void fragment() {
-	float rim = 1.0 - clamp(dot(normalize(NORMAL), normalize(VIEW)), 0.0, 1.0);
-	ALBEDO = mix(tint, vec3(0.42, 0.44, 0.48), rim);
-	ALPHA = mix(0.3, 0.6, pow(rim, 1.5));
+	float lit = 0.75 + 0.25 * clamp(dot(normalize(NORMAL), normalize(VIEW)), 0.0, 1.0);   // a little form, never lighter at the edge
+	ALBEDO = tint * lit;
+	ALPHA = 0.9 * fade;
 }
 """
+const GLOVE_FADE_RATE := 12.0              # per second
+const GLOVE_PANEL_MARGIN := 0.04           # m: a hand this close to a panel's edge (seen from the eye) counts as in front of it
 const MENU_MAX_DIST := InputTuning.MENU_MAX_DIST   # a menu further away than this (another room, or placed before the headset was on) comes back
+const PANEL_WAIT_S := 5.0                  # at start (and with the headset back on) the panels wait this long for their anchor before coming in front
+const MOVABLE := ["dock", "home", "assistant"]
 
 var board: Board
 var xr: XRInterface
 var origin: XROrigin3D
 var camera: XRCamera3D
 var stylus: StylusInput
-var anchors: MetaAnchors
+var anchors: AnchorService                 # MetaAnchors on the headset (tests hand in SimAnchors)
+var places: PanelPlaces                    # where the dock and the side panels were left
 var scene: MetaScene
 var ui: UiShell
 var panel: XrPanel                         # the dock's panel (the one that is summoned)
@@ -49,11 +58,14 @@ var passthrough_on := false
 
 var _pt_check := 0.0
 var _panel_placed := false
+var _panel_wait := 0.0                     # how long the dock has waited for its saved place
 var cursor: HandCursor
 var feedback: Feedback                     # click sounds for the hands
 var _prev_stylus := ""
 var _front_t := 0.0
 var _pinch_peak := {}                      # side -> the strongest pinch since the last status line (for the log)
+var _glove_mats := {}                       # side -> that glove's ShaderMaterial (its fade)
+var _glove_fade := {"left": 0.0, "right": 0.0}
 var _gloves := {}                          # side -> the Node3D holding that ghost glove
 var _hand_ctrls := {}                      # side -> {aim, poke}: XRController3D nodes reading the hand interaction profile
 var _profiles := {}                        # side -> the interaction profile last reported (logged when it changes)
@@ -67,6 +79,8 @@ var _toast_placed := false
 var _grab_origin := Vector3.ZERO           # ...where the menu was, where that source's point was, and how much further the menu moves
 var _grab_p0 := Vector3.ZERO
 var _grab_gain := 1.0
+var _grab_touch := false                   # ...and whether it took hold by touching (not pointing)
+var _handle_hits := {}                     # source -> {point, touch}: the bar under a panel each source is on or carries this frame
 var _pen_front := false                    # the stylus's front button last frame (for its press edge)
 var _palm_t := {"left": 0.0, "right": 0.0}
 var _board_pen := PenState.new()
@@ -76,8 +90,8 @@ var _diag_t := 0.0
 
 # ------------------------------------------------------------------------------------------------ start-up
 
-## Starts the rig and returns the anchor service for the board.
-func start(b: Board) -> AnchorService:
+## Starts the rig and returns the anchor service for the board. `service` replaces the headset's anchors (tests on the PC).
+func start(b: Board, service: AnchorService = null) -> AnchorService:
 	board = b
 	# The engine starts OpenXR itself on Android (project setting). We never call initialize() here.
 	xr = XRServer.find_interface("OpenXR")
@@ -92,15 +106,19 @@ func start(b: Board) -> AnchorService:
 				xr.call("set_display_refresh_rate", want)
 				Engine.physics_ticks_per_second = int(want)
 				break
+	if OS.get_model_name().to_lower().contains("quest 2") and not App.is_set("xr_quality"):
+		App.put("xr_quality", "performance", false)       # a Quest 2 has about half a Quest 3's GPU: start light, unless the user chose
 	_apply_quality()
 	xr.set("foveation_level", 0)
 	xr.set("foveation_dynamic", false)
 	if xr.has_method("set_cpu_level"):
 		xr.call("set_cpu_level", 2)
 		xr.call("set_gpu_level", 2)
-	for sig in ["session_focussed", "session_begun", "session_visible"]:
+	for sig in ["session_focussed", "session_begun", "session_visible", "session_stopping", "session_loss_pending"]:
 		if xr.has_signal(sig):
 			xr.connect(sig, _on_session.bind(sig))
+	if xr.has_signal("pose_recentered"):
+		xr.connect("pose_recentered", _on_recentered)
 	origin = XROrigin3D.new()
 	origin.name = "XROrigin"
 	add_child(origin)
@@ -110,9 +128,13 @@ func start(b: Board) -> AnchorService:
 	origin.add_child(camera)
 	stylus = StylusInput.new()
 	origin.add_child(stylus)
-	anchors = MetaAnchors.new()
-	add_child(anchors)
-	anchors.setup(origin)
+	if service != null:
+		anchors = service
+	else:
+		var meta := MetaAnchors.new()
+		add_child(meta)
+		meta.setup(origin)
+		anchors = meta
 	scene = MetaScene.new()
 	add_child(scene)
 	scene.setup(origin)
@@ -124,6 +146,8 @@ func start(b: Board) -> AnchorService:
 	feedback = Feedback.new()
 	add_child(feedback)
 	_build_menu()
+	places = PanelPlaces.new()
+	places.setup(anchors, App.panel_places_path)
 	board.head_provider = func(): return camera.global_transform
 	board.surface_hit = func(o: Vector3, d: Vector3) -> Dictionary: return scene.hit(o, d)
 	App.setting_changed.connect(_on_setting)
@@ -171,13 +195,36 @@ func _enable_multimodal() -> void:
 
 func _on_session(which: String) -> void:
 	print("[xr] session ", which)
+	if which == "session_visible" or which == "session_stopping" or which == "session_loss_pending":
+		# the headset is being taken off (or the system menu is over the app): save now, and the room is not searched for meanwhile
+		board.tracking_live = false
+		board.flush_save()
+		if which != "session_visible" and anchors.has_method("suspend"):
+			anchors.call("suspend", which == "session_loss_pending")
+		return
 	if which == "session_begun" or which == "session_focussed":
 		_enable_multimodal()
 	if which == "session_focussed" and camera != null and panel != null:
-		_panel_placed = false                      # the headset was (re)put on: the menu comes in front again
+		# the headset was (re)put on: the tracking space may have moved under the room. The canvases and panels are found again
+		# through their anchors and come back exactly where they were; only what has no anchor comes in front
+		board.tracking_live = true
+		board.tracking_reset()
+		places.tracking_reset()
+		_panel_placed = false
+		_panel_wait = 0.0
 	set_passthrough()
-	if which == "session_focussed" or which == "session_begun":
-		anchors.reload()
+	if (which == "session_focussed" or which == "session_begun") and anchors.has_method("reload"):
+		anchors.call("reload")
+
+
+## The view was recentred (long press of the Meta button): the tracking space moved under the room. What is anchored stays in the room;
+## panels without an anchor come in front again.
+func _on_recentered() -> void:
+	print("[xr] view recentred")
+	board.tracking_reset()
+	places.tracking_reset()
+	if not places.anchored() and panel != null and _panel_placed:
+		_place_panel_front()
 
 
 # ------------------------------------------------------------------------------------------------ passthrough
@@ -246,9 +293,12 @@ func _place_panel_front() -> void:
 	var pos := h.origin + fwd * InputTuning.SUMMON_AHEAD + right * InputTuning.SUMMON_RIGHT + Vector3(0, InputTuning.SUMMON_UP, 0)
 	panel.global_transform = _facing(pos)
 	panel.visible = true
+	var put := {"dock": panel.global_transform}
 	for id in ["home", "assistant"]:
 		if ui.is_side_open(id):
-			_place_side(id)
+			_beside_dock(id)
+			put[id] = (panels[id] as XrPanel).global_transform
+	places.put(put)
 
 
 ## A pose at `pos` that faces the head.
@@ -263,8 +313,19 @@ func _face_head(pos: Vector3) -> void:
 	panel.global_transform = _facing(pos)
 
 
-## A side panel beside the dock: Home on the left, the assistant on the right, a little higher, turned towards you.
+## A side panel opened: where it was left, if that is known and within reach; otherwise beside the dock (and that is remembered).
 func _place_side(id: String) -> void:
+	var xp: XrPanel = panels[id]
+	var saved: Variant = places.place_of(id)
+	if saved != null and (saved as Transform3D).origin.distance_to(camera.global_transform.origin) <= MENU_MAX_DIST:
+		xp.global_transform = saved
+		return
+	_beside_dock(id)
+	places.put({id: xp.global_transform})
+
+
+## A side panel beside the dock: Home on the left, the assistant on the right, a little higher, turned towards you.
+func _beside_dock(id: String) -> void:
 	var xp: XrPanel = panels[id]
 	var fp: FloatPanel = ui.home if id == "home" else ui.assistant
 	var d := panel.global_transform
@@ -295,7 +356,7 @@ func _place_ui(delta: float) -> void:
 	var up := d.basis.y.normalized()
 	var dock_top := ui.dock.size.y * panel.mpp()
 	# a popover, the typing card and the desk card stand on the dock (a popover over the button it came from)
-	for id in ["popover", "compose", "surface"]:
+	for id in ["popover", "compose", "surface", "align"]:
 		var xp2: XrPanel = panels[id]
 		if not xp2.visible:
 			continue
@@ -331,11 +392,52 @@ func _place_ui(delta: float) -> void:
 			tp.global_transform = _facing(tp.global_position.lerp(goal, clampf(delta * 3.0, 0.0, 1.0)))
 	else:
 		_toast_placed = false
-	# side panels that were left far behind come back
+	# side panels left far behind come back, unless their place is kept in the room by an anchor (then they stay where they were left:
+	# the palm or the stylus brings the menu)
 	for id in ["home", "assistant"]:
 		var xs: XrPanel = panels[id]
-		if xs.visible and xs.global_position.distance_to(head.origin) > MENU_MAX_DIST and _grab_panel != xs:
-			_place_side(id)
+		if not places.anchored() and xs.visible and xs.global_position.distance_to(head.origin) > MENU_MAX_DIST and _grab_panel != xs:
+			_beside_dock(id)
+			places.put({id: xs.global_transform})
+
+
+## The dock and the side panels hold their saved places in the room: when the headset moves its tracking space under the room
+## (re-localising, recentring) the anchor moves and they move with it. One being carried by its handle is left alone.
+func _follow_places() -> void:
+	for id in MOVABLE:
+		var xp: XrPanel = panels[id]
+		if xp == _grab_panel or (id == "dock" and not _panel_placed):
+			continue
+		var at: Variant = places.place_of(id)
+		if at != null:
+			xp.global_transform = at
+
+
+## At start and with the headset back on, the dock goes back to where it was left once its anchor is found; it comes in front instead
+## when it never had a place, its place is out of reach (another room), or its anchor is not found in time. Side panels that were open
+## open again, at their places.
+func _restore_dock(delta: float) -> void:
+	_panel_wait += delta
+	var saved: Variant = places.place_of("dock")
+	if saved != null and (saved as Transform3D).origin.distance_to(camera.global_transform.origin) <= MENU_MAX_DIST:
+		_panel_placed = true
+		panel.global_transform = saved
+		panel.visible = true
+		print("[xr] the menu is back where it was left")
+	elif saved != null or not places.has("dock") or _panel_wait >= PANEL_WAIT_S:
+		_panel_placed = true
+		_place_panel_front()
+	else:
+		return
+	for id in ["home", "assistant"]:
+		if places.is_open(id) and not ui.is_side_open(id) and board.doc != null:
+			ui.open_side(id)
+
+
+## Which side panels are open is remembered too.
+func _remember_open() -> void:
+	for id in ["home", "assistant"]:
+		places.set_open(id, ui.is_side_open(id))
 
 
 # ------------------------------------------------------------------------------------------------ physical keyboard
@@ -420,9 +522,10 @@ func _build_ghost_hands() -> void:
 		return
 	var shader := Shader.new()
 	shader.code = GHOST_SHADER
-	var mat := ShaderMaterial.new()
-	mat.shader = shader
 	for side in ["left", "right"]:
+		var mat := ShaderMaterial.new()
+		mat.shader = shader
+		_glove_mats[side] = mat
 		var node := XRNode3D.new()
 		node.name = "GhostHand_" + side
 		node.tracker = StringName("/user/hand_tracker/" + side)
@@ -442,17 +545,37 @@ func _build_ghost_hands() -> void:
 	print("[xr] ghost hands ready")
 
 
-## The gloves stop at the menu instead of passing through it when a fingertip pokes it, and hide while the stylus is at a canvas.
-func _update_gloves(pen: PenState, stylus_here: bool) -> void:
+## The gloves stop at the menu instead of passing through it when a fingertip pokes it, hide while the stylus is at a canvas, and show
+## only while the hand is in front of a panel.
+func _update_gloves(pen: PenState, stylus_here: bool, delta: float) -> void:
 	var drawing := stylus_here and not board.pen_target(pen.tip, GLOVES_OFF_NEAR, 0.3).is_empty()
 	for side in _gloves:
 		var g: Node3D = _gloves[side]
-		g.visible = not drawing
+		var want := 0.0 if drawing else (1.0 if _hand_before_panel(hands[side] as HandInput) else 0.0)
+		var f := move_toward(float(_glove_fade[side]), want, GLOVE_FADE_RATE * delta)
+		_glove_fade[side] = f
+		(_glove_mats[side] as ShaderMaterial).set_shader_parameter("fade", f)
+		g.visible = f > 0.01
 		var push := Vector3.ZERO
 		var m: Dictionary = _menu_hits.get(side, {})
 		if bool(m.get("poke", false)) and float(m.get("depth", 1.0)) < 0.0:
 			push = (m.normal as Vector3) * -float(m.depth)
 		g.global_position = (g.get_parent() as Node3D).global_position + push
+
+
+## Is any part of the hand between the eye and a visible panel, seen over the panel's face (or just beside it)?
+func _hand_before_panel(h: HandInput) -> bool:
+	if not h.tracked:
+		return false
+	var eye := camera.global_position
+	for id in panels:
+		var xp: XrPanel = panels[id]
+		if not xp.visible:
+			continue
+		for p in [h.tip, h.knuckle, h.palm, h.pinch_point]:
+			if xp.covers(eye, p as Vector3, GLOVE_PANEL_MARGIN):
+				return true
+	return false
 
 
 ## One XRController3D per hand and pose action, on the standard "left_hand" / "right_hand" trackers: this is how the Godot
@@ -508,12 +631,15 @@ func _process(delta: float) -> void:
 		return
 	_keep_passthrough(delta)
 	var head := camera.global_transform
+	places.update(delta)
 	if not _panel_placed and head.origin.y > 0.3:
-		_panel_placed = true
-		_place_panel_front()
-	elif panel.visible and panel.global_position.distance_to(head.origin) > MENU_MAX_DIST and _grab_src == "":
+		_restore_dock(delta)
+	elif not places.anchored() and panel.visible and panel.global_position.distance_to(head.origin) > MENU_MAX_DIST and _grab_src == "":
 		print("[xr] the menu was %.1f m away: brought back in front" % panel.global_position.distance_to(head.origin))
 		_place_panel_front()
+	_follow_places()
+	if _panel_placed:
+		_remember_open()
 	stylus.update()
 	if stylus.active != _prev_stylus:
 		_prev_stylus = stylus.active
@@ -566,8 +692,8 @@ func _process(delta: float) -> void:
 			bp.pressure = 0.7 if draw_hand.pinching else 0.0
 			bp.haptic = Callable()
 	board.tick(bp, board_hands, delta)
-	cursor.update(hands, _menu_hits, board.hand_ctl.hover, head.origin, stylus.active if stylus_here else "", pen)
-	_update_gloves(pen, stylus_here)
+	cursor.update(hands, _menu_hits, board.hand_ctl.hover, head.origin, stylus.active if stylus_here else "", pen, _handle_hits)
+	_update_gloves(pen, stylus_here, delta)
 	for side in ["left", "right"]:
 		_pinch_peak[side] = maxf(float(_pinch_peak.get(side, 0.0)), (hands[side] as HandInput).pinch_strength)
 	_diag_t += delta
@@ -631,6 +757,7 @@ func _release_ui() -> void:
 func _update_menu(pen: PenState) -> Dictionary:
 	var busy := {}
 	_menu_hits = {}
+	_handle_hits = {}
 	var front_edge := pen.front and not _pen_front
 	_pen_front = pen.front
 	var live := _live_panels()
@@ -755,12 +882,14 @@ func _update_handle(sources: Array, busy: Dictionary) -> void:
 			if s.id != _grab_src or not bool(s.holding) or _grab_panel == null:
 				continue
 			_grab_panel.global_transform = _facing(_grab_origin + ((s.point as Vector3) - _grab_p0) * _grab_gain)
+			_handle_hits[s.id] = {"point": _grab_panel.handle_world(), "touch": _grab_touch}
 			busy[s.id] = true
 			_grab_panel.set_handle_state(true, true)
 			return
 		_grab_src = ""
 		if _grab_panel != null:
 			_grab_panel.set_handle_state(false, false)
+			places.put({(_grab_panel.widget as FloatPanel).id: _grab_panel.global_transform})     # left here: remembered in the room
 		_grab_panel = null
 		return
 	for xp in panels.values():
@@ -781,6 +910,7 @@ func _update_handle(sources: Array, busy: Dictionary) -> void:
 			if not (touching or pointing):
 				continue
 			hover = true
+			_handle_hits[s.id] = {"point": hp, "touch": touching}
 			if bool(s.ray_down) and _grab_src == "":
 				busy[s.id] = true
 				_grab_src = s.id
@@ -788,6 +918,7 @@ func _update_handle(sources: Array, busy: Dictionary) -> void:
 				_grab_origin = p.global_position
 				_grab_p0 = pt
 				_grab_gain = 1.0 if touching else InputTuning.carry_gain(camera.global_position, p.global_position, pt)
+				_grab_touch = touching
 				break
 		p.set_handle_state(hover, _grab_panel == p)
 

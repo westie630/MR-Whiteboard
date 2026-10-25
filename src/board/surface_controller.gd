@@ -306,8 +306,8 @@ func track(pen: PenState, _dt: float) -> void:
 		st.down = true
 		st.last = pen.tip
 		var rw: Variant = board.room_world(f.room)
-		if rw == null:
-			continue
+		if rw == null or board.room_guessed(f.room):
+			continue                                          # (shown at a guessed place: the nib there says nothing about the desk)
 		var pts: PackedVector3Array = st.pts
 		pts.append((rw as Transform3D).affine_inverse() * pen.tip)
 		if pts.size() > TRACK_MAX:

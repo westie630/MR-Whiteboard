@@ -6,6 +6,8 @@ func _ready() -> void:
 	var t := TestCase.new("xr_rig")
 	App.settings_path = "user://test_settings.cfg"
 	App.docs_dir = "user://test_docs_xr"
+	App.panel_places_path = "user://test_panel_places_xr.json"
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(App.panel_places_path))
 	App.reload()
 	var board := Board.new()
 	add_child(board)
@@ -58,6 +60,8 @@ func _ready() -> void:
 	t.check(not (side.ring as MeshInstance3D).visible and not (side.bar as MeshInstance3D).visible, "a hand on nothing shows nothing")
 	for c in rig.cursor.get_children():
 		t.check(not (c is MeshInstance3D and (c.mesh is BoxMesh)), "no line mesh exists")
+	t.check(not rig.cursor.beam.visible, "a hand has no beam")
+	_beam_rules(t, rig, fnode)
 	hand.tracked = false
 	await get_tree().process_frame
 	# a spare canvas for the menu rules to move about (hidden until a rule needs it)
@@ -70,6 +74,60 @@ func _ready() -> void:
 	await _panel_rules(t, rig, board, cv)
 	DocStore.delete(board.doc.id)
 	get_tree().quit(t.done())
+
+
+## The stylus's beam (StylusRay): out of the nib up to its ring on the menu, a canvas or a drawing; a short one into nothing; none while
+## the nib touches a canvas, the menu or a real surface, or with the setting off. Nothing awaits (the rig's frame would hide it again).
+func _beam_rules(t: TestCase, rig: XrRig, fnode: FrameNode) -> void:
+	var head := Vector3(0, 1.6, 0)
+	var beam: StylusRay = rig.cursor.beam
+	var sp := PenState.new()
+	sp.tracked = true
+	sp.tip = Vector3(0.1, 1.3, -0.3)
+	var on_canvas := Vector3(0.0, 1.4, -1.0)
+	sp.dir = (on_canvas - sp.tip).normalized()
+	var pv := {"fn": fnode, "point": on_canvas, "kind": "canvas", "corner": -1, "direct": false}
+	rig.cursor.update(rig.hands, {}, {"pen": pv}, head, "right", sp)
+	t.check(beam.visible and (rig.cursor._sides["pen"].ring as MeshInstance3D).visible, "the stylus pointing at a canvas shows its ring and its beam")
+	var span := beam.span()
+	t.near((span[0] as Vector3).distance_to(sp.tip), StylusRay.START, 1e-4, "...out of the nib")
+	t.near(((span[1] as Vector3) - sp.tip).normalized().dot(sp.dir), 1.0, 1e-5, "...along the stylus")
+	var ring_r := HandCursor._ring_r(head, on_canvas)
+	t.near((span[1] as Vector3).distance_to(on_canvas), ring_r, 1e-3, "...up to the edge of its ring")
+	pv.direct = true
+	rig.cursor.update(rig.hands, {}, {"pen": pv}, head, "right", sp)
+	t.check(not beam.visible, "the nib touching a canvas: no beam (the tool's cursor is on the canvas)")
+	var on_menu := Vector3(0.05, 1.35, -0.7)
+	sp.dir = (on_menu - sp.tip).normalized()
+	rig.cursor.update(rig.hands, {"pen": {"point": on_menu, "poke": false}}, {"pen": pv}, head, "right", sp)
+	t.check(beam.visible and (beam.span()[1] as Vector3).distance_to(on_menu) < 0.02, "pointing at the menu: the beam runs to the menu")
+	rig.cursor.update(rig.hands, {"pen": {"point": sp.tip, "poke": true}}, {}, head, "right", sp)
+	t.check(not beam.visible, "the nib on the menu: no beam")
+	rig.cursor.update(rig.hands, {}, {}, head, "right", sp)
+	t.check(beam.visible, "pointing at nothing: a beam all the same...")
+	t.near((beam.span()[1] as Vector3).distance_to(beam.span()[0] as Vector3), InputTuning.RAY_IDLE_LEN, 1e-4, "...a short one that fades out")
+	var bar := Vector3(0.0, 1.0, -0.9)
+	rig.cursor.update(rig.hands, {}, {}, head, "right", sp, {"pen": {"point": bar, "touch": false}})
+	t.check(beam.visible and (beam.span()[1] as Vector3).distance_to(sp.tip) > 0.55, "on the bar under a panel: the beam runs to the bar")
+	rig.cursor.update(rig.hands, {}, {}, head, "right", sp, {"pen": {"point": sp.tip, "touch": true}})
+	t.check(not beam.visible, "...and none while the nib touches the bar")
+	# carrying a canvas by its bar from afar: the ring is at the nib, the beam meets the canvas's plane
+	sp.dir = (on_canvas - sp.tip).normalized()
+	var held := {"fn": fnode, "point": sp.tip, "kind": "hold", "held": "bar", "corner": -1, "direct": false}
+	rig.cursor.update(rig.hands, {}, {"pen": held}, head, "right", sp)
+	t.check(beam.visible and (beam.span()[1] as Vector3).distance_to(on_canvas) < 1e-3, "carrying a canvas: the beam reaches the canvas")
+	sp.contact = true
+	rig.cursor.update(rig.hands, {}, {}, head, "right", sp)
+	t.check(not beam.visible, "the nib pressed on a real surface: no beam")
+	sp.contact = false
+	App.put("stylus_ray", false)
+	pv.direct = false
+	rig.cursor.update(rig.hands, {}, {"pen": pv}, head, "right", sp)
+	t.check(not beam.visible and (rig.cursor._sides["pen"].ring as MeshInstance3D).visible, "the setting off: the ring but no beam")
+	App.put("stylus_ray", true)
+	sp.tracked = false
+	rig.cursor.update(rig.hands, {}, {}, head, "right", sp)
+	t.check(not beam.visible, "no stylus: no beam")
 
 
 ## The menu's rules for hands and the stylus, run by calling the rig's own functions on simulated input. Nothing here awaits: the rig's
@@ -253,6 +311,7 @@ func _menu_rules(t: TestCase, rig: XrRig, board: Board, cv: FrameData, spare: Fr
 	var y0 := p.global_position
 	busy = rig._update_menu(pen)
 	t.check(rig._grab_src == "right" and busy.has("right"), "pinching with the ray on the handle grabs the menu")
+	t.check(rig._handle_hits.has("right") and not bool(rig._handle_hits.right.touch), "(the cursor is told where the bar a ray holds is)")
 	rh.pinch_down = false
 	rh.pinch_point += Vector3(0.1, 0.0, 0.0)
 	busy = rig._update_menu(pen)
@@ -276,6 +335,7 @@ func _menu_rules(t: TestCase, rig: XrRig, board: Board, cv: FrameData, spare: Fr
 	rh.pinch_point += Vector3(0.1, 0.0, 0.0)
 	busy = rig._update_menu(pen)
 	t.near(p.global_position.x - y1.x, 0.1, 0.005, "touching the handle: the menu follows the pinch point 1:1")
+	t.check(bool(rig._handle_hits.right.touch), "(...and that this one is held by touch)")
 	rh.pinching = false
 	rh.pinch_up = true
 	busy = rig._update_menu(pen)

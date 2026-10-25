@@ -216,6 +216,27 @@ func raycast(origin: Vector3, dir: Vector3) -> Dictionary:
 	return {"hit": _catches(px, 0.0), "t": t, "point": p, "uv": px / design}
 
 
+## Is `p` in front of this panel as seen from `eye`: the line from the eye through `p` goes on to cross the widget (grown by `margin` m)?
+## (A point a little behind the face still counts: a fingertip poking through it.)
+func covers(eye: Vector3, p: Vector3, margin: float) -> bool:
+	if widget == null or not widget.visible or widget.mouse_filter == Control.MOUSE_FILTER_IGNORE:
+		return false
+	var d := p - eye
+	var dist := d.length()
+	if dist < 0.01:
+		return false
+	d /= dist
+	var n := global_transform.basis.z.normalized()
+	var denom := d.dot(n)
+	if absf(denom) < 1e-4:
+		return false
+	var t := (global_position - eye).dot(n) / denom
+	if t < dist - 0.03:
+		return false
+	var px := px_of(global_transform.affine_inverse() * (eye + d * t))
+	return widget_rect().grow(margin / mpp()).has_point(px)
+
+
 ## A point near the panel: {depth (m in front of it, negative = through it), uv, inside}.
 func touch_info(tip: Vector3, margin: float = 0.01) -> Dictionary:
 	var l := global_transform.affine_inverse() * tip

@@ -3,7 +3,8 @@ extends FloatPanel
 ## Everything that is not drawing, in one card opened from the dock: Documents (open, new, rename, export), Canvases (the canvases
 ## of this room and how the selected one looks), Rooms, Share (the web page for a PC on the Wi-Fi) and Settings.
 
-const TABS := [["docs", "doc", "Documents"], ["canvas", "canvas", "Canvases"], ["rooms", "room", "Rooms"], ["share", "wifi", "Share"], ["settings", "settings", "Settings"]]
+const TABS := [["docs", "doc", "Docs"], ["canvas", "canvas", "Canvases"], ["rooms", "room", "Rooms"], ["share", "wifi", "Share"], ["session", "session", "Session"], ["settings", "settings", "Settings"],
+	["guide", "help", "Guide"]]                # the guide has no tab: the "?" in the header opens it
 const W := 600.0
 const H := 760.0
 
@@ -30,6 +31,9 @@ var _share_code: Label
 var _share_label: Label
 var _token_btn: Btn
 var grip: Dock.Grip
+var session_page := SessionPage.new()
+var guide_page := GuidePage.new()
+var help_btn: Btn
 
 
 func _init() -> void:
@@ -66,6 +70,8 @@ func _init() -> void:
 	_room_chip.size_flags_horizontal = Control.SIZE_SHRINK_END
 	_room_chip.autowrap_mode = TextServer.AUTOWRAP_OFF
 	head.add_child(_room_chip)
+	help_btn = UiKit.tool("help", "How to use it: the guide", func(): select_tab("docs" if tab == "guide" else "guide"), 44.0)
+	head.add_child(help_btn)
 	quit_btn = UiKit.chip("Quit", _on_quit, "power", 40.0)
 	quit_btn.variant = "ghost"
 	quit_btn.danger = true
@@ -76,6 +82,8 @@ func _init() -> void:
 	var tabs := UiKit.hrow(root, 4)
 	for t in TABS:
 		var tid: String = t[0]
+		if tid == "guide":
+			continue
 		var b := Btn.new("", t[2])
 		b.variant = "chip"
 		b.custom_minimum_size = Vector2(0, 44)
@@ -101,26 +109,35 @@ func _init() -> void:
 	_build_canvas(_pages.canvas)
 	_build_rooms(_pages.rooms)
 	_build_share(_pages.share)
+	session_page.build(_pages["session"], self)
 	_build_settings(_pages.settings)
+	guide_page.build(_pages.guide, self)
 	var want := str(App.val("menu_tab"))
-	select_tab(want if _pages.has(want) else "docs")
+	select_tab(want if _pages.has(want) and want != "guide" else "docs")
 
 
 func select_tab(t: String) -> void:
 	tab = t
-	App.put("menu_tab", t)
+	if t != "guide":
+		App.put("menu_tab", t)                         # the guide is a visit: Home opens on the tab you left, not on the guide
 	for k in _pages:
 		(_pages[k] as Control).visible = k == t
 	for k in _tab_btns:
 		(_tab_btns[k] as Btn).on = k == t
-	_scroll.scroll_vertical = 0
+	help_btn.on = t == "guide"
+	scroll_to_top()
 	_lists_sig = ""
 	if shell != null:
 		refresh()
 
 
+func scroll_to_top() -> void:
+	_scroll.scroll_vertical = 0
+
+
 func _process(delta: float) -> void:
 	super(delta)
+	session_page.tick(delta)
 	if _quit_armed > 0.0:
 		_quit_armed -= delta
 		if _quit_armed <= 0.0:
@@ -150,6 +167,8 @@ func refresh() -> void:
 	_kit.sync()
 	_dyn.sync()
 	_sync_share()
+	if tab == "session":
+		session_page.refresh()
 
 
 var _dyn := UiKit.new()                    # refreshers of widgets rebuilt with their list
@@ -476,6 +495,8 @@ func _build_settings(p: VBoxContainer) -> void:
 	UiKit.header(p, "Pen and hands")
 	var ph := UiKit.card(p)
 	_kit.segmented(ph, [["auto", "Stylus hand: auto"], ["left", "Left"], ["right", "Right"]], func(): return App.val("stylus_hand"), func(v): App.put("stylus_hand", v))
+	_kit.switch(ph, "Stylus model", "stylus_model", "Logitech's MX Ink drawn over the real stylus")
+	_kit.switch(ph, "Pointing line", "stylus_ray", "A beam from the stylus to what it points at")
 	_kit.switch(ph, "Feedback", "haptics", "Stylus haptics and click sounds for pinches")
 	_kit.switch(ph, "Draw with a pinch", "finger_draw", "When there is no stylus")
 	_kit.slider(ph, "Hold still to snap", 0.25, 1.2, "hold_seconds", 0.05, func(v: float): return "%.2f s" % v)
@@ -506,6 +527,7 @@ func _build_settings(p: VBoxContainer) -> void:
 
 	UiKit.header(p, "How to use it")
 	var hu := UiKit.card(p)
+	hu.add_child(UiKit.button("help", "Open the guide: every feature, step by step", func(): select_tab("guide"), 52.0))
 	UiKit.note(hu, "Stylus tip: the current tool. Hold still at the end of a stroke to snap it to a clean shape.\nFront button = grab (like a pinch): an item, the bar under a canvas, a corner. Back button: undo; with the front button held: redo.\nHands: point (a ring shows where) and pinch, or touch with the pinch. Hands arrange, the stylus draws.\nThe toolbar: open your palm facing up, or hold the stylus front button away from canvases, to bring it in front of you. Grab the bar under a panel to move it.")
 	if not App.xr_active:
 		UiKit.note(hu, "PC: left mouse = stylus, Shift+left = front button, middle mouse = pinch (wheel scales, Q / E turn), right mouse = look, WASD = walk, 1-5 tools, B brush, T type, C canvas, Tab hides the interface, Esc closes panels.")
