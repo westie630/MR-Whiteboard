@@ -163,7 +163,7 @@ func refresh() -> void:
 	for e in b.pdfs.list():
 		sig += "|" + str(e.id) + str(e.name)
 	for f in b.doc.frames.values():
-		sig += "/" + (f as FrameData).name + str((f as FrameData).locked) + str((f as FrameData).surface) + str((f as FrameData).bend)
+		sig += "/" + (f as FrameData).name + str((f as FrameData).locked) + str((f as FrameData).place_locked) + str((f as FrameData).surface) + str((f as FrameData).bend)
 		if (f as FrameData).bend:
 			sig += "%d,%d" % [roundi((f as FrameData).bend_at * 100.0), roundi((f as FrameData).bend_radius * 100.0)]
 	if sig != _lists_sig:
@@ -377,6 +377,10 @@ func _refresh_canvas() -> void:
 				cv.on = fd.bend
 				cv.accent = UITheme.DESK
 				row.add_child(cv)
+		var pl := UiKit.tool("lock_place", "Unlock its place" if fd.place_locked else "Lock its place: it stays where it is, facing the same way; two hands still resize it",
+			func(): b.set_frame_prop(fid, "place_locked", not fd.place_locked), 52.0)
+		pl.on = fd.place_locked
+		row.add_child(pl)
 		var lk := UiKit.tool("lock", "Lock", func(): b.set_frame_prop(fid, "locked", not fd.locked), 52.0)
 		lk.on = fd.locked
 		row.add_child(lk)

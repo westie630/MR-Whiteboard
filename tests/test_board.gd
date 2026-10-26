@@ -610,6 +610,53 @@ func run() -> void:
 	await pinch_up(hand)
 	board.undo()
 	await tick(3)
+	# its place locked: the bar does not carry it, and two hands only resize it, about its middle: it neither turns nor moves
+	await tick(80)
+	board.set_frame_prop(g.id, "place_locked", true)
+	await tick(2)
+	var p_xf := (board.doc.frames[g.id] as FrameData).xf
+	var p_scale := (board.doc.frames[g.id] as FrameData).scale
+	var p_steps := board.history.undo_stack.size()
+	var p_mid := cv.to_world_point(Vector3(cv.bounds().get_center().x, cv.bounds().get_center().y, 0.0))
+	var pbar := cv.global_transform * Vector3(HandController.bar_center(cv).x, HandController.bar_center(cv).y, 0.0)
+	hands = [hand]
+	aim(hand, pbar)
+	await tick(2)
+	await pinch_down(hand)
+	for i in 10:
+		aim(hand, pbar + Vector3(0.03 * float(i + 1), 0.02 * float(i + 1), 0.0))
+		await tick(1)
+	await pinch_up(hand)
+	t.check((board.doc.frames[g.id] as FrameData).xf.is_equal_approx(p_xf), "its place locked, the bar does not carry the canvas")
+	t.eq(board.history.undo_stack.size(), p_steps, "...and holding it leaves nothing to undo")
+	hands = [hand, left]
+	aim(hand, pbar)
+	left.aim_o = pbar + Vector3(-0.3, 0.0, 0.6)
+	left.aim_d = Vector3(-1, 0, 0)
+	left.press_o = left.aim_o
+	left.press_d = left.aim_d
+	left.pinch_point = pbar + Vector3(-0.3, 0.0, 0.05)
+	await tick(2)
+	await pinch_down(hand)
+	await pinch_down(left)
+	for i in 10:
+		var pm := (hand.pinch_point + left.pinch_point) * 0.5
+		var turn := Basis(Vector3.UP, deg_to_rad(3.0))
+		hand.pinch_point = pm + turn * (hand.pinch_point - pm) * 1.05
+		left.pinch_point = pm + turn * (left.pinch_point - pm) * 1.05
+		await tick(1)
+	await pinch_up(left)
+	await pinch_up(hand)
+	await tick(2)
+	var pl: FrameData = board.doc.frames[g.id]
+	t.check(pl.scale > p_scale * 1.4, "two hands still resize it: %.2f -> %.2f" % [p_scale, pl.scale])
+	t.check(pl.xf.basis.orthonormalized().is_equal_approx(p_xf.basis.orthonormalized()), "...but do not turn it (the hands turned 30 degrees)")
+	var p_mid2 := cv.to_world_point(Vector3(cv.bounds().get_center().x, cv.bounds().get_center().y, 0.0))
+	t.check(p_mid2.distance_to(p_mid) < 0.003, "...nor move it: it grew about its middle (%.1f mm off)" % (p_mid2.distance_to(p_mid) * 1000.0))
+	board.undo()
+	board.undo()
+	await tick(3)
+	t.check(not (board.doc.frames[g.id] as FrameData).place_locked and is_equal_approx((board.doc.frames[g.id] as FrameData).scale, p_scale), "undo: its size, then the lock")
 	hands = []
 	# touching and pointing: a hand held back from the canvas points, the ray chooses and the canvas moves further than the hand
 	await tick(80)

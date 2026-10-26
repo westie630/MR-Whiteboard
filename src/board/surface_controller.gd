@@ -59,6 +59,8 @@ func begin(target: String = "", size: Vector2 = Vector2(1.2, 0.8), curved: bool 
 		if f.locked:
 			board.toast.emit("That canvas is locked.")
 			return
+		if board.place_locked(f):
+			return
 		size = f.size
 	var tmp := Document.create("ghost")
 	var gf := FrameData.make(FrameData.CANVAS, "", Transform3D.IDENTITY, "")
@@ -289,6 +291,8 @@ func release(frame_id: String, upright: bool = false) -> void:
 	var f: FrameData = board.doc.frames.get(frame_id) if board.doc != null else null
 	if f == null or not f.surface:
 		return
+	if upright and board.place_locked(f):
+		return                                           # (freed where it lies it does not move: that may)
 	var upd := f.copy()
 	upd.surface = false
 	board.make_flat(upd)                                 # (a curved desk is only curved on the desk)
@@ -335,6 +339,8 @@ func begin_align(frame_id: String) -> void:
 		return
 	if f.locked:
 		board.toast.emit("That canvas is locked.")
+		return
+	if board.place_locked(f):
 		return
 	board.cancel_place()
 	cancel()
@@ -427,7 +433,7 @@ func track(pen: PenState, _dt: float) -> void:
 	for fn_any in board.visible_frames(FrameData.CANVAS):
 		var fn := fn_any as FrameNode
 		var f := fn.data
-		if not f.surface or f.locked or board.grabs.has(f.id):
+		if not f.surface or f.locked or f.place_locked or board.grabs.has(f.id):
 			continue
 		var st: Dictionary = _track.get(f.id, {})
 		if st.is_empty():

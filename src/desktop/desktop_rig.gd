@@ -382,6 +382,8 @@ func _key(k: InputEventKey) -> void:
 		KEY_Q, KEY_E:
 			for fid in board.grabs.keys():
 				var g: Dictionary = board.grabs[fid]
+				if board.doc.frames.has(fid) and (board.doc.frames[fid] as FrameData).place_locked:
+					continue                                     # (its place is locked: it does not turn)
 				var xf := g.xf as Transform3D
 				xf.basis = Basis(Vector3.UP, deg_to_rad(6.0) * (1.0 if k.keycode == KEY_Q else -1.0)) * xf.basis
 				g.xf = xf

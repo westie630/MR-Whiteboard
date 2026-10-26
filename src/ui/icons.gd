@@ -129,6 +129,16 @@ static func draw(ci: CanvasItem, id: String, r: Rect2, col: Color) -> void:
 		"lock":
 			ci.draw_rect(Rect2(P.call(0.24, 0.48), Vector2(0.52, 0.38) * s), col, false, w)
 			ci.draw_arc(P.call(0.5, 0.48), s * 0.17, PI, TAU, 16, col, w, true)
+		"lock_place":
+			# the four arrows of a move, held by a small padlock: it stays where it is
+			for d: Vector2 in [Vector2(0, -1), Vector2(1, 0), Vector2(0, 1), Vector2(-1, 0)]:
+				var tip := Vector2(0.42, 0.42) + d * 0.32
+				var side := Vector2(-d.y, d.x)
+				ci.draw_line(P.call(0.42 + d.x * 0.08, 0.42 + d.y * 0.08), P.call(tip.x, tip.y), col, w, true)
+				ci.draw_polyline(PackedVector2Array([P.call(tip.x - d.x * 0.1 + side.x * 0.08, tip.y - d.y * 0.1 + side.y * 0.08), P.call(tip.x, tip.y),
+					P.call(tip.x - d.x * 0.1 - side.x * 0.08, tip.y - d.y * 0.1 - side.y * 0.08)]), col, w, true)
+			ci.draw_rect(Rect2(P.call(0.62, 0.7), Vector2(0.3, 0.22) * s), col, true)
+			ci.draw_arc(P.call(0.77, 0.7), s * 0.09, PI, TAU, 12, col, w * 0.9, true)
 		"grid":
 			ci.draw_rect(Rect2(P.call(0.18, 0.18), Vector2(0.64, 0.64) * s), col, false, w)
 			ci.draw_line(P.call(0.5, 0.18), P.call(0.5, 0.82), col, w * 0.7, true)

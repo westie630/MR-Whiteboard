@@ -308,6 +308,12 @@ and bar of the canvas (section 11.1).
 
 ### 9.2 Two hands on one canvas
 
+**Place locked** (`FrameData.place_locked`, Home > Canvases, the arrows-and-padlock button): the canvas keeps where it is and which way it faces. A pinch on its bar or
+empty canvas holds it but it does not follow (the first try says why), so two hands *only* resize it, about the middle of its extent, never turning or
+moving it (a curved desk: they only zoom its contents; one pointer still slides them). Bring to me, laying it on or standing it up from a desk, curving it,
+lining a curved desk up, the PC's Q / E and desk tracking leave it alone; a corner still changes its extent, flattening a curved desk keeps it where it is.
+A hold that changed nothing leaves no undo step and keeps the anchor. `locked` locks everything; this locks only the place.
+
 When one hand is carrying a canvas (bar or empty-canvas drag, not a corner) and the **other hand pinches the same canvas** (touching it, its ray on the same canvas, or on no canvas):
 
 | Hands do | Canvas does |

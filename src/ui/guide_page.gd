@@ -110,6 +110,7 @@ const TOPICS := [
 			"Pick Small, Medium or Large in the same panel. A canvas grows when you draw past its edge, so it never runs out.",
 			"Carry a canvas by the bar under it. Resize it by a corner. Two hands, or a hand and the stylus front button, turn and scale it.",
 			"Home, Canvases lists them: rename, lock, clear, delete, grid and backing. Bring to me fetches one that is far away.",
+			"The button with the four arrows and a padlock locks a canvas's place: it stays where it is, facing the same way, and two hands only make it bigger or smaller (a curved desk: what is drawn on it). Press it again to move it.",
 			"Canvases are fixed in the room by spatial anchors: after a restart, or with the headset taken off and put back on, they are where you left them, at the size you left them. Home, Rooms keeps them apart by room.",
 		]],
 		["try", [["canvas", "Put one on a wall", "place:wall"], ["canvas", "List my canvases", "tab:canvas"], ["room", "Rooms", "tab:rooms"]]],

@@ -469,6 +469,11 @@ func _step_hold(side: String, h: HandInput) -> void:
 			_resize(hold, pt)
 	elif bool(hold.get("slide", false)):
 		_slide(hold, fn, h)
+	elif _two.is_empty() and fn.data.place_locked:
+		# its place is locked: it is held all the same (a second hand resizes it), but it does not follow; one try is enough to say why
+		if not hold.has("told") and h.pinch_point.distance_to(hold.p0 as Vector3) > InputTuning.MOVE_START * 2.5:
+			hold.told = true
+			board.place_locked(fn.data)
 	elif _two.is_empty():
 		var g: Dictionary = board.grabs[(hold.f as FrameData).id]
 		var xf := g.xf as Transform3D
@@ -607,6 +612,7 @@ func _update_two(seen: Dictionary) -> void:
 			var sa := _surface_spot(fn0, seen[pair[0]], bool((_holds[pair[0]] as Dictionary).direct))
 			var sb := _surface_spot(fn0, seen[pair[1]], bool((_holds[pair[1]] as Dictionary).direct))
 			_two.merge({"spot0": (sa + sb) * 0.5, "pan0": g.get("pan", f.bend_pan)})
+		_two.pivot = fn0.bounds().get_center()            # (a canvas whose place is locked is resized about its middle)
 		return
 	var mid := (a + b) * 0.5
 	var v2 := b - a
@@ -617,8 +623,17 @@ func _update_two(seen: Dictionary) -> void:
 	var dyaw := angle_difference(float(_two.yaw0), atan2(v2.x, v2.z))
 	var rot := Basis(Vector3.UP, dyaw)
 	var xf := g.xf as Transform3D
-	xf.basis = rot * (_two.basis0 as Basis)
-	xf.origin = mid + rot * (((_two.origin0 as Vector3) - (_two.mid0 as Vector3)) * ratio)
+	if f.place_locked:
+		# its place is locked: it neither turns nor moves, it only changes size (about its middle; a curved desk only zooms its contents)
+		xf.basis = _two.basis0 as Basis
+		xf.origin = _two.origin0 as Vector3
+		if not fixed:
+			var c := _two.pivot as Vector2
+			var sc := clampf(float(_two.scale0) * ratio, InputTuning.CANVAS_SCALE.x, InputTuning.CANVAS_SCALE.y)
+			xf.origin += xf.basis.orthonormalized() * (Vector3(c.x, c.y, 0.0) * (float(_two.scale0) - sc))
+	else:
+		xf.basis = rot * (_two.basis0 as Basis)
+		xf.origin = mid + rot * (((_two.origin0 as Vector3) - (_two.mid0 as Vector3)) * ratio)
 	g.xf = xf
 	if fixed:
 		# ...spreading the hands zooms its contents instead, about the spot between them, which stays where it is on the surface (the

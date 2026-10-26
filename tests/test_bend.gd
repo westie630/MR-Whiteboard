@@ -230,6 +230,9 @@ func run() -> void:
 	var fb := FrameData.from_dict(JSON.parse_string(JSON.stringify(DocSync.frame_to_wire(fd))))
 	t.check(fb.bend and is_equal_approx(fb.bend_at, 0.52) and is_equal_approx(fb.bend_radius, 0.2) and fb.bend_pan.is_equal_approx(Vector2(0.1, -0.25)),
 		"the bend is saved, and goes to the others of a session")
+	fd.place_locked = true
+	t.check(FrameData.from_dict(JSON.parse_string(JSON.stringify(DocSync.frame_to_wire(fd)))).place_locked and not FrameData.from_dict({"id": "y"}).place_locked,
+		"a locked place is saved and goes to the others of a session (and is off unless set)")
 	var hostile := FrameData.from_dict({"id": "x", "bend": [99.0, -5.0, 1e30, "a"]})
 	t.check(hostile.bend_at <= DeskBend.MAX_AT and hostile.bend_radius >= DeskBend.MIN_RADIUS and absf(hostile.bend_pan.x) <= 1e4, "numbers from outside are kept in range")
 
@@ -685,4 +688,46 @@ func hands_on_the_desk(fid: String) -> void:
 	board.undo()
 	await tick(3)
 	t.near((board.doc.frames[fid] as FrameData).scale, z0, 1e-6, "undo puts the zoom back")
+
+	# its place locked: the bar does not move the desk, and two hands that turn and spread only zoom the contents
+	board.set_frame_prop(fid, "place_locked", true)
+	await tick(2)
+	var lk_xf := (board.doc.frames[fid] as FrameData).xf
+	var lbc := HandController.bar_center(fn)
+	var lbar := fn.bend.to_node(Vector3(lbc.x, lbc.y, 0.0))
+	hands = [hand]
+	hand_at(hand, fn, lbar + Vector3(0, 0, 0.03), lbar)
+	await tick(2)
+	await pinch(hand, true)
+	await hand_steps(hand, fn, Vector3(0.02, 0.01, 0.0), 10)
+	await pinch(hand, false)
+	await tick(3)
+	t.check((board.doc.frames[fid] as FrameData).xf.is_equal_approx(lk_xf), "its place locked, the bar does not move the curved desk")
+	hands = [hand, left]
+	hand_at(hand, fn, Vector3(0.15, 0.25, 0.03), Vector3(0.15, 0.25, 0.0))
+	hand_at(left, fn, Vector3(-0.15, 0.25, 0.03), Vector3(-0.15, 0.25, 0.0))
+	await tick(2)
+	await pinch(hand, true)
+	await pinch(left, true)
+	for i in 10:
+		var lm := (hand.pinch_point + left.pinch_point) * 0.5
+		var lturn := Basis(Vector3.UP, deg_to_rad(3.0))
+		for hd in [hand, left]:
+			var hh := hd as HandInput
+			hh.pinch_point = lm + lturn * (hh.pinch_point - lm) * 1.07
+			hh.tip = hh.pinch_point
+			hh.aim_o = hh.pinch_point
+		await tick(1)
+	await pinch(left, false)
+	await pinch(hand, false)
+	await tick(3)
+	var lf: FrameData = board.doc.frames[fid]
+	t.check(lf.xf.is_equal_approx(lk_xf), "...and two hands that turn 30 degrees do not turn or move it")
+	t.check(lf.scale > z0 * 1.5, "...but still zoom what is drawn: %.2f" % lf.scale)
+	t.check(board.align_curved(fid, Vector3(0.1, p0.y, -0.45), Vector3(0.1, p0.y + 0.2, -1.2)) != "" and (board.doc.frames[fid] as FrameData).xf.is_equal_approx(lk_xf),
+		"...and lining it up with the desk is refused until its place is unlocked")
+	board.undo()
+	board.undo()
+	await tick(3)
+	t.check(not (board.doc.frames[fid] as FrameData).place_locked and is_equal_approx((board.doc.frames[fid] as FrameData).scale, z0), "undo: the zoom, then the lock")
 	hands = []

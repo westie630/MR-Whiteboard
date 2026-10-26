@@ -1081,9 +1081,9 @@ func begin_grab(f: FrameData) -> void:
 	var w: Variant = frame_world(f)
 	if w == null:
 		return
-	grabs[f.id] = {"xf": w, "scale": f.scale, "before": f.copy()}
+	grabs[f.id] = {"xf": w, "xf0": w, "scale": f.scale, "before": f.copy()}
 	if f.bend:
-		(grabs[f.id] as Dictionary).merge({"pan": f.bend_pan, "bend_at": f.bend_at, "bend_radius": f.bend_radius, "xf0": w})
+		(grabs[f.id] as Dictionary).merge({"pan": f.bend_pan, "bend_at": f.bend_at, "bend_radius": f.bend_radius})
 	_dirty_overlay(f.id)
 
 
@@ -1100,6 +1100,10 @@ func end_grab(f: FrameData) -> void:
 	after.xf = (rw as Transform3D).affine_inverse() * xf if rw != null else xf
 	after.xf = after.on_surface(after.xf)
 	after.scale = clampf(float(g.scale), 0.15, 8.0)
+	if f.place_locked and xf.is_equal_approx(g.xf0 as Transform3D) and is_equal_approx(after.scale, f.scale):
+		grabs.erase(f.id)                            # its place is locked and it was only held: it keeps its pose (and its anchor)
+		_dirty_overlay(f.id)
+		return
 	grabs.erase(f.id)
 	_held.erase("frame:" + f.id)
 	var before: FrameData = g.before
@@ -1133,6 +1137,14 @@ func _end_bend_grab(f: FrameData, g: Dictionary) -> void:
 	history.do(History.op_frame(before, after))
 
 
+## A canvas whose place is locked (FrameData.place_locked) stays where it is, facing the same way: says so and returns true when `f` is one.
+func place_locked(f: FrameData) -> bool:
+	if f == null or not f.place_locked:
+		return false
+	toast.emit("\"%s\" has its place locked: it stays where it is (two hands still resize it). Unlock it in Home > Canvases to move it." % f.name)
+	return true
+
+
 ## Bring the canvas you are looking at (else the active one, else the nearest) within reach of the stylus: its middle 0.6 m in front
 ## of you, a little below the eyes, facing you. Done as a grab, so it is undoable and gets a new anchor like any move.
 func bring_canvas_here() -> void:
@@ -1147,6 +1159,8 @@ func bring_canvas_here() -> void:
 		return
 	if f.surface:
 		toast.emit("That canvas lies on your desk: it stays there. Free it in Home > Canvases to bring it.")
+		return
+	if place_locked(f):
 		return
 	begin_grab(f)
 	if not grabs.has(f.id):
@@ -1231,6 +1245,8 @@ func curve_frame(frame_id: String, on: bool) -> bool:
 		if f.is_pdf():
 			toast.emit("A PDF stays flat.")
 			return false
+		if place_locked(f):
+			return false                                     # (curving puts it in front of you: flattening keeps it where it is, so that may)
 		if not can_curve(f):
 			toast.emit("Lay the canvas on a level desk first (Add > On my desk): only a level desk can curve up into a wall.")
 			return false
@@ -1257,6 +1273,8 @@ func align_curved(frame_id: String, edge: Vector3, wall: Vector3) -> String:
 	var f: FrameData = doc.frames.get(frame_id) if doc != null else null
 	if f == null or not f.bend or not canvas_edit_ok():
 		return "That canvas is not a curved desk."
+	if f.place_locked:
+		return "\"%s\" has its place locked. Unlock it in Home > Canvases to line it up." % f.name
 	var rw_v: Variant = room_world(f.room)
 	var rw: Transform3D = rw_v as Transform3D if rw_v != null else Transform3D.IDENTITY
 	var n := (rw.basis * f.plane_normal).normalized()
