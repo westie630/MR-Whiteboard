@@ -461,9 +461,18 @@ frame), and fills and letters are cut into 8 mm strips once, when their mesh is 
 edge and the markers have a mesh of their own, drawn again only when the bend, the pan, the lit marker or how near a pointer is (in tenths) changes, not with the cursor. What slides out of the window is hidden. The pen, the hands, the mouse and the rays all use `FrameNode.to_local_point`, `to_world_point` and `ray_hit`,
 which know the bend, so the nib at any part of the surface is at the canvas point under it, and a pointer at a distance is where its ray meets the surface.
 
-**Moving the contents.** A pinch (touching or pointing) on empty canvas or on the bar, or the stylus front button, then a drag: the contents slide along the surface by as far as the pointer moved *along the
-surface* (the page stays under the finger through the bend and up the wall; pointing from afar moves it further, as for any canvas). The desk itself does not move, does not turn and has no scale
-(two hands do nothing on it). One undo step on release. A corner changes the shown part.
+**Moving the contents.** One pointer: a pinch (touching or pointing) on empty canvas, or the stylus front button, then a drag; the contents slide along the surface and the desk stays put
+([HandController._slide](../src/board/hand_controller.gd)). *Touching*: step by step (so a hand that leaves the surface never makes them jump), by as far as the hand moved along the surface, plus
+as far as it moved into the surface (or back out) times sin of how far round the bend it is. "The surface" is the part under the hand while it is within `InputTuning.BEND_SLIDE_NEAR` (6 cm) of it
+(round the bend scaled by radius / the hand's distance from the bend's axis, so a hand traced along the surface keeps the page under it), else the part where the spot held is now. So on the desk
+lifting the hand does nothing, on the wall pushing at it sends the contents up and pulling back brings them down, and a hand pushed on along the desk keeps sending them round the bend and up the
+wall instead of stalling in it. *Pointing*: the spot the ray pinched stays under the ray (on the desk, round the bend, up the wall); a ray that misses the surface leaves them where they are.
+What has slid off the shown part is hidden and is not picked (it would cover the bar). One undo step on release. A corner changes the shown part.
+
+**Moving the desk.** A pinch or the front button on the **bar** in front of the desk carries the desk itself; it slides on the desk's plane (`FrameData.on_surface`) and gets a new anchor where
+it is let go. A second pointer on the desk (bar or empty canvas, also while the first is sliding the contents, which then stop where they are) carries and turns it with the first, about the
+desk's normal; the desk never scales (its bend and wall are in real metres). One undo step. In a session the others see the contents slide and the markers move live (`p`, `ba`, `br` in the
+grab message), as well as the desk moving.
 
 **The markers.** Two round amber handles stand 4 cm outside the left edge, with a dashed line across: the **distance** marker where the flat part ends and the **radius** marker at the foot of the wall.
 Touch one with the stylus tip (any tool), or pinch / front button on it; it lights up and says its number. The distance marker follows the nib's `y` on the desk (clamped 5 cm to 1.2 m); the radius marker
@@ -477,7 +486,7 @@ In a session the numbers are part of the canvas, so every headset shows the same
 |---|---|
 | `DeskBend` | `PITCH` 8 mm · `MIN_AT` 5 cm · `MAX_AT` 1.2 m · `MIN_RADIUS` 4 cm · `MAX_RADIUS` 60 cm · `DEFAULT_AT` 40 cm · `DEFAULT_RADIUS` 12 cm · `DEFAULT_SIZE` 1.0 x 1.5 m |
 | `Board` | `CHEST` 15 cm · `CURVE_LEVEL` 0.9 · `CURVE_FRONT` 30 cm (where existing drawings are put) · `ALIGN_MIN` 15 cm · `WALL_ABOVE` 60 cm |
-| `InputTuning` | `MARKER_SIDE` 4 cm · `MARKER_R` 2.4 cm · `MARKER_HIT` 5 cm |
+| `InputTuning` | `MARKER_SIDE` 4 cm · `MARKER_R` 2.4 cm · `MARKER_HIT` 5 cm · `BEND_SLIDE_NEAR` 6 cm |
 
 ---
 

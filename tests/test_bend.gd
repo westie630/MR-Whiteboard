@@ -1,7 +1,9 @@
 extends Node
 ## The curved desk: the bend's maths (a sheet curved round a cylinder: lengths kept, inverse and ray hits agree), cutting geometry into
 ## strips, a curved canvas made with the stylus nib on a level desk, drawing on its flat part, bend and wall, carrying its contents along the
-## surface, the two markers (distance and radius), curving and flattening a canvas that is already on the desk, and the file.
+## surface, the two markers (distance and radius), curving and flattening a canvas that is already on the desk, and the file. The hands:
+## a ray or a touch slides the contents (up the wall, back down it, pushed on through the bend, traced along it), the bar carries the desk,
+## two hands turn it.
 
 var board: Board
 var anchors: SimAnchors
@@ -426,6 +428,8 @@ func run() -> void:
 	await tick(2)
 	t.check(not board.surface.aligning(), "the back button leaves it as it was")
 
+	await hands_on_the_desk(f.id)
+
 	# a canvas that is not on a desk, or on a tilted one, cannot be curved
 	var wall_f := board.add_frame(FrameData.CANVAS, Transform3D(Basis.IDENTITY, Vector3(0, 1.4, -1.5)))
 	await tick(3)
@@ -433,3 +437,187 @@ func run() -> void:
 	var steep := board.doc.frames[f.id].copy() as FrameData
 	steep.plane_normal = Vector3(0, 0.6, 0.8)
 	t.check(not board.can_curve(steep), "...nor one on a steep surface")
+
+
+## A hand at a point given in the curved desk's own space (x right, y away from you along the desk, z up), pointing at another.
+func hand_at(hand: HandInput, fn: FrameNode, node_p: Vector3, node_aim: Vector3) -> void:
+	var p := fn.global_transform * node_p
+	hand.pinch_point = p
+	hand.tip = p
+	hand.aim_o = p
+	hand.aim_d = ((fn.global_transform * node_aim) - p).normalized()
+	hand.press_o = hand.aim_o
+	hand.press_d = hand.aim_d
+
+
+## Move a pinching hand by `step` (desk space) a frame, `n` times; returns the largest change of the contents' pan in one frame.
+func hand_steps(hand: HandInput, fn: FrameNode, step: Vector3, n: int) -> float:
+	var worst := 0.0
+	var prev := _live_pan(fn)
+	for i in n:
+		var d := fn.global_transform.basis * step
+		hand.pinch_point += d
+		hand.tip = hand.pinch_point
+		hand.aim_o += d
+		await tick(1)
+		var now := _live_pan(fn)
+		worst = maxf(worst, now.distance_to(prev))
+		prev = now
+	return worst
+
+
+func _live_pan(fn: FrameNode) -> Vector2:
+	return fn.bend.pan if fn.bend != null else Vector2.ZERO
+
+
+## Undo the last drag, if it changed the desk (a drag that did nothing left no step to undo).
+func undo_if_moved(fid: String, pan0: Vector2, xf0: Transform3D) -> void:
+	var f: FrameData = board.doc.frames[fid]
+	if not f.bend_pan.is_equal_approx(pan0) or not f.xf.is_equal_approx(xf0):
+		board.undo()
+	await tick(2)
+
+
+func pinch(hand: HandInput, on: bool) -> void:
+	hand.pinching = on
+	hand.pinch_down = on
+	hand.pinch_up = not on
+	await tick(1)
+	hand.pinch_down = false
+	hand.pinch_up = false
+	await tick(1)
+
+
+## The hands on a curved desk: the contents follow a ray pointed at the wall, and a hand touching them through the bend and up the
+## wall without jumping; the bar carries the desk itself along the real desk; two hands turn it.
+func hands_on_the_desk(fid: String) -> void:
+	pen.tracked = false
+	pen.front = false
+	var hand := HandInput.new("right")
+	hand.tracked = true
+	hand.aiming = true
+	hands = [hand]
+	if not (board.doc.frames[fid] as FrameData).bend:
+		board.curve_frame(fid, true)
+		board.surface.cancel_align()
+	var fn: FrameNode = board.frame_nodes[fid]
+	var f: FrameData = board.doc.frames[fid]
+	var b := fn.bend
+	var wall_s := b.wall_at()
+	await tick(3)
+
+	# pointing at the wall from a hand held up over the near edge: lifting the hand lifts what the ray holds
+	var pan0: Vector2 = f.bend_pan
+	var xf_a := f.xf
+	hand_at(hand, fn, Vector3(0.3, 0.05, 0.45), b.surface_to_node(0.3, wall_s + 0.2))
+	await tick(2)
+	t.eq(str(board.hand_ctl.hover.get("right", {}).get("kind", "")), "canvas", "a ray at the wall of the curved desk is on empty canvas")
+	t.check(not bool(board.hand_ctl.hover.get("right", {}).get("direct", true)), "...pointing, not touching")
+	await pinch(hand, true)
+	await hand_steps(hand, fn, Vector3(0, 0, 0.01), 12)
+	await pinch(hand, false)
+	await tick(3)
+	f = board.doc.frames[fid]
+	t.near(f.bend_pan.y - pan0.y, 0.12, 0.02, "lifting a hand that points at the wall slides the contents 12 cm up it: %.3f" % (f.bend_pan.y - pan0.y))
+	t.check(f.xf.is_equal_approx(xf_a), "...and the desk stays put")
+	await undo_if_moved(fid, pan0, xf_a)
+
+	# touching the contents on the wall and pulling them back towards you: they come down the wall and round the bend, no jump
+	hand_at(hand, fn, b.surface_to_node(0.3, wall_s + 0.15, 0.02), b.surface_to_node(0.3, wall_s + 0.15))
+	await tick(2)
+	t.check(bool(board.hand_ctl.hover.get("right", {}).get("direct", false)), "a hand at the wall touches it")
+	await pinch(hand, true)
+	var worst := await hand_steps(hand, fn, Vector3(0, -0.02, 0), 15)
+	await pinch(hand, false)
+	await tick(3)
+	f = board.doc.frames[fid]
+	t.near(f.bend_pan.y - pan0.y, -0.30, 0.04, "pulling 30 cm towards you brings the contents about 30 cm back down: %.3f" % (f.bend_pan.y - pan0.y))
+	t.check(worst < 0.05, "...smoothly (largest step in one frame %.3f)" % worst)
+	await undo_if_moved(fid, pan0, xf_a)
+
+	# touching the contents on the desk and pushing forward, low down: they go round the bend and on up the wall
+	hand_at(hand, fn, Vector3(0.3, 0.25, 0.03), Vector3(0.3, 0.25, 0.0))
+	await tick(2)
+	await pinch(hand, true)
+	worst = await hand_steps(hand, fn, Vector3(0, 0.02, 0), 25)
+	await pinch(hand, false)
+	await tick(3)
+	f = board.doc.frames[fid]
+	t.near(f.bend_pan.y - pan0.y, 0.5, 0.04, "pushing 50 cm away sends the contents about 50 cm along the surface, up the wall: %.3f" % (f.bend_pan.y - pan0.y))
+	t.check(worst < 0.05, "...smoothly (largest step %.3f)" % worst)
+	await undo_if_moved(fid, pan0, xf_a)
+
+	# a hand traced along the surface, through the bend, keeps the page under it
+	var s_from := b.at - 0.05
+	var s_to := b.wall_at() + 0.05
+	hand_at(hand, fn, b.surface_to_node(0.3, s_from, 0.01), b.surface_to_node(0.3, s_from))
+	await tick(2)
+	await pinch(hand, true)
+	for i in 30:
+		var sv := lerpf(s_from, s_to, float(i + 1) / 30.0)
+		var p := fn.global_transform * b.surface_to_node(0.3, sv, 0.01)
+		hand.pinch_point = p
+		hand.tip = p
+		hand.aim_o = p
+		await tick(1)
+	await pinch(hand, false)
+	await tick(3)
+	f = board.doc.frames[fid]
+	t.near(f.bend_pan.y - pan0.y, s_to - s_from, 0.006, "a hand traced %.0f cm along the surface through the bend moves the contents as far: %.3f" % [(s_to - s_from) * 100.0, f.bend_pan.y - pan0.y])
+	await undo_if_moved(fid, pan0, xf_a)
+
+	# the bar in front of the desk carries the desk itself, along the real desk
+	f = board.doc.frames[fid]
+	var xf0 := f.xf
+	var bc := HandController.bar_center(fn)
+	var bar_node := b.to_node(Vector3(bc.x, bc.y, 0.0))
+	hand_at(hand, fn, bar_node + Vector3(0, 0, 0.03), bar_node)
+	await tick(2)
+	t.eq(str(board.hand_ctl.hover.get("right", {}).get("kind", "")), "bar", "the hand at the front of the curved desk is on its bar")
+	var w0 := fn.global_position
+	await pinch(hand, true)
+	await hand_steps(hand, fn, Vector3(0.02, 0.0, 0.01), 10)
+	await tick(1)                                      # (frames are placed before the hands move them: one frame behind)
+	t.near(fn.global_position.distance_to(w0), 0.2, 0.02, "the desk follows the hand while carried: %.3f" % fn.global_position.distance_to(w0))
+	await pinch(hand, false)
+	await tick(3)
+	f = board.doc.frames[fid]
+	var moved := (f.xf.origin - xf0.origin)
+	t.near(moved.length(), 0.2, 0.02, "the bar moved the desk 20 cm sideways: %.3f" % moved.length())
+	t.near(fn.global_position.y, p0.y, 0.002, "...staying on the desk (not lifted with the hand)")
+	t.check(f.bend_pan.is_equal_approx(pan0), "...with its contents where they were on it")
+	t.check(f.bend and f.xf.basis.z.normalized().dot(Vector3.UP) > 0.999, "...still a level curved desk")
+	await undo_if_moved(fid, pan0, xf_a)
+	t.check((board.doc.frames[fid] as FrameData).xf.is_equal_approx(xf0), "undo puts the desk back")
+
+	# two hands turn the desk (and move it), and do not stretch it
+	var left := HandInput.new("left")
+	left.tracked = true
+	left.aiming = true
+	hands = [hand, left]
+	hand_at(hand, fn, Vector3(0.25, 0.25, 0.03), Vector3(0.25, 0.25, 0.0))
+	hand_at(left, fn, Vector3(-0.25, 0.25, 0.03), Vector3(-0.25, 0.25, 0.0))
+	await tick(2)
+	var y0 := fn.global_transform.basis.y.normalized()
+	await pinch(hand, true)
+	await pinch(left, true)
+	var mid := fn.global_transform * Vector3(0.0, 0.25, 0.03)
+	for i in 10:
+		var r := Basis(Vector3.UP, deg_to_rad(2.0))
+		for hd in [hand, left]:
+			var h := hd as HandInput
+			h.pinch_point = mid + r * (h.pinch_point - mid)
+			h.tip = h.pinch_point
+			h.aim_o = h.pinch_point
+		await tick(1)
+	await tick(1)
+	var turned := rad_to_deg(y0.signed_angle_to(fn.global_transform.basis.y.normalized(), Vector3.UP))
+	t.near(turned, 20.0, 1.5, "turning both hands 20 degrees turns the desk with them: %.1f" % turned)
+	await pinch(left, false)
+	await pinch(hand, false)
+	await tick(3)
+	f = board.doc.frames[fid]
+	t.check(f.bend and is_equal_approx(f.scale, 1.0) and f.xf.basis.z.normalized().dot(Vector3.UP) > 0.999, "...it stays a level curved desk, not scaled")
+	t.near(f.bend_pan.distance_to(pan0), 0.0, 0.005, "...with its contents where they were on it")
+	await undo_if_moved(fid, pan0, xf_a)
+	hands = []

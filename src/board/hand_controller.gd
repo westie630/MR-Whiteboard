@@ -8,7 +8,9 @@ extends RefCounted
 ##  - on empty canvas: a drag carries the canvas, a tap lets go of the selection,
 ##  - on the grab bar under a canvas: it carries the canvas; letting go fixes it with a new anchor,
 ##  - on a corner of a canvas: it changes the canvas's extent,
-##  - the second hand pinching the same canvas (bar or empty area) turns and resizes it together with the first.
+##  - the second hand pinching the same canvas (bar or empty area) turns and resizes it together with the first,
+##  - a curved desk: empty canvas slides its contents along the surface, the bar carries the desk along the real desk, two pointers turn
+##    and move it (never resize it).
 ## Touching moves things 1:1 with the pinch point; pointing from a distance moves them further than the hand, by the ratio of their
 ## distances from the head. HandCursor draws what each pointer is on (`hover`), including the bar and the corners of the canvas under it.
 
@@ -136,14 +138,16 @@ func classify(fn: FrameNode, l: Vector3, side: String) -> Dictionary:
 	var pen := _pen(side)
 	if fn.bend != null and pen.hit_marker(fn, p) != "":
 		return {"kind": "item", "corner": -1}            # a marker of the curved desk: the stylus tip's controller moves it
-	if fn.data.id == board.sel_frame and not board.selection.is_empty() and not pen.hit_handle(fn, p).is_empty():
-		return {"kind": "item", "corner": -1}
-	if pen.hit_button(fn, p) != "":
-		return {"kind": "item", "corner": -1}
-	if board.doc.pick(fn.data.id, p, PenController.PICK_R * pen.reach / s) != null:
-		return {"kind": "item", "corner": -1}
-	if board.doc.shape_containing(fn.data.id, p) != null:
-		return {"kind": "item", "corner": -1}
+	# (what has slid off the shown part of a curved desk is hidden, so it is not picked: it would cover the bar)
+	if fn.bend == null or fn.bounds().has_point(p):
+		if fn.data.id == board.sel_frame and not board.selection.is_empty() and not pen.hit_handle(fn, p).is_empty():
+			return {"kind": "item", "corner": -1}
+		if pen.hit_button(fn, p) != "":
+			return {"kind": "item", "corner": -1}
+		if board.doc.pick(fn.data.id, p, PenController.PICK_R * pen.reach / s) != null:
+			return {"kind": "item", "corner": -1}
+		if board.doc.shape_containing(fn.data.id, p) != null:
+			return {"kind": "item", "corner": -1}
 	var bc := bar_center(fn)
 	if absf(p.x - bc.x) * s < BAR_HIT_W and absf(p.y - bc.y) * s < BAR_HIT_H:
 		return {"kind": "bar", "corner": -1}
@@ -282,9 +286,10 @@ func _update_hand(h: HandInput, dt: float) -> void:
 			board.clear_selection()                      # a tap on empty canvas
 		elif h.pinch_point.distance_to(mm.p0) > MOVE_START:
 			_maybe_move.erase(side)
-			_begin_hold(h, mm.fn, -1, bool(mm.direct))
+			_begin_hold(h, mm.fn, -1, bool(mm.direct), (mm.fn as FrameNode).bend != null, mm.ref)
 			if _holds.has(side):
 				(_holds[side] as Dictionary).p0 = mm.p0       # the canvas catches up with the hand from where the pinch began
+				(_holds[side] as Dictionary).prev = mm.p0
 		if _holds.has(side):
 			_step_hold(side, h)
 		else:
@@ -372,16 +377,27 @@ func _press(h: HandInput) -> void:
 	var c := classify(fn, t.local as Vector3, side)
 	var joins: bool = _partner(side, fn) != "" and KINDS_THAT_JOIN.has(str(c.kind))
 	var how := "touching" if direct else "pointing"
-	if joins or grab_anywhere or c.kind == "bar":
-		print("[hand] %s pinch on %s (%s): carrying the canvas%s" % [side, c.kind, how, " with both hands" if joins else ""])
+	# on a curved desk one pointer slides the contents along the surface (from the spot it pinched, on the surface), the bar carries the desk
+	var slide: bool = fn.bend != null and c.kind != "bar" and not joins
+	var ref := Vector2(t.local.x, t.local.y) + fn.bend.pan if fn.bend != null else Vector2.ZERO
+	var first := _pinched_first(side, fn) if fn.bend != null and KINDS_THAT_JOIN.has(str(c.kind)) else ""
+	if first != "":
+		# the other pointer has just pinched the same curved desk and not moved yet: the two carry and turn the desk, nothing slides
+		print("[hand] %s pinch on %s (%s): carrying the curved desk with both hands" % [side, c.kind, how])
+		var mm: Dictionary = _maybe_move[first]
+		_maybe_move.erase(first)
+		_begin_hold(mm.h, fn, -1, bool(mm.direct))
 		_begin_hold(h, fn, -1, direct)
+	elif joins or grab_anywhere or c.kind == "bar":
+		print("[hand] %s pinch on %s (%s): %s%s" % [side, c.kind, how, "sliding the contents" if slide else "carrying the canvas", " with both hands" if joins else ""])
+		_begin_hold(h, fn, -1, direct, slide, ref)
 	elif c.kind == "corner":
 		print("[hand] %s pinch on corner %d (%s): resizing the canvas" % [side, int(c.corner), how])
 		_begin_hold(h, fn, int(c.corner), direct)
 	elif c.kind == "canvas":
 		# empty canvas: a drag carries the canvas, a tap lets go of the selection (decided by whether the hand moves)
 		print("[hand] %s pinch on empty canvas (%s): drag to move it, or let go to deselect" % [side, how])
-		_maybe_move[side] = {"fn": fn, "p0": h.pinch_point, "direct": direct}
+		_maybe_move[side] = {"fn": fn, "p0": h.pinch_point, "direct": direct, "h": h, "ref": ref}
 	else:
 		print("[hand] %s pinch on an item (%s): select / drag" % [side, how])
 		_gate[side] = true
@@ -389,13 +405,21 @@ func _press(h: HandInput) -> void:
 		_tick(side, 0.3, 0.02)
 
 
-func _begin_hold(h: HandInput, fn: FrameNode, corner: int, direct: bool) -> void:
+## `slide`: on a curved desk, slide its contents from `ref` (the surface spot the pointer pinched) rather than carry the desk.
+func _begin_hold(h: HandInput, fn: FrameNode, corner: int, direct: bool, slide: bool = false, ref: Vector2 = Vector2.ZERO) -> void:
 	if fn.data.locked:
 		return
 	if fn.bend != null and corner < 0:
+		# the contents slide under one pointer only (two would pull them against each other): a second pointer on the desk carries and
+		# turns the desk with the first, which stops sliding where it is
 		for s in _holds:
-			if (_holds[s] as Dictionary).fn == fn:
-				return                                     # (the contents of a curved desk slide under one pointer: two would pull against each other)
+			var other: Dictionary = _holds[s]
+			if other.fn == fn and int(other.corner) < 0:
+				slide = false
+				if bool(other.get("slide", false)) and board.grabs.has(fn.data.id):
+					other.slide = false
+					other.p0 = other.get("last", other.p0)
+					other.origin0 = ((board.grabs[fn.data.id] as Dictionary).xf as Transform3D).origin
 	board.begin_grab(fn.data)
 	if not board.grabs.has(fn.data.id):
 		return
@@ -408,6 +432,12 @@ func _begin_hold(h: HandInput, fn: FrameNode, corner: int, direct: bool) -> void
 	if corner >= 0:
 		var cs := corner_points(fn)
 		hold.opp = cs[(corner + 2) % 4]
+	if slide and fn.bend != null and corner < 0:
+		hold.slide = true
+		hold.pan0 = g.get("pan", fn.data.bend_pan)
+		hold.ref = ref
+		hold.held_s = ref.y                                # where the spot held is on the surface now (touching)
+		hold.prev = h.pinch_point
 	_holds[h.side] = hold
 	_tick(h.side, 0.3, 0.02)
 	if not _told:
@@ -428,14 +458,8 @@ func _step_hold(side: String, h: HandInput) -> void:
 		if pp != null:
 			pt = pp
 			_resize(hold, pt)
-	elif fn.bend != null:
-		# the contents slide along the surface by as much as the pointer has moved along it (the page stays under the finger, round the bend too)
-		var g2: Dictionary = board.grabs[(hold.f as FrameData).id]
-		var gain := float(hold.get("gain", 1.0))
-		var p0 := hold.p0 as Vector3
-		var s0 := _surface_of(fn, p0)
-		var s1 := _surface_of(fn, p0 + (h.pinch_point - p0) * gain)
-		g2.pan = (hold.f as FrameData).bend_pan + Vector2(s1.x - s0.x, s1.y - s0.y)
+	elif bool(hold.get("slide", false)):
+		_slide(hold, fn, h)
 	elif _two.is_empty():
 		var g: Dictionary = board.grabs[(hold.f as FrameData).id]
 		var xf := g.xf as Transform3D
@@ -443,6 +467,40 @@ func _step_hold(side: String, h: HandInput) -> void:
 		g.xf = xf
 	var kind := "corner" if int(hold.corner) >= 0 else "bar"
 	hover[side] = {"fn": fn, "point": pt, "kind": "hold", "corner": int(hold.corner), "held": kind, "direct": bool(hold.direct)}
+
+
+## The contents of a curved desk slide along its surface under one pointer (the desk itself stays put).
+##  - Touching: each frame, by as far as the hand moved along the surface, plus as far as it moved into the surface (or back out of it) by
+##    how far round the bend it is. "The surface" is the part under the hand while the hand is near it (BEND_SLIDE_NEAR), else the part
+##    where the spot held is now. A hand traced along the surface keeps the page under it, round the bend too; on the desk lifting the
+##    hand does nothing; on the wall pushing at it sends them up and pulling back brings them down; and a hand pushed on along the desk
+##    keeps sending them round the bend and up the wall instead of stalling there. Step by step, so a hand that leaves the surface never
+##    makes them jump.
+##  - Pointing: the spot the ray pinched stays under the ray, on the desk, round the bend and up the wall.
+func _slide(hold: Dictionary, fn: FrameNode, h: HandInput) -> void:
+	var g: Dictionary = board.grabs[(hold.f as FrameData).id]
+	var b := fn.bend
+	if bool(hold.direct):
+		var inv := fn.global_transform.affine_inverse()
+		var d := inv.basis * (h.pinch_point - (hold.prev as Vector3))
+		var under := b.node_to_surface(inv * (hold.prev as Vector3))
+		hold.prev = h.pinch_point
+		var s := float(hold.held_s)
+		var gear := 1.0
+		if absf(under.z) <= InputTuning.BEND_SLIDE_NEAR:
+			s = under.y
+			if s > b.at and s < b.wall_at():
+				gear = clampf(b.radius / maxf(b.radius - under.z, 1e-4), 0.5, 2.0)   # (a hand off the bend goes round a smaller circle)
+		var round_by := clampf((s - b.at) / b.radius, 0.0, PI * 0.5)
+		var ds := d.dot(b.tangent_at(s)) * gear - d.dot(b.normal_at(s)) * sin(round_by)
+		hold.held_s = float(hold.held_s) + ds
+		g.pan = (g.pan as Vector2) + Vector2(d.x, ds)
+	else:
+		var inv := fn.global_transform.affine_inverse()
+		var hit := b.ray(inv * h.aim_o, inv.basis * h.aim_d, 0.0)
+		if not hit.is_empty():                             # (a ray that misses the surface leaves the contents where they are)
+			var on := hit.surface as Vector3
+			g.pan = (hold.pan0 as Vector2) + Vector2(on.x, on.y) - (hold.ref as Vector2)
 
 
 ## Corner drag: the dragged corner follows the pointer, the opposite corner stays where it is (the nominal rectangle changes; the frame origin does not).
@@ -493,7 +551,7 @@ func _two_pair(seen: Dictionary) -> Array:
 	var carrying: Dictionary = {}                      # frame id -> sides carrying it
 	for s in POINTERS:
 		var hold: Dictionary = _holds.get(s, {})
-		if hold.is_empty() or int(hold.corner) >= 0 or not seen.has(s) or (hold.fn as FrameNode).bend != null:
+		if hold.is_empty() or int(hold.corner) >= 0 or not seen.has(s) or bool(hold.get("slide", false)):
 			continue
 		var id: String = (hold.f as FrameData).id
 		if not carrying.has(id):
@@ -536,19 +594,25 @@ func _update_two(seen: Dictionary) -> void:
 		return
 	var mid := (a + b) * 0.5
 	var v2 := b - a
-	var ratio := clampf(a.distance_to(b) / float(_two.d0), InputTuning.TWO_HAND_RATIO.x, InputTuning.TWO_HAND_RATIO.y)
+	var fixed := ((_holds[pair[0]] as Dictionary).fn as FrameNode).bend != null
+	# (a curved desk turns and moves but keeps its size: its bend and wall are in real metres)
+	var ratio := 1.0 if fixed else clampf(a.distance_to(b) / float(_two.d0), InputTuning.TWO_HAND_RATIO.x, InputTuning.TWO_HAND_RATIO.y)
 	var dyaw := angle_difference(float(_two.yaw0), atan2(v2.x, v2.z))
 	var rot := Basis(Vector3.UP, dyaw)
 	var xf := g.xf as Transform3D
 	xf.basis = rot * (_two.basis0 as Basis)
 	xf.origin = mid + rot * (((_two.origin0 as Vector3) - (_two.mid0 as Vector3)) * ratio)
 	g.xf = xf
-	g.scale = clampf(float(_two.scale0) * ratio, InputTuning.CANVAS_SCALE.x, InputTuning.CANVAS_SCALE.y)
+	if not fixed:
+		g.scale = clampf(float(_two.scale0) * ratio, InputTuning.CANVAS_SCALE.x, InputTuning.CANVAS_SCALE.y)
 
 
-## Where a world point is on the surface of a curved desk: (u, s, height off it).
-func _surface_of(fn: FrameNode, world: Vector3) -> Vector3:
-	return fn.bend.node_to_surface(fn.global_transform.affine_inverse() * world)
+## Another pointer that has pinched empty canvas of `fn` and not moved yet (not a drag or a tap so far), or "".
+func _pinched_first(side: String, fn: FrameNode) -> String:
+	for s in _maybe_move:
+		if s != side and (_maybe_move[s] as Dictionary).fn == fn:
+			return s
+	return ""
 
 
 func is_holding() -> bool:

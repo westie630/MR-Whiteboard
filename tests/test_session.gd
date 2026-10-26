@@ -278,6 +278,22 @@ func run() -> void:
 	await until(func(): return (doc_of(A).frames["f1"] as FrameData).xf.origin.is_equal_approx(f1_home.origin))
 	sess(H).set_canvas_edit(false)
 
+	# ---- a curved desk: while the owner slides its contents, the guests see them slide, not only where they end up
+	var curved := (doc_of(H).frames["f1"] as FrameData).copy()
+	curved.bend = true
+	(H.board as Board).history.do(History.op_frame(doc_of(H).frames["f1"], curved))
+	t.check(await until(func(): return (doc_of(A).frames["f1"] as FrameData).bend), "a curved desk reaches the guests")
+	(H.board as Board).begin_grab(doc_of(H).frames["f1"])
+	((H.board as Board).grabs["f1"] as Dictionary).pan = Vector2(0.0, 0.25)
+	t.check(await until(func():
+		var fa: FrameNode = (A.board as Board).frame_nodes.get("f1")
+		return fa != null and fa.bend != null and fa.bend.pan.is_equal_approx(Vector2(0.0, 0.25))), "...and see its contents slide while the owner slides them")
+	(H.board as Board).end_grab(doc_of(H).frames["f1"])
+	t.check(await until(func(): return (doc_of(A).frames["f1"] as FrameData).bend_pan.is_equal_approx(Vector2(0.0, 0.25))), "...and where they were let go")
+	(H.board as Board).history.undo()
+	(H.board as Board).history.undo()
+	t.check(await until(func(): return not (doc_of(A).frames["f1"] as FrameData).bend), "...and the owner's undo makes it flat again for them")
+
 	# ---- two people change the same thing at once: everybody ends with the owner's order
 	var shared: Item = doc_of(A).items["i_rect"]
 	var ra := shared.duplicate_item(false)

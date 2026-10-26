@@ -232,6 +232,11 @@ func _on_grab(board: Board, from: int, m: Dictionary) -> void:
 	var frame_then: FrameData = had.frame if not had.is_empty() else board.doc.frames.get(fid)
 	_grabs[fid] = {"from": from, "seen": _now, "ended": false, "end_t": 0.0, "frame": frame_then}
 	board.remote_grabs[fid] = {"xf": xf, "scale": sc}
+	var pan: Variant = m.get("p")
+	var ba := float(m.get("ba", NAN))
+	var br := float(m.get("br", NAN))
+	if pan is Vector2 and (pan as Vector2).is_finite() and is_finite(ba) and is_finite(br):   # a curved desk: its contents slide, its markers move, live
+		board.remote_grabs[fid].merge({"pan": (pan as Vector2).clamp(Vector2.ONE * -1e4, Vector2.ONE * 1e4), "bend_at": DeskBend.clamp_at(ba), "bend_radius": DeskBend.clamp_radius(br)})
 
 
 # ------------------------------------------------------------------------------------------------ every frame

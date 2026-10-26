@@ -980,11 +980,10 @@ func _place_frames(dt: float) -> void:
 				xf = _on_surface_world(f, xf)               # carried or turned, a desk canvas slides along its surface
 			var sc: float = (grabs[fid] as Dictionary).scale if grabs.has(fid) else (float((remote_grabs[fid] as Dictionary).scale) if remote_grabs.has(fid) else f.scale)
 			if fn.bend != null:
-				# a curved desk stays where it is and keeps its size: what a hand carries is the contents, which slide along the surface
+				# a curved desk keeps its size (its bend is in real metres); its contents slide along the surface by the pan of whoever holds it
 				sc = 1.0
-				var g: Dictionary = grabs.get(fid, {})
+				var g: Dictionary = grabs.get(fid, remote_grabs.get(fid, {}))
 				fn.set_bend_live(float(g.get("bend_at", f.bend_at)), float(g.get("bend_radius", f.bend_radius)), g.get("pan", f.bend_pan))
-				xf = w as Transform3D
 			fn.transform = Transform3D(xf.basis.orthonormalized().scaled(Vector3.ONE * sc), xf.origin)
 
 
@@ -1083,7 +1082,7 @@ func begin_grab(f: FrameData) -> void:
 		return
 	grabs[f.id] = {"xf": w, "scale": f.scale, "before": f.copy()}
 	if f.bend:
-		(grabs[f.id] as Dictionary).merge({"pan": f.bend_pan, "bend_at": f.bend_at, "bend_radius": f.bend_radius})
+		(grabs[f.id] as Dictionary).merge({"pan": f.bend_pan, "bend_at": f.bend_at, "bend_radius": f.bend_radius, "xf0": w})
 	_dirty_overlay(f.id)
 
 
@@ -1109,16 +1108,25 @@ func end_grab(f: FrameData) -> void:
 	_dirty_overlay(f.id)
 
 
-## A curved desk is let go: where the contents slid to, or the numbers of the bend a marker set, are kept (the desk itself did not move).
+## A curved desk is let go: where the contents slid to, the numbers of the bend a marker set, and where the desk was carried to (on the
+## desk's plane, keeping its size) are kept.
 func _end_bend_grab(f: FrameData, g: Dictionary) -> void:
 	var after := f.copy()
 	after.bend_pan = g.get("pan", f.bend_pan)
 	after.bend_at = DeskBend.clamp_at(float(g.get("bend_at", f.bend_at)))
 	after.bend_radius = DeskBend.clamp_radius(float(g.get("bend_radius", f.bend_radius)))
+	var carried := not (g.xf as Transform3D).is_equal_approx(g.get("xf0", g.xf) as Transform3D)
+	if carried:
+		var rw: Variant = room_world(f.room)
+		after.xf = after.on_surface((rw as Transform3D).affine_inverse() * (g.xf as Transform3D) if rw != null else g.xf as Transform3D)
+		_held.erase("frame:" + f.id)
+		if room_guessed(f.room):
+			_moved_unanchored[f.id] = true
 	grabs.erase(f.id)
 	_dirty_overlay(f.id)
 	var before: FrameData = g.before
-	if after.bend_pan.is_equal_approx(before.bend_pan) and is_equal_approx(after.bend_at, before.bend_at) and is_equal_approx(after.bend_radius, before.bend_radius) 			and after.size.is_equal_approx(before.size) and after.offset.is_equal_approx(before.offset):
+	if not carried and after.bend_pan.is_equal_approx(before.bend_pan) and is_equal_approx(after.bend_at, before.bend_at) \
+			and is_equal_approx(after.bend_radius, before.bend_radius) and after.size.is_equal_approx(before.size) and after.offset.is_equal_approx(before.offset):
 		return                                          # a touch that moved nothing
 	history.do(History.op_frame(before, after))
 

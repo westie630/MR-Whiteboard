@@ -86,6 +86,7 @@ const MIN_CANVAS := Vector2(0.25, 0.18)
 const MARKER_SIDE := 0.04                  # the markers of a curved desk stand this far outside the left edge of the shown part...
 const MARKER_R := 0.024                    # ...are drawn this big...
 const MARKER_HIT := 0.05                  # ...and are taken hold of from this close
+const BEND_SLIDE_NEAR := 0.06              # a hand sliding a curved desk's contents this close to the surface follows the surface under it
 const TWO_HAND_MIN := 0.04                 # two hands this close do not turn / scale yet
 const TWO_HAND_RATIO := Vector2(0.2, 6.0)
 const CANVAS_SCALE := Vector2(0.15, 8.0)

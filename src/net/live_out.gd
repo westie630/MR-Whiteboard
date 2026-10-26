@@ -113,6 +113,8 @@ func _grabs(beat: bool, out: Array) -> void:
 			continue
 		var xf := (rw as Transform3D).affine_inverse() * Transform3D(fn.transform.basis.orthonormalized(), fn.transform.origin)
 		var st := {"xf": xf, "s": float((board.grabs[fid] as Dictionary).scale)}
+		if fn.bend != null:                          # a curved desk: how far its contents have slid, and its bend, as they are now
+			st.merge({"p": fn.bend.pan, "ba": fn.bend.at, "br": fn.bend.radius})
 		var k := "g/" + str(fid)
 		if beat or _sent.get(k, {}) != st:
 			var msg := st.duplicate()
