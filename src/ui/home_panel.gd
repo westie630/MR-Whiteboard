@@ -163,7 +163,7 @@ func refresh() -> void:
 	for e in b.pdfs.list():
 		sig += "|" + str(e.id) + str(e.name)
 	for f in b.doc.frames.values():
-		sig += "/" + (f as FrameData).name + str((f as FrameData).locked) + str((f as FrameData).place_locked) + str((f as FrameData).surface) + str((f as FrameData).bend)
+		sig += "/" + (f as FrameData).name + str((f as FrameData).locked) + str((f as FrameData).place_locked) + str((f as FrameData).hidden) + str((f as FrameData).surface) + str((f as FrameData).bend)
 		if (f as FrameData).bend:
 			sig += "%d,%d" % [roundi((f as FrameData).bend_at * 100.0), roundi((f as FrameData).bend_radius * 100.0)]
 	if sig != _lists_sig:
@@ -377,6 +377,10 @@ func _refresh_canvas() -> void:
 				cv.on = fd.bend
 				cv.accent = UITheme.DESK
 				row.add_child(cv)
+		var vis := UiKit.tool("eye_off" if fd.hidden else "eye", "Show it again" if fd.hidden else "Visible: press to hide it (it stays in the document)",
+			func(): b.set_frame_prop(fid, "hidden", not fd.hidden), 52.0)
+		vis.on = not fd.hidden
+		row.add_child(vis)
 		var pl := UiKit.tool("lock_place", "Unlock its place" if fd.place_locked else "Lock its place: it stays where it is, facing the same way; two hands still resize it",
 			func(): b.set_frame_prop(fid, "place_locked", not fd.place_locked), 52.0)
 		pl.on = fd.place_locked

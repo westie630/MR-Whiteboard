@@ -314,6 +314,10 @@ moving it (a curved desk: they only zoom its contents; one pointer still slides 
 lining a curved desk up, the PC's Q / E and desk tracking leave it alone; a corner still changes its extent, flattening a curved desk keeps it where it is.
 A hold that changed nothing leaves no undo step and keeps the anchor. `locked` locks everything; this locks only the place.
 
+**Hidden** (`FrameData.hidden`, Home > Canvases, the eye button): the canvas is not shown and, because every pen, hand and ray target comes from
+`Board.visible_frames`, nothing reaches it; its items stay in the document (and in exports), and a selection on it is dropped. It is saved and goes to a
+session's guests like `locked`; a guest can hide one only where the session lets guests edit canvases. Undo shows it again.
+
 **Carried by one pointer, a canvas turns to face you**, as a panel does while its handle is held: about the vertical and about its own middle
 ([HandController.turned_to_face](../src/board/hand_controller.gd), time constant `FACE_TIME` 0.12 s), so it stays upright. This is every canvas
 standing in the room, a PDF included. Left alone: the two desks (a canvas on a physical surface, a curved desk), a canvas with its place locked,

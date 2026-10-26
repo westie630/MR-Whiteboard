@@ -695,6 +695,22 @@ func run() -> void:
 	await tick(3)
 	t.check(not (board.doc.frames[g.id] as FrameData).place_locked and is_equal_approx((board.doc.frames[g.id] as FrameData).scale, p_scale), "undo: its size, then the lock")
 	hands = []
+	# hidden: gone from sight and out of reach of the pen and the rays; the drawing on it is kept; undo and a shared copy bring it back
+	await tick(80)
+	var h_tip := cv.to_world_point(Vector3(cv.bounds().get_center().x, cv.bounds().get_center().y, 0.0))
+	var h_dir := -cv.global_transform.basis.z
+	t.check(cv.visible and not board.pen_target(h_tip).is_empty() and not board.ray_canvas(h_tip - h_dir * 0.5, h_dir).is_empty(), "a canvas is shown and can be reached")
+	var h_items := board.doc.items.size()
+	board.set_frame_prop(g.id, "hidden", true)
+	await tick(3)
+	t.check(not cv.visible and not board.visible_frames(FrameData.CANVAS).has(cv), "hidden: the canvas is not shown")
+	t.check(board.pen_target(h_tip).is_empty() and board.ray_canvas(h_tip - h_dir * 0.5, h_dir).is_empty(), "...and neither the pen nor a ray reaches it")
+	t.eq(board.doc.items.size(), h_items, "...and what is drawn on it is kept")
+	t.check(FrameData.from_dict(JSON.parse_string(JSON.stringify(DocSync.frame_to_wire(board.doc.frames[g.id])))).hidden and not FrameData.from_dict({"id": "z"}).hidden,
+		"...it is saved and goes to the others of a session (and is off unless set)")
+	board.undo()
+	await tick(3)
+	t.check(cv.visible and not board.pen_target(h_tip).is_empty(), "undo shows it again")
 	# carried by one hand, a canvas turns to face the head (about the vertical); two hands set which way it faces
 	await tick(80)
 	square_up(g.id)

@@ -297,6 +297,8 @@ func _on_frame_changed(f: FrameData) -> void:
 				if si != null and si.page != pg:
 					clear_selection()                          # the page turned: what was selected is on another page
 					break
+	if f.hidden and sel_frame == f.id and not selection.is_empty():
+		clear_selection()                                  # it was hidden: what was selected on it is out of reach
 	changed.emit()
 
 
@@ -971,7 +973,7 @@ func _place_frames(dt: float) -> void:
 		var fn: FrameNode = frame_nodes[fid]
 		var f := fn.data
 		# canvases only: 3D sketches in older documents stay in the file but are not shown (drawing in 3D is switched off)
-		var show := f.kind == FrameData.CANVAS and (f.room == current_room or room_state == "unanchored") and room_state != "searching"
+		var show := f.kind == FrameData.CANVAS and not f.hidden and (f.room == current_room or room_state == "unanchored") and room_state != "searching"
 		var w: Variant = frame_world(f, dt) if show else null
 		fn.visible = show and w != null
 		if fn.visible:

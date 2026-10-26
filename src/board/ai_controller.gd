@@ -228,7 +228,8 @@ func target_frame() -> String:
 	var spot := board.dictation_spot()
 	if not spot.is_empty():
 		return str(spot.frame)
-	return board.active_frame if board.doc.frames.has(board.active_frame) else ""
+	var act: FrameData = board.doc.frames.get(board.active_frame)
+	return board.active_frame if act != null and not act.hidden else ""
 
 
 ## Why asking cannot start right now ("" when it can).

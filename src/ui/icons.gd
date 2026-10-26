@@ -129,6 +129,19 @@ static func draw(ci: CanvasItem, id: String, r: Rect2, col: Color) -> void:
 		"lock":
 			ci.draw_rect(Rect2(P.call(0.24, 0.48), Vector2(0.52, 0.38) * s), col, false, w)
 			ci.draw_arc(P.call(0.5, 0.48), s * 0.17, PI, TAU, 16, col, w, true)
+		"eye", "eye_off":
+			# an eye: the outline of the lids and the pupil; struck through when it is hidden
+			var lid := PackedVector2Array()
+			for k in range(0, 17):
+				var t5 := float(k) / 16.0
+				lid.append(P.call(0.1 + t5 * 0.8, 0.5 - sin(t5 * PI) * 0.26))
+			for k in range(16, -1, -1):
+				var t6 := float(k) / 16.0
+				lid.append(P.call(0.1 + t6 * 0.8, 0.5 + sin(t6 * PI) * 0.26))
+			ci.draw_polyline(lid, col, w, true)
+			ci.draw_circle(P.call(0.5, 0.5), s * 0.11, col)
+			if id == "eye_off":
+				ci.draw_line(P.call(0.2, 0.84), P.call(0.8, 0.16), col, w * 1.3, true)
 		"lock_place":
 			# the four arrows of a move, held by a small padlock: it stays where it is
 			for d: Vector2 in [Vector2(0, -1), Vector2(1, 0), Vector2(0, 1), Vector2(-1, 0)]:

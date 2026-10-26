@@ -26,6 +26,8 @@ var locked := false
 ## Its place is locked: it stays where it is and faces the same way (no carrying, turning, bringing, laying on or lining up with a desk);
 ## its size (two hands, a corner) and what is on it can still change. `locked` locks everything.
 var place_locked := false
+## Hidden: not shown and not touchable (no pen, hand or ray reaches it), on every headset of a session; what is on it is kept and still exported.
+var hidden := false
 var created := 0
 ## A canvas on a physical surface (the desk), found with the stylus nib: it can slide and turn along that surface and be scaled, but never leaves it.
 var surface := false
@@ -61,7 +63,7 @@ static func make(kind_id: String, room_id: String, pose: Transform3D, frame_name
 func to_dict() -> Dictionary:
 	return {"id": id, "name": name, "kind": kind, "room": room, "xf": U.xf_to_array(xf), "scale": snappedf(scale, 1e-5),
 		"size": U.v2_to_array(size), "offset": U.v2_to_array(offset), "anchor": anchor, "anchor_xf": U.xf_to_array(anchor_xf), "anchor_guess": anchor_guess, "grid": grid, "backing": backing,
-		"locked": locked, "place_locked": place_locked, "created": created, "surface": surface,
+		"locked": locked, "place_locked": place_locked, "hidden": hidden, "created": created, "surface": surface,
 		"plane": [snappedf(plane_point.x, 1e-5), snappedf(plane_point.y, 1e-5), snappedf(plane_point.z, 1e-5),
 			snappedf(plane_normal.x, 1e-6), snappedf(plane_normal.y, 1e-6), snappedf(plane_normal.z, 1e-6)],
 		"plane_error": snappedf(plane_error, 1e-5), "plane_points": plane_points,
@@ -86,6 +88,7 @@ static func from_dict(d: Dictionary) -> FrameData:
 	f.backing = str(d.get("backing", ""))
 	f.locked = bool(d.get("locked", false))
 	f.place_locked = bool(d.get("place_locked", false))
+	f.hidden = bool(d.get("hidden", false))
 	f.created = int(d.get("created", 0))
 	f.surface = bool(d.get("surface", false))
 	var pl: Variant = d.get("plane")
