@@ -24,6 +24,8 @@ const KINDS_THAT_JOIN := ["canvas", "bar"]
 const MAX_GAIN := InputTuning.MAX_GAIN     # the most a carried canvas moves per metre of hand movement
 const MOVE_START := InputTuning.MOVE_START # a pinch on empty canvas that moves this far (m) carries the canvas; less is a tap
 const POINTERS := ["left", "right", "pen"]
+const FACE_TIME := 0.12                    # a carried canvas turns to face the head with this time constant (s)
+const FACE_UPRIGHT := 0.5                  # ...if its front is within this (the y of its normal) of level: a canvas lying down is left alone
 
 var board: Board
 var grab_anywhere := false                 # the PC's synthetic pinch picks a canvas up wherever it is
@@ -44,6 +46,7 @@ var _pen_ptr := HandInput.new("pen")       # the stylus as a pointer: its front 
 var _pen_state: PenState                   # the stylus this frame (for haptics)
 var _armed := false                        # the front button was pressed with the nib free: this press may grab
 var _prev_front := false
+var _dt := 0.016                           # this frame's time step
 
 
 func _init(b: Board) -> void:
@@ -210,6 +213,7 @@ func update(hands: Array, dt: float, pen: PenState = null) -> void:
 	if sp != null:
 		seen["pen"] = sp
 	hover = {}
+	_dt = dt
 	for side in POINTERS:
 		var h: HandInput = seen.get(side)
 		if h == null or not h.tracked:
@@ -478,9 +482,34 @@ func _step_hold(side: String, h: HandInput) -> void:
 		var g: Dictionary = board.grabs[(hold.f as FrameData).id]
 		var xf := g.xf as Transform3D
 		xf.origin = (hold.origin0 as Vector3) + (h.pinch_point - (hold.p0 as Vector3)) * float(hold.get("gain", 1.0))
+		if _turns_to_face(fn.data, g):
+			# carried, an upright canvas turns (about the vertical, about its middle) to face the head, as a panel does
+			var c := fn.bounds().get_center()
+			var middle := xf * (Vector3(c.x, c.y, 0.0) * float(g.scale))
+			xf = turned_to_face(xf, middle, board.head.origin, 1.0 - exp(-_dt / FACE_TIME))
 		g.xf = xf
 	var kind := "corner" if int(hold.corner) >= 0 else "bar"
 	hover[side] = {"fn": fn, "point": pt, "kind": "hold", "corner": int(hold.corner), "held": kind, "direct": bool(hold.direct)}
+
+
+## Does a canvas carried by one pointer turn to face the head? The ones standing in the room (a wall canvas, a PDF) do; the two desks
+## (on a physical surface, curved) keep their way, and so does one whose way two hands have set during this carry.
+func _turns_to_face(f: FrameData, g: Dictionary) -> bool:
+	return not f.surface and not f.bend and not f.place_locked and not bool(g.get("turned", false))
+
+
+## `xf` turned about the vertical through `middle` to face `head`, `t` of the way (0 to 1). A canvas lying down or tilted over, or a head
+## right above or below it, is left as it is. Static so that it can be tested.
+static func turned_to_face(xf: Transform3D, middle: Vector3, head: Vector3, t: float) -> Transform3D:
+	var b := xf.basis.orthonormalized()
+	if absf(b.z.y) > FACE_UPRIGHT or b.y.y < 0.5:
+		return xf
+	var to := Vector3(head.x - middle.x, 0.0, head.z - middle.z)
+	var now := Vector3(b.z.x, 0.0, b.z.z)
+	if to.length() < 0.2 or now.length() < 1e-3:
+		return xf
+	var turn := Basis(Vector3.UP, now.signed_angle_to(to, Vector3.UP) * clampf(t, 0.0, 1.0))
+	return Transform3D(turn * xf.basis, middle + turn * (xf.origin - middle))
 
 
 ## The contents of a curved desk slide along its surface under one pointer (the desk itself stays put).
@@ -635,6 +664,7 @@ func _update_two(seen: Dictionary) -> void:
 		xf.basis = rot * (_two.basis0 as Basis)
 		xf.origin = mid + rot * (((_two.origin0 as Vector3) - (_two.mid0 as Vector3)) * ratio)
 	g.xf = xf
+	g.turned = true                                     # (the hands have set which way it faces: one hand left holding does not turn it back)
 	if fixed:
 		# ...spreading the hands zooms its contents instead, about the spot between them, which stays where it is on the surface (the
 		# desk turns and moves with the hands, so it stays between them too)

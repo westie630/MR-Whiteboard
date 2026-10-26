@@ -314,6 +314,12 @@ moving it (a curved desk: they only zoom its contents; one pointer still slides 
 lining a curved desk up, the PC's Q / E and desk tracking leave it alone; a corner still changes its extent, flattening a curved desk keeps it where it is.
 A hold that changed nothing leaves no undo step and keeps the anchor. `locked` locks everything; this locks only the place.
 
+**Carried by one pointer, a canvas turns to face you**, as a panel does while its handle is held: about the vertical and about its own middle
+([HandController.turned_to_face](../src/board/hand_controller.gd), time constant `FACE_TIME` 0.12 s), so it stays upright. This is every canvas
+standing in the room, a PDF included. Left alone: the two desks (a canvas on a physical surface, a curved desk), a canvas with its place locked,
+one lying down or tilted over (its front within `FACE_UPRIGHT` of level), and one whose way two hands have set during this carry (it is
+not turned back when one of them lets go). Guests see it turn, as they see it move (the held pose is what LiveOut sends).
+
 When one hand is carrying a canvas (bar or empty-canvas drag, not a corner) and the **other hand pinches the same canvas** (touching it, its ray on the same canvas, or on no canvas):
 
 | Hands do | Canvas does |

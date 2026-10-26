@@ -72,6 +72,12 @@ func on_canvas(fn: FrameNode, p: Vector2) -> Vector3:
 	return fn.to_world_point(Vector3(p.x, p.y, 0.0))
 
 
+## Carrying turns a canvas towards the head; the sections after a carry measure along the canvas's axes, so they square it up again first.
+func square_up(id: String) -> void:
+	var f := board.doc.frames[id] as FrameData
+	f.xf = Transform3D(Basis.IDENTITY, f.xf.origin)
+
+
 func hover_kind(side: String) -> String:
 	return str(board.hand_ctl.hover.get(side, {}).get("kind", ""))
 
@@ -689,8 +695,48 @@ func run() -> void:
 	await tick(3)
 	t.check(not (board.doc.frames[g.id] as FrameData).place_locked and is_equal_approx((board.doc.frames[g.id] as FrameData).scale, p_scale), "undo: its size, then the lock")
 	hands = []
+	# carried by one hand, a canvas turns to face the head (about the vertical); two hands set which way it faces
+	await tick(80)
+	square_up(g.id)
+	await tick(2)
+	var face_xf := (board.doc.frames[g.id] as FrameData).xf
+	var face_mid := cv.to_world_point(Vector3(cv.bounds().get_center().x, cv.bounds().get_center().y, 0.0))
+	var face_bar := cv.global_transform * Vector3(HandController.bar_center(cv).x, HandController.bar_center(cv).y, 0.0)
+	hands = [hand]
+	aim(hand, face_bar)
+	await tick(2)
+	await pinch_down(hand)
+	for i in 30:
+		hand.pinch_point += Vector3(0.04, 0.0, 0.0)
+		hand.tip = hand.pinch_point
+		await tick(1)
+	var carried := (board.grabs[g.id] as Dictionary).xf as Transform3D
+	var cmid := carried * (Vector3(cv.bounds().get_center().x, cv.bounds().get_center().y, 0.0) * float((board.grabs[g.id] as Dictionary).scale))
+	var to_head := Vector3(-cmid.x, 0.0, -cmid.z).normalized()
+	t.check(Vector3(carried.basis.z.x, 0.0, carried.basis.z.z).normalized().angle_to(to_head) < 0.15, "carried sideways, the canvas turned to face the head")
+	t.check(absf(carried.basis.z.y) < 0.01 and carried.basis.y.y > 0.99, "...about the vertical only: it stays upright")
+	await pinch_up(hand)
+	hands = []
+	board.undo()
+	await tick(3)
+	var fs: FrameData = board.doc.frames[g.id]
+	t.check(board.hand_ctl._turns_to_face(fs, {}), "a wall canvas turns to face the head when carried")
+	t.check(not board.hand_ctl._turns_to_face(fs, {"turned": true}), "...but not once two hands have set its way")
+	fs.surface = true
+	t.check(not board.hand_ctl._turns_to_face(fs, {}), "a canvas on a physical surface keeps its way")
+	fs.surface = false
+	fs.bend = true
+	t.check(not board.hand_ctl._turns_to_face(fs, {}), "so does a curved desk")
+	fs.bend = false
+	var turned := HandController.turned_to_face(face_xf, face_mid, Vector3(5.0, 1.6, 0.0), 1.0)
+	t.check(not turned.basis.is_equal_approx(face_xf.basis) and turned.origin.distance_to(face_xf.origin) > 0.01, "an upright canvas is turned about its middle towards a head at its side")
+	t.check((turned * (face_xf.affine_inverse() * face_mid)).distance_to(face_mid) < 0.001, "...its middle staying where it was")
+	var lying := Transform3D(Basis(Vector3.RIGHT, -PI * 0.5), Vector3(0.0, 0.7, -1.0))
+	t.check(HandController.turned_to_face(lying, lying.origin, Vector3(5.0, 1.6, 0.0), 1.0).is_equal_approx(lying), "a canvas lying flat is left as it is")
 	# touching and pointing: a hand held back from the canvas points, the ray chooses and the canvas moves further than the hand
 	await tick(80)
+	square_up(g.id)
+	await tick(2)
 	var far := HandInput.new("right")
 	far.tracked = true
 	far.aiming = true
@@ -709,6 +755,8 @@ func run() -> void:
 	var fmoved: float = (board.doc.frames[g.id] as FrameData).xf.origin.x - fx0
 	t.check(fmoved > 0.2 and fmoved < 0.1 * InputTuning.MAX_GAIN + 0.01, "pointing from afar: a 10 cm hand movement carried the canvas further: %f" % fmoved)
 	await tick(80)
+	square_up(g.id)
+	await tick(2)
 	# an item by ray: the ray moves it
 	var fbox := board.doc.items[box.id] as Item
 	var fc0 := fbox.center
@@ -751,6 +799,8 @@ func run() -> void:
 	await tick(80)
 
 	# the stylus's front button grabs with the same rules as a pinch
+	square_up(g.id)
+	await tick(2)
 	var items_total_before_stylus := board.doc.items.size()
 	pen.dir = Vector3(0, 0, -1)
 	var sbox := board.doc.items[box.id] as Item
@@ -845,6 +895,8 @@ func run() -> void:
 	t.near((board.doc.frames[g.id] as FrameData).xf.origin.y - ey0, 0.2, 0.03, "a front-button drag on empty canvas carried it")
 	await tick(80)
 	# a corner: the stylus resizes like a hand
+	square_up(g.id)
+	await tick(2)
 	var scs := HandController.corner_points(cv)
 	var scorner := on_canvas(cv, scs[2])
 	var ssize0 := cv.bounds().size
