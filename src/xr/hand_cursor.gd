@@ -103,8 +103,10 @@ func _hide_side(s: Dictionary) -> void:
 
 ## hands: side -> HandInput; menu: source ("left" | "right" | "pen") -> {point, poke} for what is on the menu; hover: HandController.hover;
 ## head: the head position; stylus_side: the hand holding the stylus; pen: the stylus (its ring is shown while it points at the menu);
-## handles: source -> {point, touch} for the bar under a panel that a source is on or carries (the stylus's beam runs to it).
-func update(hands: Dictionary, menu: Dictionary, hover: Dictionary, head: Vector3, stylus_side: String, pen: PenState = null, handles: Dictionary = {}) -> void:
+## handles: source -> {point, touch} for the bar under a panel that a source is on or carries (the stylus's beam runs to it);
+## models: ModelController.hover (a source on a 3D model or one of its handles: a ring there, no canvas chrome).
+func update(hands: Dictionary, menu: Dictionary, hover: Dictionary, head: Vector3, stylus_side: String, pen: PenState = null, handles: Dictionary = {},
+		models: Dictionary = {}) -> void:
 	for side in ["left", "right"]:
 		var s: Dictionary = _sides[side]
 		var h: HandInput = hands[side]
@@ -115,6 +117,9 @@ func update(hands: Dictionary, menu: Dictionary, hover: Dictionary, head: Vector
 		if menu.has(side):
 			var m: Dictionary = menu[side]
 			_ring(s, m.point, "ui", h.pinching, bool(m.poke), head)
+		elif models.has(side):
+			var mv: Dictionary = models[side]
+			_ring(s, mv.point, _model_kind(str(mv.kind)), h.pinching, false, head)
 		elif not hv.is_empty() and is_instance_valid(hv.fn):
 			_ring(s, hv.point, str(hv.kind), h.pinching, false, head)
 			_chrome(s, hv)
@@ -134,6 +139,12 @@ func update(hands: Dictionary, menu: Dictionary, hover: Dictionary, head: Vector
 			var hh: Dictionary = handles["pen"]
 			if rays and not bool(hh.touch):
 				beam.aim(pen.tip, pen.dir, hh.point, _color("ui", pen.front), pen.front)
+		elif models.has("pen"):
+			var pmv: Dictionary = models["pen"]
+			var mk := _model_kind(str(pmv.kind))
+			_ring(ps, pmv.point, mk, pen.front, false, head)
+			if rays and not bool(pmv.get("direct", false)):
+				beam.aim(pen.tip, pen.dir, pmv.point, _color(mk, pen.front), pen.front, _ring_r(head, pmv.point))
 		elif not pv.is_empty() and is_instance_valid(pv.fn) and (not bool(pv.get("direct", false)) or str(pv.kind) == "hold"):
 			_ring(ps, pv.point, str(pv.kind), pen.front, false, head)
 			_chrome(ps, pv)
@@ -146,6 +157,11 @@ func update(hands: Dictionary, menu: Dictionary, hover: Dictionary, head: Vector
 				beam.aim(pen.tip, pen.dir, end, _color(str(pv.kind), pen.front), pen.front, gap)
 		elif pv.is_empty() and rays:
 			beam.aim(pen.tip, pen.dir, null, COL_RING, pen.front)
+
+
+## A 3D model's hover kinds in the colours of the canvas ones: a handle like an item, the model itself like something to carry.
+static func _model_kind(kind: String) -> String:
+	return {"handle": "item", "model": "bar", "hold": "hold"}.get(kind, "bar")
 
 
 static func _color(kind: String, pressed: bool) -> Color:

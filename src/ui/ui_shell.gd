@@ -7,6 +7,7 @@ extends Node
 ##   InkChip       beside handwriting: "convert to text?" while drawing, the other readings right after converting
 ##   SuggestionBar above a canvas the assistant drew a suggestion on: accept, discard, hide
 ##   PdfBar        under a PDF canvas: previous / next page, a slider over the pages
+##   ModelBar      at the selected 3D model: which handles it shows (move, rotate, scale), snap, put down, real size, reset, ...
 ##   Home          documents, canvases, rooms, sharing, settings (opened from the dock)
 ##   Assistant     the AI assistant (opened from the dock)
 ##   Compose       the typing card with its keyboard
@@ -30,6 +31,7 @@ var context: ContextBar
 var ink_chip: InkChip
 var suggestion: SuggestionBar
 var pdf_bar: PdfBar
+var model_bar: ModelBar
 var home: HomePanel
 var assistant: AssistantPanel
 var compose: ComposePanel
@@ -57,6 +59,7 @@ func setup(b: Board) -> void:
 	ink_chip = InkChip.new()
 	suggestion = SuggestionBar.new()
 	pdf_bar = PdfBar.new()
+	model_bar = ModelBar.new()
 	home = HomePanel.new()
 	assistant = AssistantPanel.new()
 	compose = ComposePanel.new()
@@ -64,7 +67,7 @@ func setup(b: Board) -> void:
 	align_card = AlignCard.new()
 	place_card = PlaceCard.new()
 	toast = ToastView.new()
-	panels = [context, ink_chip, suggestion, pdf_bar, dock, home, assistant, popover, compose, surface_card, align_card, place_card, toast]
+	panels = [context, ink_chip, suggestion, pdf_bar, model_bar, dock, home, assistant, popover, compose, surface_card, align_card, place_card, toast]
 	for p in panels:
 		(p as FloatPanel).shell = self
 	compose.entry.accepted.connect(_entry_ok)
@@ -90,7 +93,7 @@ func _process(delta: float) -> void:
 func engaged() -> bool:
 	if board == null:
 		return false
-	return board.pen_ctl.state != PenController.S.IDLE or board.hand_ctl.is_holding() or not board.grabs.is_empty() or not board.placing.is_empty() or not board.placing_text.is_empty()
+	return board.pen_ctl.state != PenController.S.IDLE or board.hand_ctl.is_holding() or board.model_ctl.is_holding() or not board.grabs.is_empty() or not board.placing.is_empty() or not board.placing_text.is_empty()
 
 
 func update(delta: float) -> void:
@@ -126,6 +129,8 @@ func update(delta: float) -> void:
 	ink_chip.wanted = on_canvas and ink_chip.place_for(board)
 	suggestion.wanted = on_canvas and not board.ai.busy and suggestion.place_for(board)
 	pdf_bar.wanted = not hidden and has_doc and not typing and board.placing.is_empty() and pdf_bar.place_for(board)
+	model_bar.dim = 1.0
+	model_bar.wanted = on_canvas and board.model_ctl.selected != "" and model_bar.place_for(board)
 	toast.tick(delta)
 	if typing:
 		_keep_focus()
@@ -255,6 +260,9 @@ func back() -> bool:
 	if not board.selection.is_empty():
 		board.clear_selection()
 		return true
+	if board.model_ctl.selected != "":
+		board.model_ctl.deselect()
+		return true
 	return false
 
 
@@ -271,6 +279,12 @@ func show_home(tab: String) -> void:
 
 ## The list of PDFs (Home > Docs): one is chosen there to be put in front of you.
 func show_pdfs() -> void:
+	show_home("docs")
+	home.scroll_to_bottom()
+
+
+## The list of 3D models (Home > Docs, under the PDFs): one is chosen there to be put in front of you.
+func show_models() -> void:
 	show_home("docs")
 	home.scroll_to_bottom()
 

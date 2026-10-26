@@ -1,12 +1,18 @@
 class_name FrameData
 extends RefCounted
-## A frame is a coordinate system fixed in a room by a spatial anchor. Two kinds:
+## A frame is a coordinate system fixed in a room by a spatial anchor. Three kinds:
 ##   canvas: a flat drawing surface (grid, shapes, text) - items live in its xy plane
 ##   volume: a "3D sketch" - free strokes drawn in the air, moved as one object
+##   model:  a 3D model (glTF or OBJ, ModelLibrary) standing in the room: its origin is the middle of the model's bounds
 ## `xf` is its pose in room space (relative to the room's anchor), `anchor` the frame's own spatial anchor.
 
 const CANVAS := "canvas"
 const VOLUME := "volume"
+const MODEL := "model"
+const CANVAS_SCALE := Vector2(0.15, 8.0)  # the sizes a canvas may be given (its scale)
+const MODEL_SCALE := Vector2(1e-4, 1e4)   # a model's scale is against its file's own units (a building in metres, a ring in millimetres)
+const MODEL_SIZE := Vector2(0.02, 30.0)   # ...and whatever its units, its longest side stays between these (metres)
+const STRETCH := Vector2(0.05, 20.0)      # how far a model may be stretched along one of its own axes
 
 var id := ""
 var name := ""
@@ -47,6 +53,11 @@ var pdf := ""                             # the PDF's content id (PdfLibrary): "
 var page := 1                             # the page shown (1 = the first); everybody following the owner shows this one
 var pdf_pages := 0                        # how many pages it has (so every headset can say "3 / 12" before it has the file)
 var pdf_width := 0.0                      # the page's width in metres (at scale 1) when it is put down; a page of another shape keeps the width
+## A 3D model: which file (its content id), stretched how far along its own axes on top of `scale`, and its bounds in the file's own units.
+## The bounds are empty until the first headset that loads the file has measured it and fitted the model to the room (ModelNode).
+var model := ""
+var stretch := Vector3.ONE
+var model_box := AABB()
 
 
 static func make(kind_id: String, room_id: String, pose: Transform3D, frame_name: String = "") -> FrameData:
@@ -61,7 +72,7 @@ static func make(kind_id: String, room_id: String, pose: Transform3D, frame_name
 
 
 func to_dict() -> Dictionary:
-	return {"id": id, "name": name, "kind": kind, "room": room, "xf": U.xf_to_array(xf), "scale": snappedf(scale, 1e-5),
+	var d := {"id": id, "name": name, "kind": kind, "room": room, "xf": U.xf_to_array(xf), "scale": snappedf(scale, 1e-5),
 		"size": U.v2_to_array(size), "offset": U.v2_to_array(offset), "anchor": anchor, "anchor_xf": U.xf_to_array(anchor_xf), "anchor_guess": anchor_guess, "grid": grid, "backing": backing,
 		"locked": locked, "place_locked": place_locked, "hidden": hidden, "created": created, "surface": surface,
 		"plane": [snappedf(plane_point.x, 1e-5), snappedf(plane_point.y, 1e-5), snappedf(plane_point.z, 1e-5),
@@ -69,6 +80,10 @@ func to_dict() -> Dictionary:
 		"plane_error": snappedf(plane_error, 1e-5), "plane_points": plane_points,
 		"bend": [snappedf(bend_at, 1e-5), snappedf(bend_radius, 1e-5), snappedf(bend_pan.x, 1e-5), snappedf(bend_pan.y, 1e-5)] if bend else [],
 		"pdf": pdf, "page": page, "pdf_pages": pdf_pages, "pdf_width": snappedf(pdf_width, 1e-5)}
+	if model != "":
+		d.merge({"model": model, "stretch": [snappedf(stretch.x, 1e-5), snappedf(stretch.y, 1e-5), snappedf(stretch.z, 1e-5)],
+			"model_box": [model_box.position.x, model_box.position.y, model_box.position.z, model_box.size.x, model_box.size.y, model_box.size.z]})
+	return d
 
 
 static func from_dict(d: Dictionary) -> FrameData:
@@ -107,6 +122,13 @@ static func from_dict(d: Dictionary) -> FrameData:
 	f.page = maxi(int(d.get("page", 1)), 1)
 	f.pdf_pages = maxi(int(d.get("pdf_pages", 0)), 0)
 	f.pdf_width = float(d.get("pdf_width", 0.0))
+	f.model = str(d.get("model", ""))
+	var st: Variant = d.get("stretch")
+	if st is Array and (st as Array).size() >= 3:
+		f.stretch = Vector3(st[0], st[1], st[2]).clamp(Vector3.ONE * STRETCH.x, Vector3.ONE * STRETCH.y)
+	var mb: Variant = d.get("model_box")
+	if mb is Array and (mb as Array).size() >= 6:
+		f.model_box = AABB(Vector3(mb[0], mb[1], mb[2]), Vector3(mb[3], mb[4], mb[5]).abs())
 	return f
 
 
@@ -116,6 +138,32 @@ func copy() -> FrameData:
 
 func is_pdf() -> bool:
 	return pdf != ""
+
+
+func is_model() -> bool:
+	return kind == MODEL
+
+
+## Has a headset measured the model's file yet (and so fitted it to the room)?
+func model_measured() -> bool:
+	return model_box.size.length() > 0.0
+
+
+## A scale this frame may have: a canvas's within CANVAS_SCALE; a model's keeps its longest side (with its stretch) within MODEL_SIZE.
+func clamp_scale(s: float) -> float:
+	if kind != MODEL:
+		return clampf(s, CANVAS_SCALE.x, CANVAS_SCALE.y)
+	s = clampf(s, MODEL_SCALE.x, MODEL_SCALE.y)
+	var longest := (model_box.size * stretch).abs()
+	var l := maxf(longest.x, maxf(longest.y, longest.z))
+	if l > 0.0:
+		s = clampf(s, MODEL_SIZE.x / l, MODEL_SIZE.y / l)
+	return s
+
+
+## The model's size in the room (metres): its bounds, stretched and scaled.
+func model_size() -> Vector3:
+	return (model_box.size * stretch * scale).abs()
 
 
 ## The part of a curved desk that is shown, in surface coordinates.

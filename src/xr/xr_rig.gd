@@ -248,8 +248,7 @@ func set_passthrough() -> void:
 	var env := w3.environment
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0, 0, 0, 0)
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(1, 1, 1)
+	ModelLighting.configure(env, board.models.budget)      # soft light and reflections for the 3D models (the rest is unshaded)
 
 
 func _keep_passthrough(delta: float) -> void:
@@ -368,10 +367,13 @@ func _place_ui(delta: float) -> void:
 		var pos := d.origin + d.basis.x.normalized() * x + up * (dock_top + 0.03)
 		xp2.global_transform = _facing(pos)
 	# bars pinned to a canvas, just in front of it
-	for id in ["context", "ink", "suggestion", "pdf"]:
+	for id in ["context", "ink", "suggestion", "pdf", "model"]:
 		var xp3: XrPanel = panels[id]
 		var fp3: FloatPanel = xp3.widget as FloatPanel
 		if not xp3.visible or fp3.anchor.is_empty():
+			continue
+		if fp3.anchor.has("world"):
+			xp3.global_transform = fp3.anchor.world        # (a 3D model's bar: placed in the room by the bar itself)
 			continue
 		var fn: FrameNode = board.frame_nodes.get(str(fp3.anchor.frame))
 		if fn == null:
@@ -694,7 +696,7 @@ func _process(delta: float) -> void:
 			bp.pressure = 0.7 if draw_hand.pinching else 0.0
 			bp.haptic = Callable()
 	board.tick(bp, board_hands, delta)
-	cursor.update(hands, _menu_hits, board.hand_ctl.hover, head.origin, stylus.active if stylus_here else "", pen, _handle_hits)
+	cursor.update(hands, _menu_hits, board.hand_ctl.hover, head.origin, stylus.active if stylus_here else "", pen, _handle_hits, board.model_ctl.hover)
 	_update_gloves(pen, stylus_here, delta)
 	for side in ["left", "right"]:
 		_pinch_peak[side] = maxf(float(_pinch_peak.get(side, 0.0)), (hands[side] as HandInput).pinch_strength)

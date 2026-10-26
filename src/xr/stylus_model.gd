@@ -35,6 +35,7 @@ func _ready() -> void:
 		return
 	for mi in root.find_children("*", "MeshInstance3D", true, false):
 		(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	ModelLighting.use_layer(root)                       # lit like the 3D models (the rest of the app is unshaded)
 	ready_model = true
 
 

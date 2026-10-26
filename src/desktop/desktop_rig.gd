@@ -62,8 +62,7 @@ func setup(b: Board) -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0.1, 0.115, 0.15)
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.5, 0.55, 0.65)
+	ModelLighting.configure(env, board.models.budget)      # soft light and reflections for the 3D models (the rest is unshaded)
 	var we := WorldEnvironment.new()
 	we.environment = env
 	view.add_child(we)
@@ -95,7 +94,7 @@ func setup(b: Board) -> void:
 	ui.assistant.grip.dragged.connect(_drag.bind("assistant"))
 	get_window().size_changed.connect(_layout)
 	_layout()
-	ui.show_toast("Mouse = stylus.  Right mouse: look, WASD: walk.  Middle mouse: carry a canvas.  Tab hides the interface.")
+	ui.show_toast("Mouse = stylus.  Right mouse: look, WASD: walk.  Middle mouse: carry a canvas or a 3D model.  Tab hides the interface.")
 	hands = [_hand]
 	board.hand_ctl.grab_anywhere = true            # the mouse has no bar to point at: the middle button picks a canvas up wherever it is
 
@@ -168,15 +167,19 @@ func _place_ui() -> void:
 	t.max_width = maxf((hi - lo - 2.0 * MARGIN) / sc, 260.0)
 	t.position = Vector2(clampf((lo + hi - t.size.x * sc) * 0.5, MARGIN, maxf(win.x - MARGIN - t.size.x * sc, MARGIN)), MARGIN + 6.0)
 	# bars pinned to the canvas: where their spot is on the screen
-	for cp2 in [ui.context, ui.ink_chip, ui.suggestion, ui.pdf_bar]:
+	for cp2 in [ui.context, ui.ink_chip, ui.suggestion, ui.pdf_bar, ui.model_bar]:
 		var c := cp2 as FloatPanel
 		if not c.visible or c.anchor.is_empty():
 			continue
-		var fn: FrameNode = board.frame_nodes.get(str(c.anchor.frame))
-		if fn == null:
-			continue
-		var pos2: Vector2 = c.anchor.pos
-		var world := fn.to_world_point(Vector3(pos2.x, pos2.y, 0.0))
+		var world: Vector3
+		if c.anchor.has("world"):
+			world = (c.anchor.world as Transform3D).origin   # (a 3D model's bar)
+		else:
+			var fn: FrameNode = board.frame_nodes.get(str(c.anchor.frame))
+			if fn == null:
+				continue
+			var pos2: Vector2 = c.anchor.pos
+			world = fn.to_world_point(Vector3(pos2.x, pos2.y, 0.0))
 		if camera.is_position_behind(world):
 			c.position = Vector2(-10000, -10000)
 			continue
@@ -330,10 +333,12 @@ func _input(e: InputEvent) -> void:
 
 
 func _wheel(dir: float, mb: InputEventMouseButton) -> void:
-	if board.hand_ctl.is_holding():
+	if board.hand_ctl.is_holding() or board.model_ctl.is_holding():
 		for fid in board.grabs.keys():
 			var g: Dictionary = board.grabs[fid]
-			g.scale = clampf(float(g.scale) * pow(1.1, dir), 0.15, 8.0)
+			var f: FrameData = board.doc.frames.get(fid)
+			if f != null:
+				g.scale = f.clamp_scale(float(g.scale) * pow(1.1, dir))
 		return
 	camera.position += -camera.global_transform.basis.z * dir * 0.25
 
@@ -491,6 +496,14 @@ func _update_pen() -> void:
 func _pick_for_hand(o: Vector3, d: Vector3) -> Dictionary:
 	var best := {}
 	var bt := INF
+	for mn in board.model_nodes.values():
+		var m := mn as ModelNode
+		if not m.visible:
+			continue
+		var mh := m.ray_hit(o, d, InputTuning.MODEL_RAY_GROW)
+		if not mh.is_empty() and float(mh.t) < bt:
+			bt = float(mh.t)
+			best = {"point": mh.point}
 	for fn in board.visible_frames():
 		var n := fn as FrameNode
 		var hit := n.ray_hit(o, d, 0.05)

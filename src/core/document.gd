@@ -1,6 +1,6 @@
 class_name Document
 extends RefCounted
-## One whiteboard document ("like a Word document"): rooms, frames (canvases and 3D sketches) and the items on them.
+## One whiteboard document ("like a Word document"): rooms, frames (canvases, 3D models and 3D sketches) and the items on them.
 ## Saved as JSON (.mrw). Every mutation goes through this class so views and autosave can follow the signals.
 
 signal item_added(item: Item)
@@ -150,7 +150,7 @@ func frames_in(room_id: String) -> Array:
 
 
 func _next_frame_name(kind: String) -> String:
-	var base := "Canvas" if kind == FrameData.CANVAS else "3D sketch"
+	var base := "Canvas" if kind == FrameData.CANVAS else ("Model" if kind == FrameData.MODEL else "3D sketch")
 	var k := 1
 	while true:
 		var cand := "%s %d" % [base, k]

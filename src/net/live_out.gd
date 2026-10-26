@@ -102,19 +102,23 @@ func _slot(key: String, slot: String, state: Dictionary, beat: bool, out: Array)
 		_sent[k] = state
 
 
-## Canvases being carried: where each is (in its room, as it is shown, so a canvas on the desk stays on it) and its scale.
+## Canvases (and 3D models) being carried: where each is (in its room, as it is shown, so a canvas on the desk stays on it) and its scale.
 func _grabs(beat: bool, out: Array) -> void:
 	for fid in board.grabs.keys():
 		var fn: FrameNode = board.frame_nodes.get(fid)
-		if fn == null:
+		var mn: ModelNode = board.model_nodes.get(fid)
+		var node: Node3D = fn if fn != null else mn
+		if node == null:
 			continue
-		var rw: Variant = board.room_world(fn.data.room)
+		var rw: Variant = board.room_world((fn.data if fn != null else mn.data).room)
 		if rw == null:
 			continue
-		var xf := (rw as Transform3D).affine_inverse() * Transform3D(fn.transform.basis.orthonormalized(), fn.transform.origin)
+		var xf := (rw as Transform3D).affine_inverse() * Transform3D(node.transform.basis.orthonormalized(), node.transform.origin)
 		var st := {"xf": xf, "s": float((board.grabs[fid] as Dictionary).scale)}
-		if fn.bend != null:                          # a curved desk: how far its contents have slid, and its bend, as they are now
+		if fn != null and fn.bend != null:           # a curved desk: how far its contents have slid, and its bend, as they are now
 			st.merge({"p": fn.bend.pan, "ba": fn.bend.at, "br": fn.bend.radius})
+		if mn != null:                               # a 3D model: how far it is stretched along its own axes
+			st["st"] = (board.grabs[fid] as Dictionary).get("stretch", mn.data.stretch)
 		var k := "g/" + str(fid)
 		if beat or _sent.get(k, {}) != st:
 			var msg := st.duplicate()

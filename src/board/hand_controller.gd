@@ -29,6 +29,7 @@ const FACE_UPRIGHT := 0.5                  # ...if its front is within this (the
 
 var board: Board
 var grab_anywhere := false                 # the PC's synthetic pinch picks a canvas up wherever it is
+var skip: Dictionary = {}                  # side -> true: that pointer is on a 3D model this frame (ModelController has it): hands off
 ## side -> {fn: FrameNode, point: Vector3, kind: "canvas" | "item" | "bar" | "corner" | "hold", corner: int, direct: bool}; rebuilt every update()
 var hover: Dictionary = {}
 
@@ -216,7 +217,7 @@ func update(hands: Array, dt: float, pen: PenState = null) -> void:
 	_dt = dt
 	for side in POINTERS:
 		var h: HandInput = seen.get(side)
-		if h == null or not h.tracked:
+		if h == null or not h.tracked or skip.has(side):
 			_lose(side, dt)
 			continue
 		_update_hand(h, dt)

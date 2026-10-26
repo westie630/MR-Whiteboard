@@ -254,6 +254,9 @@ func _build_add(p: VBoxContainer) -> void:
 	rp.add_child(UiKit.button("pdf", "PDF", func():
 		shell.close_popover()
 		shell.show_pdfs(), 64.0))
+	rp.add_child(UiKit.button("model", "3D model", func():
+		shell.close_popover()
+		shell.show_models(), 64.0))
 	UiKit.header(p, "New canvas")
 	var r2 := UiKit.hrow(p, 8)
 	r2.add_child(UiKit.button("canvas", "On a wall", func(): _place("wall"), 64.0))

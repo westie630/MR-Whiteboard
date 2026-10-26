@@ -94,6 +94,19 @@ const TWO_HAND_MIN := 0.04                 # two hands this close do not turn / 
 const TWO_HAND_RATIO := Vector2(0.2, 6.0)
 const CANVAS_SCALE := Vector2(0.15, 8.0)
 
+# ------------------------------------------------------------------------------------------------ 3D models (ModelController, ModelGizmo)
+const MODEL_TOUCH := 0.03                  # a pinch point or nib this far inside / outside a model's box touches it (direct, 1:1)
+const MODEL_RAY_GROW := 0.01               # a ray this close to a model's box is on it
+const GIZMO_SIZE := 0.02                   # a handle's size, per metre between the head and the model (same size on the eye)...
+const GIZMO_SIZE_MIN := 0.005              # ...clamped to this range (m)
+const GIZMO_SIZE_MAX := 0.06
+const SNAP_MOVE := 0.01                    # Snap on: a move goes in steps of this (m)...
+const SNAP_TURN := 15.0                    # ...a turn in steps of this (degrees)...
+const SNAP_SIZE := 0.01                    # ...and a size (the longest side, or the side stretched) in steps of this (m)
+const MODEL_FRONT := 0.9                   # a new model stands this far in front of you (its middle)...
+const MODEL_FIT := 0.4                     # ...and is made this big (its longest side, m) unless it is already a plausible real size:
+const MODEL_REAL := Vector2(0.05, 2.0)     # a model whose longest side is within this (in the file's units, read as metres) keeps its real size
+
 # ------------------------------------------------------------------------------------------------ cursors
 const CORNER_R := 0.014
 const BAR_LEN := 0.30

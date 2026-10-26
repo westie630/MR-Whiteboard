@@ -21,6 +21,7 @@ var _confirm := ""
 var _lists_sig := ""
 var _docs_list: VBoxContainer
 var _pdf_list: VBoxContainer
+var _model_list: VBoxContainer
 var _canvas_list: VBoxContainer
 var _canvas_style: VBoxContainer
 var _rooms_list: VBoxContainer
@@ -162,6 +163,8 @@ func refresh() -> void:
 	var sig := "%s|%s|%s|%s|%s|%d|%d|%s" % [tab, b.doc.id, b.doc.name, b.current_room, b.active_frame, b.doc.frames.size(), b.doc.rooms.size(), _confirm]
 	for e in b.pdfs.list():
 		sig += "|" + str(e.id) + str(e.name)
+	for e in b.models.list():
+		sig += "|" + str(e.id) + str(e.name) + str(e.get("triangles", 0))
 	for f in b.doc.frames.values():
 		sig += "/" + (f as FrameData).name + str((f as FrameData).locked) + str((f as FrameData).place_locked) + str((f as FrameData).hidden) + str((f as FrameData).surface) + str((f as FrameData).bend)
 		if (f as FrameData).bend:
@@ -172,6 +175,8 @@ func refresh() -> void:
 		match tab:
 			"docs":
 				_refresh_docs()
+				_refresh_pdfs()
+				_refresh_models()
 			"canvas":
 				_refresh_canvas()
 			"rooms":
@@ -219,6 +224,40 @@ func _build_docs(p: VBoxContainer) -> void:
 	_docs_list = UiKit.vcol(p, 6)
 	UiKit.header(p, "PDF documents")
 	_pdf_list = UiKit.vcol(p, 6)
+	UiKit.header(p, "3D models")
+	_model_list = UiKit.vcol(p, 6)
+
+
+## The 3D models on the headset: tap one to put it in front of you, the bin (pressed twice) removes it from the headset.
+func _refresh_models() -> void:
+	var b: Board = shell.board
+	UiKit.clear(_model_list)
+	var list := b.models.list()
+	if list.is_empty():
+		UiKit.note(_model_list, "No 3D models yet. Switch on the web page in Share, open it on your PC and drop a model on it (glTF .glb or .gltf, or .obj with its .mtl and pictures, or all of them in a .zip): it arrives here and stands in front of you.")
+		return
+	for e in list:
+		var mid: String = e.id
+		var row := UiKit.hrow(_model_list, 6)
+		var btn := Btn.new("model", str(e.name))
+		btn.align = HORIZONTAL_ALIGNMENT_LEFT
+		btn.small = true
+		btn.custom_minimum_size = Vector2(0, 58)
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.hint = "Put it in front of you"
+		btn.pressed.connect(func():
+			var res := b.place_model(mid)
+			if not bool(res.ok):
+				b.toast.emit(str(res.message)))
+		row.add_child(btn)
+		var tris := int(e.get("triangles", 0))
+		var info := UiKit.label("%s%s\n%s" % [str(e.get("format", "")), "" if tris <= 0 else ", %s tri." % ModelLoader.count_text(tris), WebPages.size_text(int(e.size))], true, UITheme.FONT_TINY)
+		info.custom_minimum_size = Vector2(110, 0)
+		info.size_flags_horizontal = Control.SIZE_SHRINK_END
+		row.add_child(info)
+		row.add_child(_bin("model" + mid, "Press again to delete \"%s\" from the headset." % e.name, func():
+			b.models.remove(mid)
+			b.toast.emit("Deleted \"%s\"" % e.name)))
 
 
 ## The PDFs on the headset: tap one to put it in front of you, the bin (pressed twice) removes it.
@@ -354,17 +393,22 @@ func _refresh_canvas() -> void:
 		var fd: FrameData = f
 		var fid := fd.id
 		var row := UiKit.hrow(_canvas_list, 4)
-		var nb := Btn.new("canvas" if fd.kind == FrameData.CANVAS else "volume", fd.name)
+		var nb := Btn.new("canvas" if fd.kind == FrameData.CANVAS else ("model" if fd.is_model() else "volume"), fd.name)
 		nb.align = HORIZONTAL_ALIGNMENT_LEFT
 		nb.small = true
 		nb.custom_minimum_size = Vector2(0, 54)
 		nb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		nb.on = b.active_frame == fid
+		nb.on = b.active_frame == fid or b.model_ctl.selected == fid
 		nb.pressed.connect(func():
-			b.active_frame = fid
+			if fd.is_model():
+				b.model_ctl.select(fid)                      # its handles and its bar appear
+			else:
+				b.active_frame = fid
 			_lists_sig = "")
 		row.add_child(nb)
-		row.add_child(UiKit.tool("text", "Rename", func(): shell.ask_name("Rename canvas", fd.name, func(t: String): b.rename_frame(fid, t)), 52.0))
+		row.add_child(UiKit.tool("text", "Rename", func(): shell.ask_name("Rename model" if fd.is_model() else "Rename canvas", fd.name, func(t: String): b.rename_frame(fid, t)), 52.0))
+		if fd.is_model():
+			row.add_child(UiKit.tool("pin", "Bring it to me", func(): b.bring_model(fid), 52.0))
 		if fd.kind == FrameData.CANVAS:
 			var dk := UiKit.tool("desk", "Free it from the desk" if fd.surface else "Lay it on the desk: feel for the desk with the stylus tip",
 				func(): _toggle_desk(fid), 52.0)
@@ -388,7 +432,8 @@ func _refresh_canvas() -> void:
 		var lk := UiKit.tool("lock", "Lock", func(): b.set_frame_prop(fid, "locked", not fd.locked), 52.0)
 		lk.on = fd.locked
 		row.add_child(lk)
-		row.add_child(UiKit.tool("erase", "Clear", func(): b.clear_frame(fid), 52.0))
+		if not fd.is_model():
+			row.add_child(UiKit.tool("erase", "Clear", func(): b.clear_frame(fid), 52.0))
 		row.add_child(_bin(fid, "Press the bin again to delete \"%s\" (undo brings it back)." % fd.name, func(): b.delete_frame(fid)))
 	UiKit.clear(_canvas_style)
 	var active: FrameData = b.doc.frames.get(b.active_frame)
@@ -613,6 +658,11 @@ func _build_settings(p: VBoxContainer) -> void:
 	_kit.segmented(cd, [["none", "Clear"], ["glass", "Glass"], ["dark", "Dark"], ["white", "White"]], func(): return App.val("backing"), func(v): App.put("backing", v))
 	_kit.slider(cd, "Grid fades out at", 1.0, 5.0, "grid_fade_viewer", 0.25, func(v: float): return "%.1f m" % v)
 	_kit.slider(cd, "Grid light around the stylus", 0.25, 1.2, "grid_focus", 0.05, func(v: float): return "%.2f m" % v)
+
+	UiKit.header(p, "3D models")
+	var md := UiKit.card(p)
+	_kit.segmented(md, [["soft", "Soft light"], ["studio", "Studio"], ["bright", "Bright"]], func(): return App.val("model_light"), func(v): App.put("model_light", v))
+	_kit.switch(md, "Shadow under models", "model_shadow", "A soft shadow on the table or floor under each model")
 
 	UiKit.header(p, "Display")
 	var dp := UiKit.card(p)

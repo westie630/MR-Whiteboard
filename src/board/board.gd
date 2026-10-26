@@ -1,7 +1,7 @@
 class_name Board
 extends Node3D
-## The whiteboard world. It owns the open Document, one FrameNode per frame (canvas or 3D sketch), the rooms and spatial anchors
-## that keep every frame fixed in the real room, the selection, and the pen / hand controllers that edit the document.
+## The whiteboard world. It owns the open Document, one FrameNode per canvas (or 3D sketch) and one ModelNode per 3D model, the rooms and
+## spatial anchors that keep every frame fixed in the real room, the selection, and the pen / hand / model controllers that edit the document.
 ## A rig (headset or PC) feeds it the pen and hand state each frame through tick().
 
 signal toast(text: String)
@@ -47,6 +47,7 @@ var _retry_at := {}                        # anchor tag -> msec before which it 
 var _fails := {}                           # anchor tag -> failures in a row
 var _fail_toast_ms := -100000
 var frame_nodes: Dictionary = {}           # frame id -> FrameNode
+var model_nodes: Dictionary = {}           # frame id -> ModelNode (the frames of kind "model")
 var active_frame := ""                     # the canvas last drawn on / selected: the one Home > Canvases styles
 var selection: Array = []                  # selected item ids (all on sel_frame)
 var sel_frame := ""
@@ -67,6 +68,9 @@ var ai: AiController                       # the AI assistant (ask a language mo
 var surface: SurfaceController             # the desk: canvases bound to a physical surface found with the stylus nib
 var share: ExportServer                   # the web server that lets a PC browser view / download the canvases (off until switched on)
 var pdfs: PdfLibrary                      # the PDFs on this device, and the pages made from them (canvases that show a PDF ask it)
+var models: ModelLibrary                  # the 3D models on this device (glTF, OBJ), loaded for the model frames that show them
+var model_ctl: ModelController             # what the pointers do to 3D models: select, carry, the gizmo's handles
+var lighting: ModelLighting                # the light the 3D models are seen in
 var session: Session                       # a session: this headset hosting one (the owner) or in one (a guest); see Session
 var head := Transform3D(Basis.IDENTITY, Vector3(0, 1.6, 0))
 
@@ -108,6 +112,19 @@ func _init() -> void:
 	pdfs.changed.connect(_on_pdfs_changed)
 	pdfs.progress_changed.connect(func(_id): _on_pdfs_changed())
 	add_child(pdfs)
+	models = ModelLibrary.new()
+	models.name = "Models"
+	models.dir = App.model_dir
+	models.budget = ModelBudget.for_tier(ModelBudget.detect_tier(str(App.val("model_tier"))))
+	models.model_ready.connect(_on_model_ready)
+	models.model_failed.connect(_on_model_failed)
+	models.changed.connect(_on_models_changed)
+	models.progress_changed.connect(func(_id): _on_models_changed())
+	add_child(models)
+	model_ctl = ModelController.new(self)
+	add_child(model_ctl.gizmo)
+	lighting = ModelLighting.new()
+	add_child(lighting)
 	share = ExportServer.new()
 	share.name = "Share"
 	share.doc_source = func(): return doc
@@ -119,6 +136,8 @@ func _init() -> void:
 	share.import_svg = import_svg
 	share.pdf_library = pdfs
 	share.show_pdf = place_pdf
+	share.model_library = models
+	share.show_model = place_model
 	share.ai_api = func(cmd: String, data: Dictionary) -> Dictionary: return ai.api(cmd, data)
 	share.keys_api = func(cmd: String, data: Dictionary) -> Dictionary: return ApiKeys.new(ai).api(cmd, data)
 	share.state_changed.connect(func(): changed.emit())
@@ -157,7 +176,10 @@ func open(d: Document) -> void:
 	doc.frame_changed.connect(_on_frame_changed)
 	doc.changed.connect(_on_doc_changed)
 	for f in doc.frames.values():
-		_make_frame_node(f)
+		if (f as FrameData).is_model():
+			_make_model_node(f)
+		else:
+			_make_frame_node(f)
 	current_room = ""
 	room_state = "searching" if not doc.rooms.is_empty() else "none"
 	_assumed.clear()
@@ -191,6 +213,10 @@ func close_document() -> void:
 	for fn in frame_nodes.values():
 		(fn as Node).queue_free()
 	frame_nodes.clear()
+	model_ctl.reset()
+	for mn in model_nodes.values():
+		(mn as Node).queue_free()
+	model_nodes.clear()
 	grabs.clear()
 	remote_grabs.clear()
 	_held.clear()
@@ -262,7 +288,22 @@ func _make_frame_node(f: FrameData) -> FrameNode:
 	return fn
 
 
+func _make_model_node(f: FrameData) -> ModelNode:
+	var mn := ModelNode.new()
+	model_nodes[f.id] = mn
+	mn.measured.connect(_on_model_measured)
+	add_child(mn)
+	mn.visible = false
+	mn.setup(f, models)
+	return mn
+
+
 func _on_frame_added(f: FrameData) -> void:
+	if f.is_model():
+		if not model_nodes.has(f.id):
+			_make_model_node(f)
+		changed.emit()
+		return
 	if not frame_nodes.has(f.id):
 		_make_frame_node(f)
 		ai.render(f.id)
@@ -270,6 +311,11 @@ func _on_frame_added(f: FrameData) -> void:
 
 
 func _on_frame_removed(f: FrameData) -> void:
+	if model_nodes.has(f.id):
+		(model_nodes[f.id] as Node).queue_free()
+		model_nodes.erase(f.id)
+		if model_ctl.selected == f.id:
+			model_ctl.deselect()
 	if frame_nodes.has(f.id):
 		(frame_nodes[f.id] as Node).queue_free()
 		frame_nodes.erase(f.id)
@@ -283,6 +329,12 @@ func _on_frame_removed(f: FrameData) -> void:
 
 
 func _on_frame_changed(f: FrameData) -> void:
+	var mn: ModelNode = model_nodes.get(f.id)
+	if mn != null:
+		mn.data = f
+		mn.refresh()
+		changed.emit()
+		return
 	var fn: FrameNode = frame_nodes.get(f.id)
 	if fn != null:
 		fn.data = f
@@ -650,7 +702,7 @@ func _room_dist(room_id: String) -> float:
 	var o := (rw as Transform3D).origin
 	var d := me.distance_to(Vector2(o.x, o.z))
 	for f in doc.frames_in(room_id):
-		if (f as FrameData).kind == FrameData.CANVAS:
+		if (f as FrameData).kind == FrameData.CANVAS or (f as FrameData).is_model():
 			var p := (rw as Transform3D) * (f as FrameData).xf.origin
 			d = minf(d, me.distance_to(Vector2(p.x, p.z)))
 	return d
@@ -988,6 +1040,44 @@ func _place_frames(dt: float) -> void:
 				fn.set_bend_live(float(g.get("bend_at", f.bend_at)), float(g.get("bend_radius", f.bend_radius)), g.get("pan", f.bend_pan), sc)
 				sc = 1.0
 			fn.transform = Transform3D(xf.basis.orthonormalized().scaled(Vector3.ONE * sc), xf.origin)
+	_place_models(dt)
+
+
+## Every model node from its anchor / room pose (or the hand carrying it), only the models of the room we are in, with their shadows.
+func _place_models(dt: float) -> void:
+	var shadows := models.budget.shadow and bool(App.val("model_shadow"))
+	for fid in model_nodes.keys():
+		var mn: ModelNode = model_nodes[fid]
+		var f := mn.data
+		var show := not f.hidden and (f.room == current_room or room_state == "unanchored") and room_state != "searching"
+		var w: Variant = frame_world(f, dt) if show else null
+		mn.visible = show and w != null
+		if not mn.visible:
+			mn.place_shadow(null, false)
+			continue
+		var xf := w as Transform3D
+		var g: Dictionary = grabs.get(fid, remote_grabs.get(fid, {}))
+		var sc := f.clamp_scale(float(g.get("scale", f.scale)))
+		mn.transform = Transform3D(xf.basis.orthonormalized().scaled(Vector3.ONE * sc), xf.origin)
+		if not grabs.has(fid):                                 # (this headset's own hold sets it: ModelController)
+			mn.set_live_stretch(g.get("stretch"))              # somebody else of the session may be stretching it
+		mn.place_shadow(_floor_under(mn.global_position) if shadows else null, shadows)
+
+
+## The height of the real surface under a point: a table the headset knows (Meta's scene) or the simulated room's, else the room's floor.
+## null when there is neither.
+func _floor_under(p: Vector3) -> Variant:
+	if surface_hit.is_valid():
+		var hit: Dictionary = surface_hit.call(p, Vector3.DOWN)
+		if not hit.is_empty() and absf((hit.normal as Vector3).normalized().y) > 0.85 and (hit.point as Vector3).y < p.y + 0.01:
+			return (hit.point as Vector3).y
+	return floor_y()
+
+
+## The floor's height (world): where the room was made (rooms are made on the floor, under the head), else 0.
+func floor_y() -> float:
+	var rw: Variant = room_world(current_room)
+	return (rw as Transform3D).origin.y if rw != null else 0.0
 
 
 func visible_frames(kind: String = "") -> Array:
@@ -1101,8 +1191,11 @@ func end_grab(f: FrameData) -> void:
 	var xf := g.xf as Transform3D
 	after.xf = (rw as Transform3D).affine_inverse() * xf if rw != null else xf
 	after.xf = after.on_surface(after.xf)
-	after.scale = clampf(float(g.scale), 0.15, 8.0)
-	if f.place_locked and xf.is_equal_approx(g.xf0 as Transform3D) and is_equal_approx(after.scale, f.scale):
+	if f.is_model():
+		after.stretch = g.get("stretch", f.stretch)
+		after.xf = Transform3D(after.xf.basis.orthonormalized(), after.xf.origin)
+	after.scale = f.clamp_scale(float(g.scale))
+	if xf.is_equal_approx(g.xf0 as Transform3D) and is_equal_approx(after.scale, f.scale) and after.stretch.is_equal_approx(f.stretch) and (f.place_locked or f.is_model()):
 		grabs.erase(f.id)                            # its place is locked and it was only held: it keeps its pose (and its anchor)
 		_dirty_overlay(f.id)
 		return
@@ -1599,6 +1692,215 @@ func clear_frame(frame_id: String) -> void:
 	toast.emit("Canvas cleared (undo brings it back)")
 
 
+# ------------------------------------------------------------------------------------------------ 3D models
+
+## The size a model is first given: its real size when its longest side, read as metres, is a plausible size for a thing in a room
+## (InputTuning.MODEL_REAL; glTF files are in metres), else InputTuning.MODEL_FIT along its longest side.
+static func fit_scale(box: AABB) -> float:
+	var l := maxf(box.size.x, maxf(box.size.y, box.size.z))
+	if l <= 0.0:
+		return 1.0
+	if l >= InputTuning.MODEL_REAL.x and l <= InputTuning.MODEL_REAL.y:
+		return 1.0
+	return InputTuning.MODEL_FIT / l
+
+
+## Puts a model of the library down in front of the viewer, facing them, selected. {ok, message, id, name}.
+func place_model(model_id: String) -> Dictionary:
+	if doc == null:
+		return {"ok": false, "message": "No document is open in the headset."}
+	if not models.has(model_id):
+		return {"ok": false, "message": "That model is not on the headset."}
+	if not canvas_edit_ok():
+		return {"ok": false, "message": "This session does not let guests add things."}
+	var e := models.entry(model_id)
+	var box := models.box_of(model_id)                  # (known when it was loaded on this headset before)
+	var props := {"model": model_id}
+	if box.size.length() > 0.0:
+		props["model_box"] = box
+		props["scale"] = fit_scale(box)
+	var size := box.size * float(props.get("scale", 1.0)) if box.size.length() > 0.0 else Vector3.ONE * ModelNode.PLACEHOLDER
+	history.begin_group()
+	var frame := add_frame(FrameData.MODEL, _model_pose(size), Vector2(size.x, size.y), {}, props)
+	if frame == null:
+		history.end_group()
+		return {"ok": false, "message": "The model could not be put down."}
+	var nm := _unique_frame_name(str(e.get("name", "Model")))
+	rename_frame(frame.id, nm)
+	history.end_group()
+	model_ctl.select(frame.id)
+	toast.emit("\"%s\" is in front of you." % nm)
+	changed.emit()
+	return {"ok": true, "message": "Placed", "id": frame.id, "name": nm}
+
+
+## Where a model of `size` (metres) is put: in front of the viewer, facing them (its +Z towards them), clear of them; a tall one stands on
+## the floor, a smaller one at chest height.
+func _model_pose(size: Vector3) -> Transform3D:
+	var basis := Basis(Vector3.UP, _head_yaw())
+	var fwd := Vector3(-head.basis.z.x, 0.0, -head.basis.z.z)
+	fwd = fwd.normalized() if fwd.length() > 0.05 else Vector3.FORWARD
+	var r := size.length() * 0.5
+	var pos := Vector3(head.origin.x, 0.0, head.origin.z) + fwd * maxf(InputTuning.MODEL_FRONT, 0.35 + r * 1.3)
+	var fy := floor_y()
+	pos.y = fy + size.y * 0.5 if size.y > 0.9 else clampf(head.origin.y - 0.25, fy + size.y * 0.5, fy + 1.9)
+	return Transform3D(basis, pos)
+
+
+## A model was loaded and measured for the first time (anywhere): it gets its size (fit_scale) and, now that its size is known, a place that
+## suits it (a tall one on the floor, out of the viewer's way). Not an undo step: it is what putting it down meant.
+func _on_model_measured(frame_id: String, box: AABB) -> void:
+	var f: FrameData = doc.frames.get(frame_id) if doc != null else null
+	if f == null or f.model_measured() or box.size.length() <= 0.0 or not canvas_edit_ok(false):
+		return
+	var upd := f.copy()
+	upd.model_box = box
+	upd.scale = upd.clamp_scale(fit_scale(box))
+	var rw: Variant = room_world(f.room)
+	if rw != null and not f.place_locked:
+		var size := upd.model_size()
+		var w := (rw as Transform3D) * f.xf
+		var c := w.origin
+		var flat := Vector3(c.x - head.origin.x, 0.0, c.z - head.origin.z)
+		var need := 0.35 + size.length() * 0.5 * 1.3
+		if flat.length() < need:
+			var away := flat.normalized() if flat.length() > 0.05 else Vector3(-head.basis.z.x, 0.0, -head.basis.z.z).normalized()
+			c += away * (need - flat.length())
+		if size.y > 0.9:
+			c.y = floor_y() + size.y * 0.5
+		upd.xf = (rw as Transform3D).affine_inverse() * Transform3D(w.basis.orthonormalized(), c)
+	upd.keep_anchor_of(f)
+	doc.replace_frame(upd)
+	print("[models] %s measured: %s" % [f.name, ModelController.size_text(upd.model_size())])
+
+
+func _on_model_ready(model_id: String) -> void:
+	for mn in model_nodes.values():
+		if (mn as ModelNode).data.model == model_id:
+			(mn as ModelNode).on_ready(model_id)
+	changed.emit()
+
+
+func _on_model_failed(model_id: String, message: String) -> void:
+	for mn in model_nodes.values():
+		(mn as ModelNode).on_failed(model_id, message)
+	changed.emit()
+
+
+func _on_models_changed() -> void:
+	for mn in model_nodes.values():
+		var n := mn as ModelNode
+		if n.state != "ready":
+			n.refresh()
+	changed.emit()
+
+
+## A change to a model frame as one undo step (`fn` changes the copy; returns false to do nothing). `moves`: it changes where the model
+## is or which way it faces (refused while its place is locked).
+func _model_op(frame_id: String, moves: bool, fn: Callable) -> bool:
+	var f: FrameData = doc.frames.get(frame_id) if doc != null else null
+	if f == null or not f.is_model() or not canvas_edit_ok():
+		return false
+	if f.locked:
+		toast.emit("\"%s\" is locked." % f.name)
+		return false
+	if moves and place_locked(f):
+		return false
+	var upd := f.copy()
+	if not bool(fn.call(upd)):
+		return false
+	upd.keep_anchor_of(f)
+	history.do(History.op_frame(f, upd))
+	return true
+
+
+## The model comes down (or up) until it stands on the surface under it: a table the headset knows, else the floor.
+func lay_down_model(frame_id: String) -> void:
+	var mn: ModelNode = model_nodes.get(frame_id)
+	var rw: Variant = room_world(current_room)
+	if mn == null or not mn.visible or rw == null:
+		return
+	var low := INF
+	for c in mn.corners():
+		low = minf(low, (c as Vector3).y)
+	var under: Variant = _floor_under(mn.global_position)
+	if under == null:
+		return
+	var dy := float(under) - low
+	if absf(dy) < 0.001:
+		toast.emit("It is standing on the surface already.")
+		return
+	var room := rw as Transform3D
+	var done := _model_op(frame_id, true, func(u: FrameData) -> bool:
+		var w := room * u.xf
+		w.origin.y += dy
+		u.xf = room.affine_inverse() * w
+		return true)
+	if done:
+		toast.emit("Put down on the %s." % ("floor" if absf(float(under) - floor_y()) < 0.02 else "surface under it"))
+
+
+## Upright (turned only about the vertical, the way it faces kept), not stretched, at its first size.
+func reset_model(frame_id: String) -> void:
+	_model_op(frame_id, false, func(u: FrameData) -> bool:
+		var b := u.xf.basis.orthonormalized()
+		var z := Vector3(b.z.x, 0.0, b.z.z)
+		if z.length() < 0.2:
+			z = Vector3(-b.y.x, 0.0, -b.y.z) if b.z.y > 0.0 else Vector3(b.y.x, 0.0, b.y.z)
+		z = z.normalized() if z.length() > 1e-3 else Vector3.BACK
+		u.xf.basis = Basis(Vector3.UP, atan2(z.x, z.z))
+		u.stretch = Vector3.ONE
+		u.scale = u.clamp_scale(fit_scale(u.model_box))
+		return true)
+
+
+## The size the file says, read as metres (glTF files are in metres; an OBJ says nothing about its units).
+func real_size_model(frame_id: String) -> void:
+	var done := _model_op(frame_id, false, func(u: FrameData) -> bool:
+		u.scale = u.clamp_scale(1.0)
+		u.stretch = Vector3.ONE
+		return true)
+	if done:
+		toast.emit("Real size: %s." % ModelController.size_text((doc.frames[frame_id] as FrameData).model_size()))
+
+
+## A copy beside it (to its right as you look at it), selected.
+func duplicate_model(frame_id: String) -> void:
+	var f: FrameData = doc.frames.get(frame_id) if doc != null else null
+	if f == null or not f.is_model() or not canvas_edit_ok():
+		return
+	var c := f.copy()
+	c.id = U.uid("f")
+	c.name = _unique_frame_name(f.name)
+	c.keep_anchor_of(null)
+	c.locked = false
+	c.place_locked = false
+	c.created = int(Time.get_unix_time_from_system())
+	var rw: Variant = room_world(f.room)
+	var right := Vector3(head.basis.x.x, 0.0, head.basis.x.z).normalized()
+	var w: Transform3D = (rw as Transform3D) * f.xf if rw != null else f.xf
+	var size := f.model_size() if f.model_measured() else Vector3.ONE * ModelNode.PLACEHOLDER
+	w.origin += right * (size.length() * 0.6 + 0.05)
+	c.xf = (rw as Transform3D).affine_inverse() * w if rw != null else w
+	if room_guessed(c.room):
+		_moved_unanchored[c.id] = true
+	history.do(History.op_frame_add(c))
+	model_ctl.select(c.id)
+
+
+## Brings a model within reach: its middle in front of you, the way it faces kept (one undo step, a new anchor where it lands).
+func bring_model(frame_id: String) -> void:
+	var rw: Variant = room_world(current_room)
+	if rw == null:
+		return
+	var room := rw as Transform3D
+	_model_op(frame_id, true, func(u: FrameData) -> bool:
+		var size := u.model_size() if u.model_measured() else Vector3.ONE * ModelNode.PLACEHOLDER
+		var pose := _model_pose(size)
+		u.xf = room.affine_inverse() * Transform3D((room * u.xf).basis.orthonormalized(), pose.origin)
+		return true)
+
+
 # ------------------------------------------------------------------------------------------------ canvas placement
 
 ## Start placing a new canvas: a ghost follows the pen / hand ray until it is confirmed (kind: "wall" | "table").
@@ -1843,6 +2145,8 @@ func _text_centre(p: Vector2, size: Vector2, fn: FrameNode) -> Vector2:
 # ------------------------------------------------------------------------------------------------ selection and editing
 
 func select_items(ids: Array, frame_id: String) -> void:
+	if not ids.is_empty() and model_ctl.selected != "":
+		model_ctl.deselect()                         # one selection at a time: items on a canvas, or a model
 	var old := sel_frame
 	selection = ids.duplicate()
 	sel_frame = frame_id if not ids.is_empty() else ""
@@ -2237,11 +2541,17 @@ func tick(pen: PenState, hands: Array, dt: float) -> void:
 	elif session.aligning():
 		session.align_update(pen, hands, dt)          # the nib (or a pinch) is touching the two points the session lines up on: nothing draws or grabs
 	else:
+		# a pointer on a 3D model (or one of its handles) is the model's: the canvases' controllers leave it alone this frame
+		model_ctl.update(hands, dt, pen)
+		hand_ctl.skip = model_ctl.claimed
 		# the front button grabs with the same rules as a pinch (HandController); while it holds something no stroke may start
 		hand_ctl.update(hands, dt, pen)
-		pen_ctl.blocked = hand_ctl.pen_busy()
+		pen_ctl.blocked = hand_ctl.pen_busy() or model_ctl.pen_busy()
 		pen_ctl.update(pen, dt)
 		surface.track(pen, dt)
+	if not (placing.is_empty() and placing_text.is_empty() and not surface.finding() and not surface.aligning() and not session.aligning()):
+		model_ctl.layout()                            # (nothing points at models meanwhile, but the handles follow the model)
+	lighting.follow(head, dt)
 	_update_hover(pen, hands, dt)
 	ink.update(dt)
 	if _save_due >= 0.0:

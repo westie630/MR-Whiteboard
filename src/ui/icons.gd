@@ -311,6 +311,82 @@ static func draw(ci: CanvasItem, id: String, r: Rect2, col: Color) -> void:
 		"pdf_last":
 			ci.draw_line(P.call(0.76, 0.26), P.call(0.76, 0.74), col, w * 1.3, true)
 			ci.draw_polyline(PackedVector2Array([P.call(0.3, 0.24), P.call(0.58, 0.5), P.call(0.3, 0.76)]), col, w * 1.3, true)
+		"model":
+			# a cube seen from a corner: a 3D model
+			var top := PackedVector2Array([P.call(0.5, 0.14), P.call(0.84, 0.32), P.call(0.5, 0.5), P.call(0.16, 0.32), P.call(0.5, 0.14)])
+			ci.draw_colored_polygon(top, Color(col.r, col.g, col.b, 0.35))
+			ci.draw_polyline(top, col, w, true)
+			ci.draw_polyline(PackedVector2Array([P.call(0.16, 0.32), P.call(0.16, 0.7), P.call(0.5, 0.88), P.call(0.84, 0.7), P.call(0.84, 0.32)]), col, w, true)
+			ci.draw_line(P.call(0.5, 0.5), P.call(0.5, 0.88), col, w, true)
+		"move":
+			# four arrows out of the middle
+			for d: Vector2 in [Vector2(0, -1), Vector2(1, 0), Vector2(0, 1), Vector2(-1, 0)]:
+				var tip := Vector2(0.5, 0.5) + d * 0.38
+				var side := Vector2(-d.y, d.x)
+				ci.draw_line(P.call(0.5, 0.5), P.call(tip.x, tip.y), col, w, true)
+				ci.draw_colored_polygon(PackedVector2Array([P.call(tip.x + d.x * 0.04, tip.y + d.y * 0.04), P.call(tip.x - d.x * 0.12 + side.x * 0.09, tip.y - d.y * 0.12 + side.y * 0.09),
+					P.call(tip.x - d.x * 0.12 - side.x * 0.09, tip.y - d.y * 0.12 - side.y * 0.09)]), col)
+		"rotate":
+			# most of a circle, with an arrow head where it ends
+			var ring := PackedVector2Array()
+			for k in range(0, 25):
+				var a := PI * (-0.35 + 1.6 * float(k) / 24.0)
+				ring.append(P.call(0.5 + cos(a) * 0.32, 0.52 + sin(a) * 0.32))
+			ci.draw_polyline(ring, col, w * 1.1, true)
+			var end: Vector2 = ring[0]
+			ci.draw_colored_polygon(PackedVector2Array([end + Vector2(-s * 0.13, -s * 0.06), end + Vector2(s * 0.1, -s * 0.12), end + Vector2(s * 0.04, s * 0.13)]), col)
+		"scale":
+			# a small box in the corner of a bigger one, an arrow from one to the other
+			ci.draw_rect(Rect2(P.call(0.14, 0.14), Vector2(0.72, 0.72) * s), Color(col.r, col.g, col.b, 0.55), false, w * 0.8)
+			ci.draw_rect(Rect2(P.call(0.14, 0.56), Vector2(0.3, 0.3) * s), col, true)
+			ci.draw_line(P.call(0.5, 0.5), P.call(0.8, 0.2), col, w, true)
+			ci.draw_colored_polygon(PackedVector2Array([P.call(0.84, 0.16), P.call(0.62, 0.2), P.call(0.8, 0.38)]), col)
+		"magnet":
+			# a horseshoe magnet: Snap
+			var arc := PackedVector2Array()
+			for k in range(0, 17):
+				var a2 := PI * float(k) / 16.0
+				arc.append(P.call(0.5 - cos(a2) * 0.26, 0.5 + sin(a2) * 0.26))
+			ci.draw_polyline(PackedVector2Array([P.call(0.24, 0.18)]) + arc + PackedVector2Array([P.call(0.76, 0.18)]), col, w * 2.4, true)
+			ci.draw_line(P.call(0.24, 0.16), P.call(0.24, 0.3), Color(col.r, col.g, col.b, 0.45), w * 2.6)
+			ci.draw_line(P.call(0.76, 0.16), P.call(0.76, 0.3), Color(col.r, col.g, col.b, 0.45), w * 2.6)
+		"axes":
+			# three axes out of a corner: x right, y up, z towards you
+			var o2: Vector2 = P.call(0.36, 0.64)
+			for pair in [[P.call(0.86, 0.64), 1.0], [P.call(0.36, 0.14), 1.0], [P.call(0.14, 0.86), 0.6]]:
+				var to: Vector2 = pair[0]
+				var c2 := Color(col.r, col.g, col.b, float(pair[1]))
+				ci.draw_line(o2, to, c2, w, true)
+				var dd := (to - o2).normalized()
+				var sd := Vector2(-dd.y, dd.x)
+				ci.draw_colored_polygon(PackedVector2Array([to + dd * s * 0.04, to - dd * s * 0.12 + sd * s * 0.07, to - dd * s * 0.12 - sd * s * 0.07]), c2)
+		"lay_down":
+			# an arrow down onto a surface
+			ci.draw_line(P.call(0.5, 0.14), P.call(0.5, 0.56), col, w * 1.2, true)
+			ci.draw_colored_polygon(PackedVector2Array([P.call(0.5, 0.68), P.call(0.34, 0.5), P.call(0.66, 0.5)]), col)
+			ci.draw_line(P.call(0.14, 0.82), P.call(0.86, 0.82), col, w * 1.4, true)
+		"ruler":
+			# a ruler: real size
+			ci.draw_rect(Rect2(P.call(0.1, 0.36), Vector2(0.8, 0.28) * s), col, false, w)
+			for k in 7:
+				var x := 0.18 + float(k) * 0.107
+				ci.draw_line(P.call(x, 0.36), P.call(x, 0.36 + (0.14 if k % 2 == 0 else 0.08)), col, w * 0.8, true)
+		"reset":
+			# a circle turned back to where it started, round a dot
+			var back := PackedVector2Array()
+			for k in range(0, 21):
+				var a4 := PI * (0.15 + 1.5 * float(k) / 20.0)
+				back.append(P.call(0.5 + cos(a4) * 0.3, 0.5 - sin(a4) * 0.3))
+			ci.draw_polyline(back, col, w * 1.1, true)
+			var st: Vector2 = back[0]
+			ci.draw_colored_polygon(PackedVector2Array([st + Vector2(s * 0.14, s * 0.02), st + Vector2(-s * 0.06, s * 0.14), st + Vector2(-s * 0.06, -s * 0.1)]), col)
+			ci.draw_circle(P.call(0.5, 0.5), s * 0.07, col)
+		"light":
+			# a sun: the light on the models
+			ci.draw_circle(P.call(0.5, 0.5), s * 0.16, col)
+			for k in 8:
+				var a5 := TAU * float(k) / 8.0
+				ci.draw_line(P.call(0.5 + cos(a5) * 0.26, 0.5 + sin(a5) * 0.26), P.call(0.5 + cos(a5) * 0.38, 0.5 + sin(a5) * 0.38), col, w, true)
 		_:
 			if Shapes.STENCILS.any(func(st): return st.id == id):
 				_stencil(ci, id, o, s, col, w)

@@ -31,7 +31,7 @@ signal said(text: String)                  # a line for the toast
 
 enum Role { NONE, HOST, CLIENT }
 
-const PROTOCOL := 2                        # (2: the file channel for PDFs)
+const PROTOCOL := 3                        # (2: the file channel for PDFs; 3: 3D models, their files on it too)
 const PLACES: Array[String] = ["together", "apart"]
 const HOST_ID := 1                         # the host's id in every roster
 const PORT := 8190
@@ -66,6 +66,7 @@ var sync := DocSync.new()
 var avatars: PeerAvatars
 var live_out := LiveOut.new()              # what this headset is in the middle of doing, for the others
 var pdf_share := PdfShare.new()            # PDFs: the owner gives a file out to a guest whose canvas shows it
+var model_share := ModelShare.new()        # 3D models: the same, for a guest whose room shows a model it does not have
 var previews: LivePreview                  # what the others are in the middle of doing
 
 var role := Role.NONE
@@ -150,6 +151,7 @@ func _init() -> void:
 	net.connected.connect(_on_connected)
 	net.failed.connect(_on_failed)
 	pdf_share.session = self
+	model_share.session = self
 
 
 func bind(anchors: AnchorService) -> void:
@@ -163,6 +165,7 @@ func _ready() -> void:
 	board.add_child.call_deferred(avatars)          # the board is still setting up its children
 	live_out.board = board
 	board.pdfs.wanted.connect(_on_pdf_wanted)
+	board.models.wanted.connect(_on_model_wanted)
 	previews = LivePreview.new()
 	previews.session = self
 	board.add_child.call_deferred(previews)
@@ -468,6 +471,8 @@ func leave(quiet: bool = false, restore: bool = true) -> void:
 	sync.detach()
 	pdf_share.reset()
 	board.pdfs.trim_cached(PdfShare.MAX_STORE_LOG)
+	model_share.reset()
+	board.models.trim_cached(ModelShare.MAX_STORE_LOG)
 	_clear_resume()                                   # left (or turned away, or the session ended): a restart does not join it again
 	var had := client_doc
 	role = Role.NONE
@@ -505,6 +510,12 @@ func leave(quiet: bool = false, restore: bool = true) -> void:
 func _on_pdf_wanted(pdf_id: String) -> void:
 	if role == Role.CLIENT and phase == "live":
 		pdf_share.client_want(pdf_id)
+
+
+## A frame shows a 3D model this headset does not have: a guest asks the owner for it.
+func _on_model_wanted(model_id: String) -> void:
+	if role == Role.CLIENT and phase == "live":
+		model_share.client_want(model_id)
 
 
 func _on_connected() -> void:
@@ -597,6 +608,7 @@ func _host_update(delta: float) -> void:
 		_reshare()
 	_flush_host()
 	pdf_share.host_tick(delta)
+	model_share.host_tick(delta)
 	_space_t += delta
 	if _space_t >= SPACE_S:
 		_space_t = 0.0
@@ -677,6 +689,7 @@ func _on_peer_left(id: int) -> void:
 
 func _remove_peer(id: int) -> void:
 	pdf_share.drop_peer(id)
+	model_share.drop_peer(id)
 	peers.erase(id)
 	presence.erase(id)
 	if previews != null:
@@ -709,6 +722,10 @@ func _host_msg(from: int, msg: Dictionary) -> void:
 			pdf_share.host_request(from, msg)
 		"pdf_stop":
 			pdf_share.host_stop(from, msg)
+		"mdl?":
+			model_share.host_request(from, msg)
+		"mdl_stop":
+			model_share.host_stop(from, msg)
 		"ready":
 			_send_snapshot(from)
 			_send_space(from)
@@ -1029,6 +1046,8 @@ func _client_msg(msg: Dictionary) -> void:
 			_on_space(msg)
 		"pdf", "pdfc", "pdf_no":
 			pdf_share.client_msg(msg)
+		"mdl", "mdlc", "mdl_no":
+			model_share.client_msg(msg)
 		"roster":
 			_on_roster(msg)
 		"ops":
@@ -1088,11 +1107,13 @@ func _client_open(d: Dictionary) -> void:
 	live_out.reset()
 	phase = "live"
 	pdf_share.reset()
+	model_share.reset()
 	opening = true
 	board.open(doc)
 	opening = false
 	previews.clear_all()
 	pdf_share.client_rescan()
+	model_share.client_rescan()
 	say("You joined \"%s\"." % session_title)
 	if _wanted_here:
 		_wanted_here = false

@@ -10,6 +10,7 @@ extends Node
 ##   GET  /all  /all.zip      the whole document                       /zip?ids=a,b,c     chosen canvases as a zip
 ##   GET  /svg/<canvas>.svg   the SVG itself (?dl=1 downloads it; ?bg=white|dark|none and ?grid=1 set how it looks)
 ##   GET  /pdf/<id>.pdf       a PDF of the headset's library (?dl=1 downloads it, otherwise the browser shows it)
+##   GET  /model/<id>         a 3D model of the headset's library, as it was sent (.glb, .gltf, .obj, or a .zip of a model and its files)
 ##   GET  /files/<name>       a file saved on the headset by the app's Export buttons
 ##   GET  /live               the live view: every canvas of the open document, redrawn as the headset changes it (read-only, many viewers)
 ##   GET  /api/live?since=    what the live view polls: the document's canvases with a version each, only when something changed
@@ -18,6 +19,11 @@ extends Node
 ##   POST /api/upload?name=   the raw .svg          import it as a new canvas, as shapes, strokes and text that can be edited
 ##   POST /api/pdf?name=      the raw .pdf          take it into the headset's PDF library and put it in front of the viewer (?show=0 only stores it)
 ##   POST /api/pdf/show       {id}                  put a PDF of the library in front of the viewer     /api/pdf/delete {ids}   /api/pdf/rename {id, name}
+##   POST /api/model?name=    the raw .glb / .gltf / .obj / .zip   take a 3D model into the headset's library and put it in front of the viewer
+##   POST /api/model/bundle?name=  several files of one model (an .obj with its .mtl and pictures, a .gltf with its .bin), packed by the
+##                            page: "MRWB1" and a newline, then per file a u16 name length, the name (UTF-8), a u32 size and the bytes
+##                            (little-endian)
+##   POST /api/model/show     {id}                  put a model of the library in front of the viewer   /api/model/delete {ids}   /api/model/rename {id, name}
 ##   POST /api/files/delete   {names: [...]}        delete saved files
 ##   GET  /ai                 the AI assistant: API keys, models and thinking levels, asking about a canvas, its suggestions
 ##   GET  /api/ai/state       what the AI page shows (keys only as their last four characters)
@@ -46,6 +52,7 @@ const LOCK_MS := 60 * 1000
 const LIVE_CACHE := 96                    # pictures kept for the live view
 const FILE_EXTS := ["svg", "glb", "mrw"]
 const FILE_TYPES := {"svg": "image/svg+xml", "glb": "model/gltf-binary", "mrw": "application/json"}
+const BUNDLE_MAGIC := "MRWB1\n"          # the start of several files of one model packed by the page (/api/model/bundle)
 
 var doc_source := Callable()              # -> Document or null: what is served
 var room_source := Callable()             # -> String: the room the viewer is in now (marked "here now")
@@ -58,6 +65,8 @@ var ai_api := Callable()                  # (command, data) -> Dictionary: the A
 var keys_api := Callable()                # (command, data) -> Dictionary: the API keys page (ApiKeys.api)
 var pdf_library: PdfLibrary               # the PDFs of the headset (null: no PDF section)
 var show_pdf := Callable()                # (pdf id) -> {ok, message, id, name}: puts one in front of the viewer
+var model_library: ModelLibrary           # the 3D models of the headset (null: no model section)
+var show_model := Callable()              # (model id) -> {ok, message, id, name}: puts one in front of the viewer
 var require_pin := true
 var files_dir := ""                       # where saved exports are listed from ("" = the app's export folder)
 var pin := ""                             # the access code while running
@@ -232,6 +241,8 @@ func _serve(c: Dictionary, delta: float) -> bool:
 func _body_limit(head: String) -> int:
 	if pdf_library != null and head.begins_with("POST /api/pdf"):
 		return maxi(pdf_library.budget.max_file_mb * 1048576, MAX_BODY)
+	if model_library != null and head.begins_with("POST /api/model"):
+		return maxi(model_library.budget.max_file_mb * 1048576 + 65536, MAX_BODY)
 	return MAX_BODY
 
 
@@ -409,7 +420,7 @@ func route(target: String) -> Dictionary:
 		bg = "white"
 	var opts := {"background": bg, "grid": query.get("grid", "") == "1"}
 	if path == "/":
-		return _html(200, WebPages.dashboard(_snapshot(doc), _export_files(), _pdf_list()))
+		return _html(200, WebPages.dashboard(_snapshot(doc), _export_files(), _pdf_list(), _model_list()))
 	if path == "/api/rev":
 		return _json(200, {"ok": true})
 	if path == "/live":
@@ -464,6 +475,8 @@ func route(target: String) -> Dictionary:
 		return _file(path.substr(7))
 	if path.begins_with("/pdf/") and path.ends_with(".pdf"):
 		return _pdf_file(path.substr(5).trim_suffix(".pdf"), query.get("dl", "") == "1")
+	if path.begins_with("/model/"):
+		return _model_file(path.substr(7).get_basename())
 	return _html(404, WebPages.message("Not found", "There is nothing at this address."))
 
 
@@ -573,6 +586,8 @@ func _rev(doc: Document) -> String:
 	var pdf_stamp := 0
 	for e in _pdf_list():
 		pdf_stamp += int(e.added) + int(e.pages)
+	for e in _model_list():
+		pdf_stamp += int(e.added) + str(e.name).length()
 	return "%d.%d.%d.%d.%d.%d" % [doc.modified, doc.frames.size(), doc.items.size(), files.size(), newest, pdf_stamp]
 
 
@@ -834,6 +849,68 @@ func _pdf_file(id: String, download: bool) -> Dictionary:
 	return res
 
 
+# ------------------------------------------------------------------------------------------------ 3D models
+
+func _model_list() -> Array:
+	return model_library.list() if model_library != null else []
+
+
+func _model_file(id: String) -> Dictionary:
+	if model_library == null or not model_library.has(id):
+		return _html(404, WebPages.message("Not found", "That model is not on the headset any more."))
+	var types := {"glb": "model/gltf-binary", "gltf": "model/gltf+json", "obj": "model/obj", "zip": "application/zip"}
+	var ext := str(model_library.entry(id).get("ext", "glb"))
+	return {"status": 200, "type": str(types.get(ext, "application/octet-stream")), "body": model_library.file_bytes(id), "download": model_library.file_name(id)}
+
+
+## The files of a model as the page packs them (see /api/model/bundle): name -> bytes, or {} when it is not that.
+static func unpack_bundle(body: PackedByteArray) -> Dictionary:
+	var magic := BUNDLE_MAGIC.to_utf8_buffer()
+	if body.size() < magic.size() or body.slice(0, magic.size()) != magic:
+		return {}
+	var out := {}
+	var i := magic.size()
+	while i < body.size():
+		if i + 2 > body.size():
+			return {}
+		var nl := body.decode_u16(i)
+		i += 2
+		if nl == 0 or i + nl + 4 > body.size():
+			return {}
+		var name := body.slice(i, i + nl).get_string_from_utf8().replace(char(92), "/")
+		i += nl
+		var size := body.decode_u32(i)
+		i += 4
+		if i + size > body.size() or out.size() >= 400:
+			return {}
+		out[name] = body.slice(i, i + size)
+		i += size
+	return out
+
+
+## Takes a model in (one file, or the files of one) and, unless `show` is false, puts it in front of the viewer.
+func _add_model(files: Dictionary, name: String, show: bool, doc: Document) -> Dictionary:
+	var added: Dictionary
+	if files.size() == 1:
+		var only: String = files.keys()[0]
+		added = model_library.add(files[only], only if name == "" else name)
+	else:
+		added = model_library.add_files(files, name)
+	if not bool(added.ok):
+		return _json(422, added, doc)
+	var notes: PackedStringArray = added.get("notes", PackedStringArray())
+	var msg := "%s %s" % [str(added.name), "added" if not bool(added.dup) else "(it was here already)"]
+	if show and show_model.is_valid():
+		var shown: Dictionary = show_model.call(str(added.id))
+		added["shown"] = bool(shown.get("ok", false))
+		msg += ": it is in front of you." if bool(added.shown) else " (not put in front of you: %s)" % str(shown.get("message", ""))
+	if not notes.is_empty():
+		msg += " Note: %s." % "; ".join(notes)
+	added["message"] = msg
+	added["notes"] = Array(notes)
+	return _json(200, added, doc)
+
+
 # ------------------------------------------------------------------------------------------------ changes (POST)
 
 func _api(path: String, qs: String, body: PackedByteArray) -> Dictionary:
@@ -915,6 +992,37 @@ func _api(path: String, qs: String, body: PackedByteArray) -> Dictionary:
 				return _json(400, {"ok": false, "message": "That PDF cannot be renamed."}, doc)
 			pdf_library.rename(str(dr.id), str(dr.name))
 			return _json(200, {"ok": true, "name": str(pdf_library.entry(str(dr.id)).name)}, doc)
+		"/api/model", "/api/model/bundle":
+			if model_library == null:
+				return _json(501, {"ok": false, "message": "3D models are not available."})
+			if body.is_empty():
+				return _json(400, {"ok": false, "message": "The file is empty."})
+			var mq := _query(qs)
+			var mname := str(mq.get("name", "")).get_file().left(120)
+			var files := unpack_bundle(body) if path == "/api/model/bundle" else {(mname if mname != "" else "model.glb"): body}
+			if files.is_empty():
+				return _json(400, {"ok": false, "message": "The files did not arrive whole: try again."})
+			return _add_model(files, mname, str(mq.get("show", "1")) != "0", doc)
+		"/api/model/show":
+			if model_library == null or not show_model.is_valid():
+				return _json(501, {"ok": false, "message": "3D models are not available."})
+			var ms: Dictionary = show_model.call(str(_json_body(body).get("id", "")))
+			return _json(200 if bool(ms.get("ok", false)) else 422, ms, doc)
+		"/api/model/delete":
+			var md := _json_body(body)
+			var gone_models := 0
+			for mid in (md.get("ids", []) as Array).slice(0, 100):
+				if model_library != null and model_library.remove(str(mid)):
+					gone_models += 1
+			if gone_models == 0:
+				return _json(404, {"ok": false, "message": "Those models are already gone."}, doc)
+			return _json(200, {"ok": true, "message": "Deleted %s" % WebPages.plural(gone_models, "model")}, doc)
+		"/api/model/rename":
+			var mr := _json_body(body)
+			if model_library == null or not model_library.has(str(mr.get("id", ""))) or str(mr.get("name", "")).strip_edges() == "":
+				return _json(400, {"ok": false, "message": "That model cannot be renamed."}, doc)
+			model_library.rename(str(mr.id), str(mr.name))
+			return _json(200, {"ok": true, "name": str(model_library.entry(str(mr.id)).name)}, doc)
 		"/api/files/delete":
 			var data3 := _json_body(body)
 			var gone := 0

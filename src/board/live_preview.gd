@@ -214,7 +214,7 @@ func _on_erase(board: Board, key: String, m: Dictionary) -> void:
 
 func _on_grab(board: Board, from: int, m: Dictionary) -> void:
 	var fid := str(m.get("f", "")).left(MAX_ID_LEN)
-	if not board.frame_nodes.has(fid):
+	if not board.frame_nodes.has(fid) and not board.model_nodes.has(fid):
 		return
 	if bool(m.get("end", false)):
 		var g: Dictionary = _grabs.get(fid, {})
@@ -227,11 +227,16 @@ func _on_grab(board: Board, from: int, m: Dictionary) -> void:
 		return
 	if board.grabs.has(fid):
 		return                                       # this headset is carrying it itself
-	var sc := clampf(float(m.get("s", 1.0)), 0.15, 8.0)
 	var had: Dictionary = _grabs.get(fid, {})
 	var frame_then: FrameData = had.frame if not had.is_empty() else board.doc.frames.get(fid)
+	if frame_then == null:
+		return
+	var sc := frame_then.clamp_scale(float(m.get("s", 1.0)))
 	_grabs[fid] = {"from": from, "seen": _now, "ended": false, "end_t": 0.0, "frame": frame_then}
 	board.remote_grabs[fid] = {"xf": xf, "scale": sc}
+	var st: Variant = m.get("st")
+	if frame_then.is_model() and st is Vector3 and (st as Vector3).is_finite():       # a 3D model being stretched, live
+		board.remote_grabs[fid]["stretch"] = (st as Vector3).clamp(Vector3.ONE * FrameData.STRETCH.x, Vector3.ONE * FrameData.STRETCH.y)
 	var pan: Variant = m.get("p")
 	var ba := float(m.get("ba", NAN))
 	var br := float(m.get("br", NAN))

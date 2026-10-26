@@ -3,7 +3,7 @@ extends RefCounted
 ## The stylesheet, the script and the icons of the web pages the app serves (see ExportServer / WebPages). Kept as strings so they
 ## travel inside the app without any extra files in the export.
 
-const VERSION := 9                      # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
+const VERSION := 10                     # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
 
 const LOGO := r"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#g)"/><path d="M14 40c6-14 11-14 14-4s8 10 12-4 6-8 10-2" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="50" cy="19" r="4" fill="#fff" opacity=".85"/></svg>"""
 
@@ -18,6 +18,7 @@ const SPRITE := r"""<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0"
 <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></symbol>
 <symbol id="i-logout" viewBox="0 0 24 24"><path d="M10 4H5v16h5"/><path d="m16 8 4 4-4 4"/><path d="M20 12H9"/></symbol>
 <symbol id="i-file" viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/></symbol>
+<symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5"/><path d="M12 12v9"/></symbol>
 <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></symbol>
 <symbol id="i-room" viewBox="0 0 24 24"><path d="m4 11 8-7 8 7"/><path d="M6 10v10h12V10"/></symbol>
 <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5Z"/></symbol>
@@ -451,26 +452,78 @@ const JS := r"""
         api('/api/pdf/rename', { id: rid, name: v }).then(function () { afterChange('Renamed'); }).catch(function (err) { toast(err.message, true); });
       });
     }
+    else if (act === 'model-show') {
+      api('/api/model/show', { id: b.getAttribute('data-id') }).then(function () { toast('It is in front of you in the headset'); }).catch(function (err) { toast(err.message, true); });
+    }
+    else if (act === 'model-delete') {
+      var mid = b.getAttribute('data-id'), mname = b.getAttribute('data-name');
+      dialog({ title: 'Delete "' + mname + '"?', text: 'The model is removed from the headset. Where it stands in a room, a box says it is missing until it is uploaded again.', ok: 'Delete', danger: true }).then(function (yes) {
+        if (!yes) return;
+        api('/api/model/delete', { ids: [mid] }).then(function (j) { afterChange(j.message || 'Deleted'); }).catch(function (err) { toast(err.message, true); });
+      });
+    }
+    else if (act === 'model-rename') {
+      var mrid = b.getAttribute('data-id'), mrcur = b.getAttribute('data-name');
+      dialog({ title: 'Rename model', input: true, value: mrcur, ok: 'Save' }).then(function (v) {
+        if (!v || v === mrcur) return;
+        api('/api/model/rename', { id: mrid, name: v }).then(function () { afterChange('Renamed'); }).catch(function (err) { toast(err.message, true); });
+      });
+    }
     else if (act === 'refresh') { refresh(); }
   });
 
   // ---- upload
   var drop = $('#drop'), input = $('#file');
+  // a 3D model can be several files (an .obj with its .mtl and pictures, a .gltf with its .bin): those dropped together go as one
+  var MODEL_MAIN = /\.(glb|gltf|obj|zip)$/i, MODEL_PART = /\.(mtl|bin|png|jpe?g|webp|tga|bmp)$/i;
+  function packBundle(group) {
+    return Promise.all(group.map(function (f) { return f.arrayBuffer(); })).then(function (bufs) {
+      var enc = new TextEncoder(), head = enc.encode('MRWB1\n'), names = group.map(function (f) { return enc.encode(f.name); });
+      var total = head.length;
+      bufs.forEach(function (b, i) { total += 2 + names[i].length + 4 + b.byteLength; });
+      var out = new Uint8Array(total), dv = new DataView(out.buffer), at = 0;
+      out.set(head, 0); at = head.length;
+      bufs.forEach(function (b, i) {
+        dv.setUint16(at, names[i].length, true); at += 2;
+        out.set(names[i], at); at += names[i].length;
+        dv.setUint32(at, b.byteLength, true); at += 4;
+        out.set(new Uint8Array(b), at); at += b.byteLength;
+      });
+      return out;
+    });
+  }
+  function groupModels(files) {
+    var parts = files.filter(function (f) { return MODEL_PART.test(f.name); });
+    var out = [];
+    files.forEach(function (f) {
+      if (MODEL_PART.test(f.name)) return;
+      if (/\.(obj|gltf)$/i.test(f.name) && parts.length) out.push({ main: f, parts: parts });
+      else out.push({ main: f, parts: [] });
+    });
+    if (parts.length && !files.some(function (f) { return /\.(obj|gltf)$/i.test(f.name); }))
+      parts.forEach(function (f) { out.push({ main: f, parts: [], orphan: true }); });
+    return out;
+  }
   function uploadAll(files) {
     var list = $('#uploads'), ok = 0, pdfs = 0, chain = Promise.resolve();
-    files = Array.prototype.slice.call(files);
-    files.forEach(function (f) {
+    files = groupModels(Array.prototype.slice.call(files));
+    files.forEach(function (g) {
+      var f = g.main;
       var row = document.createElement('div');
       row.className = 'up';
       var isSvg = /\.svg$/i.test(f.name) || f.type === 'image/svg+xml';
       var isPdf = /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
-      var okType = isSvg || isPdf;
-      row.innerHTML = (okType ? '<div class="spin"></div>' : icon('x')) + '<span class="nm">' + esc(f.name) + '</span><span class="msg">' + (okType ? (isPdf ? 'Sending to the headset...' : 'Importing...') : 'Only .pdf and .svg files can be added') + '</span>';
+      var isModel = !g.orphan && MODEL_MAIN.test(f.name);
+      var okType = isSvg || isPdf || isModel;
+      var label = f.name + (g.parts.length ? ' (+ ' + g.parts.length + (g.parts.length === 1 ? ' file)' : ' files)') : '');
+      var why = g.orphan ? 'This is part of a 3D model: drop it together with the .obj or .gltf file (or all of them in one .zip)' : 'Only .pdf, .svg and 3D models (.glb, .gltf, .obj, .zip) can be added';
+      row.innerHTML = (okType ? '<div class="spin"></div>' : icon('x')) + '<span class="nm">' + esc(label) + '</span><span class="msg">' + (okType ? (isPdf || isModel ? 'Sending to the headset...' : 'Importing...') : why) + '</span>';
       list.appendChild(row);
       if (!okType) { row.classList.add('err'); return; }
       chain = chain.then(function () {
-        var url = isPdf ? '/api/pdf?name=' + encodeURIComponent(f.name) : '/api/upload?name=' + encodeURIComponent(f.name);
-        return fetch(url, { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'Content-Type': isPdf ? 'application/pdf' : 'image/svg+xml' }, HEAD), body: f })
+        var url = isPdf ? '/api/pdf?name=' + encodeURIComponent(f.name) : (isModel ? (g.parts.length ? '/api/model/bundle?name=' : '/api/model?name=') + encodeURIComponent(f.name) : '/api/upload?name=' + encodeURIComponent(f.name));
+        var body = isModel && g.parts.length ? packBundle([f].concat(g.parts)) : Promise.resolve(f);
+        return body.then(function (data) { return fetch(url, { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'Content-Type': isPdf ? 'application/pdf' : (isModel ? 'application/octet-stream' : 'image/svg+xml') }, HEAD), body: data }); })
           .then(function (r) {
             if (r.status === 401) { location.href = '/login'; throw new Error('Signed out'); }
             return r.json().catch(function () { return { ok: false, message: 'The headset sent an unexpected answer.' }; });
@@ -480,7 +533,7 @@ const JS := r"""
             row.className = 'up ' + (j.ok ? 'ok' : 'err');
             row.firstChild.outerHTML = icon(j.ok ? 'check' : 'x');
             $('.msg', row).textContent = j.message || (j.ok ? 'Done' : 'Failed');
-            if (j.ok) { ok++; if (isPdf) pdfs++; }
+            if (j.ok) { ok++; if (isPdf || isModel) pdfs++; }
           })
           .catch(function (e) { row.className = 'up err'; row.firstChild.outerHTML = icon('x'); $('.msg', row).textContent = e.message; });
       });

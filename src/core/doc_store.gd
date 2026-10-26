@@ -47,7 +47,8 @@ static func _summary(p: String) -> Dictionary:
 		return {}
 	var d: Dictionary = parsed
 	return {"id": str(d.get("id", "")), "name": str(d.get("name", "Untitled")), "modified": int(d.get("modified", 0)),
-		"frames": (d.get("frames", []) as Array).size(), "items": (d.get("items", []) as Array).size(),
+		"frames": (d.get("frames", []) as Array).filter(func(f): return f is Dictionary and str(f.get("kind", "")) != FrameData.MODEL).size(),
+		"items": (d.get("items", []) as Array).size(),
 		"rooms": (d.get("rooms", []) as Array).size(), "path": p}
 
 

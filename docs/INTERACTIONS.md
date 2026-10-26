@@ -400,6 +400,33 @@ with its drawings of every page).
 
 ---
 
+### 10.4 A 3D model
+
+A model ([model_controller.gd](../src/board/model_controller.gd), [model_gizmo.gd](../src/models/model_gizmo.gd)) stands in the room: a frame of kind
+`model` whose origin is the middle of the model's bounds. It is put down in front of you (`MODEL_FRONT` 0.9 m, further for a big one), facing you,
+at chest height (a model taller than 0.9 m stands on the floor). Its size: the size the file says, read as metres, when its longest side is
+between 5 cm and 2 m (`MODEL_REAL`; glTF is in metres), else 40 cm along its longest side (`MODEL_FIT`). The first headset that loads it measures
+it and sets that; until then a 30 cm box stands in.
+
+The same verbs as on canvases. A pointer is the model's when it touches it (the pinch point or the nib within `MODEL_TOUCH` 3 cm of its box) or when
+the model (or a handle) is nearer along its ray than any canvas; a canvas touched directly keeps the pointer. The HandController then leaves that
+pointer alone (`HandController.skip`) and no stroke starts under the stylus.
+
+| | |
+|---|---|
+| Tap (pinch or front button, let go within `MOVE_START`) | selects it: its handles and the model bar appear. A pinch on nothing at all, Esc, or the bar's close button lets go |
+| Pinch the model and move | carries it (selected or not): 1:1 touching, geared by distance when pointing, like a canvas. No turning with one hand |
+| Second pointer on it | the two turn it in any direction (the line between them) and resize it (their spread, about the point between them) |
+| Move handles | arrow: along that axis (the point of the axis nearest the ray); square: in that plane (where the ray meets it); ball: freely |
+| Rotate handles | ring: about its axis (the angle round the middle where the ray meets the ring's plane; a ray almost in that plane uses its point nearest the middle) |
+| Scale handles | corner cube: evenly, about the middle (along the diagonal); axis cube: stretched along the model's own axis (`stretch`) |
+| Bar | Move / Rotate / Scale, Snap (`SNAP_MOVE` 1 cm, `SNAP_TURN` 15°, `SNAP_SIZE` 1 cm), Room axes (move and turn along the room: up is up), Put down (onto the table or floor under it), Real size, Reset (upright, not stretched, its first size), Duplicate, lock its place, delete, close |
+| Locks | `place_locked`: no carrying, moving or turning, still resized; `locked`: takes no pointer |
+
+Handles are drawn over everything and keep their size on the eye: `GIZMO_SIZE` 0.02 per metre from the head, 5 mm to 6 cm; a ray within
+1.9 handle sizes, a touch within 2.6 sizes + 12 mm, takes one. Every hold is one undo step through `Board.grabs` (the others see it move,
+SHARING.md §4). On the PC: left or Shift+left click on a model or a handle, middle button carries it, the wheel scales it, Q / E turn it.
+
 ## 11. Feedback: what you see, hear and feel
 
 ### 11.1 Cursors, [hand_cursor.gd](../src/xr/hand_cursor.gd)
@@ -526,6 +553,7 @@ All in [input_tuning.gd](../src/core/input_tuning.gd) (`InputTuning`). The scrip
 | Bringing the menu | `SUMMON_HOLD_S` 0.6 s · `PALM_SUMMON_DIST` 0.7 m · `PALM_REARM_S` 2 s · `SUMMON_AHEAD` 0.55 · `SUMMON_RIGHT` 0 · `SUMMON_UP` -0.3 · `SUMMON_STYLUS_CANVAS` 0.14 m |
 | Pen on the board | `CAPTURE` 0.12 m · `SLACK` 0.6 m · `HOVER_RANGE` 0.28 m · `MIN_STEP` 0.9 mm · `HOLD_MOVE` 4 mm · `UNSNAP_MOVE` 12 mm (×2 in use) · `ERASE_R` 14 mm · `PICK_R` 13 mm · `HANDLE_HIT` 34 mm (outside the body; inside: `HANDLE_INSIDE` 12 mm · `HANDLE_INSIDE_MIN` 4 mm · `HANDLE_BODY_FRAC` 0.22) · `BTN_HIT` 28 mm · `LASSO_INSIDE` 0.6 · `SHAPE_TAP` 25 mm · `MIN_LINE` 2 cm · `hold_seconds` setting 0.55 s |
 | Grabbing | `DIRECT_NEAR` 0.12 m · `DIRECT_STAY` 1.3 · `DIRECT_REACH` 1.6 · `REACH` 2.6 · `BAR_DROP` 7 cm · `BAR_HIT_W` 20 cm · `BAR_HIT_H` 7 cm · `CORNER_HIT` 7.5 cm · `PLANE_SLACK` 20 cm · `MOVE_START` 2 cm · `MAX_GAIN` 6 · `MIN_GAIN_DIST` 0.25 m · `MIN_CANVAS` 0.25 × 0.18 m · `TWO_HAND_MIN` 4 cm · `TWO_HAND_RATIO` 0.2 to 6 · `CANVAS_SCALE` 0.15 to 8 |
+| 3D models | `MODEL_TOUCH` 3 cm · `MODEL_RAY_GROW` 1 cm · `GIZMO_SIZE` 0.02 / m (`GIZMO_SIZE_MIN` 5 mm, `GIZMO_SIZE_MAX` 6 cm) · `SNAP_MOVE` 1 cm · `SNAP_TURN` 15° · `SNAP_SIZE` 1 cm · `MODEL_FRONT` 0.9 m · `MODEL_FIT` 0.4 m · `MODEL_REAL` 0.05 to 2 (see 10.4) |
 | Cursor | `CORNER_R` 14 mm · `BAR_LEN` 0.30 m · `BAR_R` 7.5 mm · `RING_R` 11 mm at 0.7 m, clamped `RING_MIN` 6 mm to `RING_MAX` 50 mm · `COL_*` colours (in `HandCursor`) |
 
 Settings that change behaviour (Home > Settings and the popovers): `stylus_hand`, `finger_draw`, `haptics` (Feedback), `recognize`, `hold_seconds`, `ink_auto`, `ink_pause`, `smart_ink` (the pen notices writing), `ui_scale`, `ui_fade`, `tool`.
@@ -540,7 +568,8 @@ Settings that change behaviour (Home > Settings and the popovers): `stylus_hand`
 |---|---|
 | Left button | tip: pen-down (fixed pressure 0.75, real pressure from a tablet) |
 | Shift + left | front button: **grab**, by touch (the mouse is always on the canvas plane): items, the bar, corners, empty canvas |
-| Middle button | pinch (works anywhere over a canvas: `grab_anywhere`). Wheel scales the carried canvas, Q / E rotate it |
+| Middle button | pinch (works anywhere over a canvas: `grab_anywhere`, and on a 3D model). Wheel scales the carried canvas or model, Q / E rotate it |
+| Left / Shift + left on a 3D model | tap selects it; on a handle, drag it (section 10.4) |
 | Right button + mouse, WASD | look, walk |
 | Ctrl+Z / Ctrl+Y | undo / redo (the dock's buttons too; the back button has no key of its own) |
 | 1 to 5 | Pen, Shapes, Write, Select, Erase (the dock shows them in the order Pen, Write, Shapes, Select, Erase) |

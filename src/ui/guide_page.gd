@@ -166,6 +166,25 @@ const TOPICS := [
 		]],
 		["try", [["pdf", "My PDFs", "tab:docs"], ["wifi", "Share with a PC", "tab:share"]]],
 	]},
+	{"id": "models", "icon": "model", "title": "3D models", "sum": "Bring in a glTF or OBJ model, move, turn and resize it", "blocks": [
+		["steps", [
+			"On a PC on the same Wi-Fi: Home, Share, switch on the web page, open its address and type the code. Drop a model on the page: a glTF .glb (or a .gltf with its .bin), or an .obj together with its .mtl and pictures, or all of them in one .zip. It stands in front of you, lit.",
+			"A model the headset has already: Add (+), 3D model, then tap it. Or Home, Docs, 3D models.",
+			"Tap a model (pinch, or the stylus front button) to select it: handles appear round it and a bar under it. Pinch the model itself and move your hand to carry it; a second hand on it turns and resizes it.",
+			"The bar switches the handles: Move (arrows, squares, the ball in the middle), Rotate (rings), Scale (cubes). Snap moves in centimetres and turns in 15 degree steps.",
+			"Put down lets it stand on the table or the floor under it, with its shadow. Real size is as big as the file says. Reset makes it upright again.",
+			"In a session every headset is given the model by the owner, once, and sees it move while somebody holds it. A Quest 2 takes smaller, simpler models; if it cannot show one, a box of its size says why.",
+		]],
+		["pairs", [
+			["Arrow", "Slide it along that axis (red X, green Y, blue Z)."],
+			["Square", "Slide it in that plane: the one between red and blue slides it along the floor (with Room axes on)."],
+			["Ball", "Move it freely."],
+			["Ring", "Turn it about that axis."],
+			["Corner cube", "Make it bigger or smaller, about its middle."],
+			["Axis cube", "Stretch it along its own axis."],
+		]],
+		["try", [["model", "My 3D models", "tab:docs"], ["wifi", "Share with a PC", "tab:share"]]],
+	]},
 	{"id": "session", "icon": "session", "title": "Running a session", "sum": "One owner, many guests, the same canvases", "blocks": [
 		["steps", [
 			"Owner: Home, Session, Start a session. Tell the guests the four-digit code.",
@@ -190,7 +209,8 @@ const TOPICS := [
 		["pairs", [
 			["Left mouse", "The stylus tip: draws on the canvas under the pointer."],
 			["Shift + left mouse", "The stylus front button: grab."],
-			["Middle mouse", "A pinch: carry a canvas. The wheel scales it, Q and E turn it."],
+			["Middle mouse", "A pinch: carry a canvas or a 3D model. The wheel scales it, Q and E turn it."],
+			["Left mouse on a 3D model", "Select it; on its handles, move, turn or resize it."],
 			["Right mouse, WASD", "Look around, walk."],
 			["1 to 5, B", "Tools, the brush."],
 			["T, C, F", "Type, place a canvas, find the desk."],

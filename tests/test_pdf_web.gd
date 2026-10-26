@@ -89,7 +89,7 @@ func _dashboard() -> void:
 	var page := _body(srv.route("/"))
 	t.check(page.contains("id=pdfs") and page.contains("PDF documents") and page.contains("Lecture notes"), "the dashboard lists the PDFs")
 	t.check(page.contains("data-act=pdf-show") and page.contains("data-act=pdf-delete") and page.contains("data-act=pdf-rename"), "with Show in headset, rename and delete")
-	t.check(page.contains("accept='.pdf,application/pdf,.svg") and page.contains("Drop PDF or SVG"), "and the drop box takes PDFs and SVGs")
+	t.check(page.contains("accept='.pdf,application/pdf,.svg") and page.contains("Drop PDF, SVG or 3D model"), "and the drop box takes PDFs and SVGs (and 3D models)")
 	t.check(page.contains("2</td>") and page.contains("KB"), "with their pages and size")
 	var js := _body(srv.handle("GET", "/assets/app.js", {}, PackedByteArray(), "x"))
 	t.check(js.contains("/api/pdf?name=") and js.contains("application/pdf") and js.contains("/api/pdf/show"), "the script sends PDFs to the PDF address")

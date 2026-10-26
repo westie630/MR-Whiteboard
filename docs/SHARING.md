@@ -102,6 +102,21 @@ turns pages **for themselves** (`Document.view_pages`, never saved, never sent):
 page") returns them, and the owner's later turns do not pull them away. A guest allowed to move canvases turns the page for everybody. Undo never turns a page back
 (`History` keeps the page the canvas is on).
 
+### 3D models: files
+
+A 3D model is a frame of kind `model` that says *which* model (`FrameData.model`, the first 32 hex digits of the SHA-256 of the file as the library keeps it:
+a .glb, .gltf, .obj, or a .zip of a model and the files it uses), how far it is stretched along its own axes (`stretch`) and its bounds in the file's units
+(`model_box`, measured by the first headset that loads it and then everybody's, so a headset that cannot load it still shows a box of the right size).
+Like a PDF, the file goes on the **file channel**, once, to the headsets that need it (`ModelShare`): `mdl? {id}`; the owner answers only for a model a
+frame of the shared room shows (else `mdl_no`), `mdl {id, n, size, name, ext}` then `mdlc` pieces of 96 KB at 6 MB/s per guest; a guest refuses a file
+over its own limit first (`mdl_stop`: a Quest 2 takes 48 MB, a Quest 3 96 MB), checks the content id, and keeps the newest six session copies.
+
+Each headset then loads the model itself within its own budget (`ModelBudget`: a Quest 2 takes up to 400 000 triangles and 1024 px pictures, a Quest 3
+1.5 million and 2048 px; both make simpler versions of detailed meshes for a distance). A model over a headset's limit is not shown there: a box of its
+size says *too detailed for this headset*, and the other headsets are not held up. Moving, turning, resizing and stretching go through `Board.grabs`,
+so the others see the model move while it is held (`LiveOut` sends its pose, scale and stretch) and get the result when it is let go. Adding,
+moving and deleting models follow *Guests can add and move canvases*. Protocol 3 (a headset with an older build is told to update).
+
 ## 5. Presence
 
 Every **0.1 s** each headset sends its head pose and its **pointer**: the stylus if there is one, otherwise the index fingertip of a tracked hand
@@ -215,6 +230,7 @@ works, and if that does not either, the network is blocking it.
 
 * **Quest 2 and Quest 3 together** work: nothing in the session depends on the model. The Android export already declares Quest 2 support. A Quest 2
   starts at the *performance* render quality unless the user has chosen one (about half the GPU of a Quest 3).
+* **3D models** have a budget per device (section 4): a Quest 2 shows smaller, simpler models than a Quest 3 and says so in the room for one it cannot.
 * **One stylus** (the MX Ink): the others have only their hands. Hands point (their fingertip is their pointer), arrange (select, drag, resize)
   and can draw by pinching on a canvas (*Draw with a pinch*, offered in Home > Session), and align by pinching. Whoever holds the stylus still has the
   front button as a pinch.
