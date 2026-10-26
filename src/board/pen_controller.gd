@@ -23,10 +23,12 @@ const HOVER_REACH := 0.25
 var board: Board
 var state := S.IDLE
 ## A hand pointing with a ray (HandController) drives its own PenController in this mode: only the Select tool's moves exist (tap,
-## drag, handles; a tap on empty canvas just clears the selection, there is no lasso) and every pick radius is `reach` times larger,
-## because a ray at arm's length is not a nib.
+## drag, handles; a tap on empty canvas just clears the selection, there is no lasso unless `lasso_ok`) and every pick radius is `reach`
+## times larger, because a ray at arm's length is not a nib.
 var hand_mode := false
 var reach := 1.0
+## Set by HandController for the press it hands over: empty canvas pointed at from a distance with the Select tool chosen draws a lasso.
+var lasso_ok := false
 ## Set by the board while the front-button pointer is holding something: a new press must not start a stroke under it.
 var blocked := false
 var cursor_frame := ""
@@ -149,6 +151,8 @@ func live_view() -> Dictionary:
 func working_frame() -> FrameNode:
 	if state == S.DRAG_ITEMS or state == S.DRAG_HANDLE or state == S.DRAG_MARKER:
 		return _drag_fn if is_instance_valid(_drag_fn) else null
+	if state == S.LASSO:
+		return _lasso_fn if is_instance_valid(_lasso_fn) else null
 	return null
 
 
@@ -269,7 +273,7 @@ func hit_marker(fn: FrameNode, l: Vector2) -> String:
 	if fn.bend == null:
 		return ""
 	var best := ""
-	var bd := InputTuning.MARKER_HIT * sqrt(reach)
+	var bd := InputTuning.MARKER_HIT * sqrt(reach) / fn.bend.zoom      # (in canvas metres: the markers keep their size when the contents are zoomed)
 	for which: String in ["d", "r"]:
 		var d := fn.marker_pos(which).distance_to(l)
 		if d < bd:
@@ -421,8 +425,8 @@ func _begin_select(pen: PenState) -> void:
 	if inside != null and board.selection.has(inside.id):
 		_start_drag_items(fn, l)
 		return
-	if hand_mode:
-		# no lasso with a hand: the box under the ray is picked up, empty canvas lets go of the selection
+	if hand_mode and not (lasso_ok and inside == null):
+		# no lasso with a hand (unless it was handed one): the box under the ray is picked up, empty canvas lets go of the selection
 		if inside != null:
 			board.select_items([inside.id], fn.data.id)
 			_start_drag_items(fn, l)
@@ -1180,6 +1184,14 @@ func _clear_live() -> void:
 
 # ------------------------------------------------------------------------------------------------ overlay
 
+## The loop being drawn on `fn`, if it is (the board draws the hands' loops with this too).
+func draw_lasso(od: OverlayDraw, fn: FrameNode) -> void:
+	if state == S.LASSO and _lasso_fn == fn and lasso.size() > 1:
+		if lasso.size() > 2:
+			od.polygon(lasso, Color(0.5, 0.9, 1.0, 0.12))
+		od.line(lasso, 0.0025 / fn.data.scale, Color(0.7, 0.95, 1.0, 0.95), false)
+
+
 func draw_overlay(od: OverlayDraw, fn: FrameNode) -> void:
 	var s := fn.data.scale
 	var fid := fn.data.id
@@ -1188,10 +1200,7 @@ func draw_overlay(od: OverlayDraw, fn: FrameNode) -> void:
 		_draw_selection(od, fn)
 	else:
 		_draw_bar(od, fn, Transform2D.IDENTITY)
-	if state == S.LASSO and _lasso_fn == fn and lasso.size() > 1:
-		if lasso.size() > 2:
-			od.polygon(lasso, Color(0.5, 0.9, 1.0, 0.12))
-		od.line(lasso, 0.0025 / s, Color(0.7, 0.95, 1.0, 0.95), false)
+	draw_lasso(od, fn)
 	if state == S.SHAPE_DRAG and _ghost_item != null and _ghost_item.is_line():
 		_draw_glue_marks(od, s, _ghost_item)
 	if cursor_frame == fid:

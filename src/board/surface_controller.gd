@@ -440,7 +440,7 @@ func track(pen: PenState, _dt: float) -> void:
 		if absf(l.z) * f.scale > NEAR or not fn.bounds().grow(0.3 / f.scale).has_point(Vector2(l.x, l.y)):
 			st.down = false
 			continue
-		if fn.bend != null and l.y + fn.bend.pan.y > fn.bend.at:
+		if fn.bend != null and fn.bend.to_surface(Vector2(l.x, l.y)).y > fn.bend.at:
 			st.down = false                                   # (on the bend or the wall the nib is not touching the desk)
 			continue
 		if bool(st.down) and pen.tip.distance_to(st.last) < TRACK_STEP:

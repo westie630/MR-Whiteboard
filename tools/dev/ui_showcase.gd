@@ -102,7 +102,7 @@ func _ready() -> void:
 				rig._apply_look()
 				await _frames(30)
 		"curved", "curvedside":
-			await _curved(show == "curvedside", float(args.get("pan", 0.0)), str(args.get("hot", "")))
+			await _curved(show == "curvedside", float(args.get("pan", 0.0)), str(args.get("hot", "")), float(args.get("zoom", 1.0)))
 		"ai":
 			board.ai.client = FakeClient.new()
 			board.ai.set_key("anthropic", "sk-showcase-0000")
@@ -161,13 +161,15 @@ func _desk(finish: bool, curved: bool = false) -> void:
 
 
 ## A curved desk with drawings that run over its flat part, its bend and its wall. `side`: seen from the side. `pan`: the contents slid this far.
-func _curved(side: bool, pan: float, hot: String) -> void:
+## `zoom`: the contents shown this many times their size.
+func _curved(side: bool, pan: float, hot: String, zoom: float = 1.0) -> void:
 	await _desk(true, true)
 	board.surface.cancel_align()
 	var f: FrameNode = board.frame_nodes[board.active_frame]
 	var fid := f.data.id
 	var upd := f.data.copy()
 	upd.bend_pan = Vector2(0.0, pan)
+	upd.scale = zoom
 	board.history.do(History.op_frame(f.data, upd))
 	await _frames(5)
 	var items: Array = []

@@ -43,6 +43,7 @@ var _pdf_key := ""                         # "id:page" of the page being shown o
 var _items_page := -1                      # the page whose drawings the item views are of
 var _pdf_shown_size := Vector2.ZERO        # the page's size in points as it is shown
 var _grid_key := ""                        # what the grid mesh was built for
+var _cut_pitch := 0.0                      # the strip height the views of a curved desk were cut with (DeskBend.cut_pitch)
 var _bend_tag: Label3D                     # says the bend's numbers beside its marker while it is touched or moved
 var _marker_hot := ""                      # the marker ("d" distance, "r" radius) the pointer is on or moving, "" none
 var _marks: MeshInstance3D                 # a curved desk's edge and markers: a mesh of their own, drawn again only when they change (not with the cursor)
@@ -272,7 +273,7 @@ func world_frame_at(c: Vector2, lift: float = 0.0) -> Transform3D:
 func _make_bend() -> DeskBend:
 	if not (is_canvas and data.bend and not data.is_pdf()):
 		return null
-	return DeskBend.new(data.bend_at, data.bend_radius, data.bend_pan, data.bend_window())
+	return DeskBend.new(data.bend_at, data.bend_radius, data.bend_pan, data.bend_window(), data.scale)
 
 
 ## The frame's data changed: follow its bend (its numbers, or it being switched on or off).
@@ -280,31 +281,35 @@ func refresh_bend() -> void:
 	var want := is_canvas and data.bend and not data.is_pdf()
 	if want == (bend != null):
 		if want:
-			bend.set_params(data.bend_at, data.bend_radius, data.bend_pan, data.bend_window())
+			bend.set_params(data.bend_at, data.bend_radius, data.bend_pan, data.bend_window(), data.scale)
 			_after_bend_moved()
 		return
 	bend = _make_bend()
 	_grid_key = ""
+	_cut_pitch = bend.cut_pitch() if bend != null else 0.0
 	_rebuild_for_bend()
 
 
-## The numbers of the bend as they are right now (a pointer is moving the contents or a marker, before it is let go and kept).
-func set_bend_live(at: float, radius: float, pan: Vector2) -> void:
+## The numbers of the bend as they are right now (a pointer is moving the contents, zooming them or moving a marker, before it is let go
+## and kept).
+func set_bend_live(at: float, radius: float, pan: Vector2, zoom: float) -> void:
 	if bend == null:
 		return
-	if is_equal_approx(bend.at, at) and is_equal_approx(bend.radius, radius) and bend.pan.is_equal_approx(pan):
+	if is_equal_approx(bend.at, at) and is_equal_approx(bend.radius, radius) and bend.pan.is_equal_approx(pan) and is_equal_approx(bend.zoom, zoom):
 		return
-	bend.set_params(at, radius, pan, data.bend_window())
+	bend.set_params(at, radius, pan, data.bend_window(), zoom)
 	_after_bend_moved()
 
 
 func _after_bend_moved() -> void:
 	_bounds_dirty = true
+	if not is_equal_approx(bend.cut_pitch(), _cut_pitch):
+		_cut_pitch = bend.cut_pitch()                 # zoomed past a step: the strips must be finer (or may be coarser) again
+		_rebuild_views()
 	refresh_frame()
 
 
-## The views are drawn differently on a curved desk (cut into strips, bent by their material, text as geometry): all of them again.
-func _rebuild_for_bend() -> void:
+func _rebuild_views() -> void:
 	for id in views:
 		(views[id] as ItemView).rebuild()
 	for c in _ai.get_children():
@@ -312,6 +317,11 @@ func _rebuild_for_bend() -> void:
 			(c as ItemView).rebuild()
 	if _ghost != null:
 		_ghost.rebuild()
+
+
+## The views are drawn differently on a curved desk (cut into strips, bent by their material, text as geometry): all of them again.
+func _rebuild_for_bend() -> void:
+	_rebuild_views()
 	_bounds_dirty = true
 	apply_style()
 	refresh_frame()
@@ -335,7 +345,7 @@ func _set_bend_nodes() -> void:
 		add_child(_marks)
 	if _marks != null:
 		_marks.visible = bend != null
-		_marks.material_override = bend.overlay_material() if bend != null else null
+		_marks.material_override = bend.surface_material() if bend != null else null
 		_marks.custom_aabb = box
 	_marks_key = ""
 
@@ -350,10 +360,12 @@ func set_marker_hot(which: String) -> void:
 ## Where the markers of the bend stand, in canvas coordinates: "d" at the distance where the flat part ends, "r" where the wall starts
 ## (the end of the quarter circle). Just outside the left edge of the shown part.
 func marker_pos(which: String) -> Vector2:
-	if bend == null:
-		return Vector2.ZERO
-	var x := bend.canvas_window().position.x - InputTuning.MARKER_SIDE
-	return Vector2(x, (bend.at if which == "d" else bend.wall_at()) - bend.pan.y)
+	return bend.to_canvas(_marker_surface(which)) if bend != null else Vector2.ZERO
+
+
+## The same on the surface (u, s): the markers stand on the surface, whatever the contents do.
+func _marker_surface(which: String) -> Vector2:
+	return Vector2(bend.window.position.x - InputTuning.MARKER_SIDE, bend.at if which == "d" else bend.wall_at())
 
 
 # ------------------------------------------------------------------------------------------------ look
@@ -391,10 +403,12 @@ func _apply_bend_to_grid() -> void:
 	if bend == null:
 		_grid_mat.set_shader_parameter("bend_a", Vector4(0, 0, 0, 0))
 		_grid_mat.set_shader_parameter("canvas_shift", Vector2.ZERO)
+		_grid_mat.set_shader_parameter("canvas_zoom", 1.0)
 		return
-	_grid_mat.set_shader_parameter("bend_a", Vector4(1.0, bend.at, bend.radius, 0.0))
+	_grid_mat.set_shader_parameter("bend_a", Vector4(1.0, bend.at, bend.radius, 1.0))
 	_grid_mat.set_shader_parameter("bend_pan", Vector2.ZERO)
 	_grid_mat.set_shader_parameter("canvas_shift", -bend.pan)
+	_grid_mat.set_shader_parameter("canvas_zoom", bend.zoom)
 	var w := bend.window
 	_grid_mat.set_shader_parameter("bend_win", Vector4(w.position.x, w.position.y, w.end.x, w.end.y))
 
@@ -427,7 +441,7 @@ func refresh_frame() -> void:
 		_apply_bend_to_grid()
 		if bend != null:
 			# at your edge of the surface, on the left: where the flat part begins
-			_title.transform = bend.frame_at(Vector2(b.position.x + 0.02, b.position.y - 0.035), 0.001)
+			_title.transform = bend.frame_at_surface(bend.window.position.x + 0.02, bend.window.position.y - 0.035, 0.001)
 		else:
 			_title.transform = Transform3D(Basis.IDENTITY, Vector3(b.position.x + 0.02, b.end.y + 0.035, 0.001))
 	else:
@@ -482,6 +496,7 @@ func _process(_delta: float) -> void:
 func _redraw_overlay() -> void:
 	_draw.clear()
 	_draw.bent = bend != null
+	_draw.pitch = bend.cut_pitch() if bend != null else DeskBend.PITCH
 	if is_canvas:
 		if data.surface and bend == null:
 			# a canvas on the desk keeps a thin amber edge: it is bound to that surface (a curved desk's is with its markers)
@@ -514,27 +529,28 @@ func _redraw_overlay() -> void:
 
 ## The curved desk's edge and markers are drawn again when one of them, or how near a pointer is (in tenths), has changed.
 func _refresh_marks() -> void:
-	var key := "%s %s %s %s %d %s" % [bend.at, bend.radius, bend.pan, bend.window, roundi(clampf(hover, 0.0, 1.0) * 10.0), _marker_hot]
+	var key := "%s %s %s %d %s" % [bend.at, bend.radius, bend.window, roundi(clampf(hover, 0.0, 1.0) * 10.0), _marker_hot]
 	if key == _marks_key:
 		return
 	_marks_key = key
 	_mdraw.clear()
 	_mdraw.bent = true
-	_mdraw.rect(bounds(), 0.0016, Color(DESK_COLOR.r, DESK_COLOR.g, DESK_COLOR.b, 0.3 + 0.45 * clampf(hover, 0.0, 1.0)))
+	_mdraw.rect(bend.window, 0.0016, Color(DESK_COLOR.r, DESK_COLOR.g, DESK_COLOR.b, 0.3 + 0.45 * clampf(hover, 0.0, 1.0)))
 	_draw_bend_markers(_mdraw)
 	_mdraw.build(_marks_mesh)
 
 
 ## The curved desk's markers: a line across where the flat part ends and another where the wall starts, each with a round handle outside the
-## left edge that slides along the surface. The first sets the distance, the second the radius of the bend.
+## left edge that slides along the surface. The first sets the distance, the second the radius of the bend. Drawn in surface coordinates
+## (DeskBend.surface_material): they keep their size and place when the contents slide or are zoomed.
 func _draw_bend_markers(od: OverlayDraw) -> void:
-	var win := bend.canvas_window()
+	var win := bend.window
 	var a := clampf(hover, 0.0, 1.0)
 	var amber := Color(DESK_COLOR.r, DESK_COLOR.g, DESK_COLOR.b, 1.0)
 	od.z = 0.0
 	for which: String in ["d", "r"]:
 		var hot := _marker_hot == which
-		var p := marker_pos(which)
+		var p := _marker_surface(which)
 		var line_a := (0.9 if hot else (0.2 + 0.3 * a)) * (1.0 if which == "d" else 0.7)
 		var n := maxi(int(win.size.x / 0.03), 2)
 		for i in n:
@@ -562,9 +578,9 @@ func _draw_bend_markers(od: OverlayDraw) -> void:
 			od.line(arc, r * 0.2, ink)
 	# the numbers beside the handle that is touched
 	if _marker_hot != "":
-		var q := marker_pos(_marker_hot)
+		var q := _marker_surface(_marker_hot)
 		_bend_tag.text = ("%d cm from you" % roundi(bend.at * 100.0)) if _marker_hot == "d" else ("radius %d cm" % roundi(bend.radius * 100.0))
-		_bend_tag.transform = bend.frame_at(q + Vector2(-0.03, 0.0), 0.004)
+		_bend_tag.transform = bend.frame_at_surface(q.x - 0.03, q.y, 0.004)
 		_bend_tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		_bend_tag.visible = true
 	else:

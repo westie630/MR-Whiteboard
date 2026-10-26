@@ -99,7 +99,7 @@ func _mesh_for(from: int, to: int) -> ArrayMesh:
 	var col := Brushes.color_for(brush, color)
 	var arrays: Array
 	if not volume and _bend() != null:
-		var sub := DeskBend.subdivide(p, w)
+		var sub := DeskBend.subdivide(p, w, false, _bend().cut_pitch())
 		p = sub[0]
 		w = sub[1]
 	if volume:

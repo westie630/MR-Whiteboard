@@ -645,6 +645,30 @@ func run() -> void:
 	t.near((board.doc.items[box.id] as Item).center.x - fc0.x, 0.1 / cv.data.scale, 0.03, "a box dragged by ray follows the ray")
 	board.undo()
 	board.clear_selection()
+	await tick(80)
+	# with the Select tool, a pinch on empty canvas from a distance draws a loop: what it goes round is selected, the canvas stays put
+	App.put("tool", "select")
+	var lb := (board.doc.items[box.id] as Item).bounds()
+	var lc := lb.get_center()
+	var lr := lb.size.length() * 0.75
+	var lxf := (board.doc.frames[g.id] as FrameData).xf
+	aim_far(far, on_canvas(cv, lc + Vector2(0.0, lr)))      # (above the box: the line joining it to the next box leaves on its right)
+	await tick(2)
+	t.eq(hover_kind("right"), "canvas", "pointing at empty canvas beside the box")
+	await pinch_down(far)
+	var looping := false
+	for i in 24:
+		var la := PI * 0.5 + TAU * float(i + 1) / 24.0
+		aim_far(far, on_canvas(cv, lc + Vector2(cos(la), sin(la)) * lr))
+		await tick(1)
+		for c in board.hand_ctl.controllers():
+			looping = looping or ((c as PenController).state == PenController.S.LASSO and (c as PenController).lasso.size() > 10)
+	t.check(looping, "pointing from afar with the Select tool, a pinch on empty canvas draws a loop where the ray runs")
+	await pinch_up(far)
+	t.check(board.selection.has(box.id), "...that selects the box it went round")
+	t.check((board.doc.frames[g.id] as FrameData).xf.is_equal_approx(lxf) and not board.grabs.has(g.id), "...and does not move the canvas")
+	board.clear_selection()
+	App.put("tool", "draw")
 	hands = []
 	await tick(80)
 

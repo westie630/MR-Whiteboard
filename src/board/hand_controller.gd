@@ -356,6 +356,7 @@ func _lose(side: String, dt: float) -> void:
 ## A pinch has just closed: decide who owns it.
 func _press(h: HandInput) -> void:
 	var side := h.side
+	_pen(side).lasso_ok = false
 	var t := target_of(h, true)
 	if t.is_empty() and not h.aiming:
 		print("[hand] %s pinch: not touching a canvas and not pointing (palm up, or turned away)" % side)
@@ -379,7 +380,7 @@ func _press(h: HandInput) -> void:
 	var how := "touching" if direct else "pointing"
 	# on a curved desk one pointer slides the contents along the surface (from the spot it pinched, on the surface), the bar carries the desk
 	var slide: bool = fn.bend != null and c.kind != "bar" and not joins
-	var ref := Vector2(t.local.x, t.local.y) + fn.bend.pan if fn.bend != null else Vector2.ZERO
+	var ref := fn.bend.to_surface(Vector2(t.local.x, t.local.y)) if fn.bend != null else Vector2.ZERO
 	var first := _pinched_first(side, fn) if fn.bend != null and KINDS_THAT_JOIN.has(str(c.kind)) else ""
 	if first != "":
 		# the other pointer has just pinched the same curved desk and not moved yet: the two carry and turn the desk, nothing slides
@@ -391,6 +392,14 @@ func _press(h: HandInput) -> void:
 	elif joins or grab_anywhere or c.kind == "bar":
 		print("[hand] %s pinch on %s (%s): %s%s" % [side, c.kind, how, "sliding the contents" if slide else "carrying the canvas", " with both hands" if joins else ""])
 		_begin_hold(h, fn, -1, direct, slide, ref)
+	elif c.kind == "canvas" and not direct and str(App.val("tool")) == "select":
+		# empty canvas pointed at with the Select tool chosen: a loop, drawn where the ray runs, selects what it goes round (the canvas is
+		# carried by its bar, or with both hands)
+		print("[hand] %s pinch on empty canvas (pointing, Select tool): drawing a loop" % side)
+		_pen(side).lasso_ok = true
+		_gate[side] = true
+		_press_pt[side] = t.point
+		_tick(side, 0.3, 0.02)
 	elif c.kind == "corner":
 		print("[hand] %s pinch on corner %d (%s): resizing the canvas" % [side, int(c.corner), how])
 		_begin_hold(h, fn, int(c.corner), direct)
@@ -519,7 +528,8 @@ func _resize(hold: Dictionary, world_p: Vector3) -> void:
 	fn.data.size = size
 	fn.data.offset = (opp + far) * 0.5
 	if fn.bend != null:
-		fn.data.offset += fn.bend.pan                      # (the shown part of a curved desk is kept in surface coordinates)
+		fn.data.size *= fn.bend.zoom                       # (the shown part of a curved desk is kept in surface coordinates)
+		fn.data.offset = fn.bend.to_surface(fn.data.offset)
 		fn.refresh_bend()
 	fn.invalidate_bounds()
 
@@ -591,20 +601,45 @@ func _update_two(seen: Dictionary) -> void:
 			return
 		var v := b - a
 		_two = {"f": f, "sides": pair, "d0": d, "mid0": (a + b) * 0.5, "yaw0": atan2(v.x, v.z), "scale0": float(g.scale), "basis0": (g.xf as Transform3D).basis, "origin0": (g.xf as Transform3D).origin}
+		var fn0 := (_holds[pair[0]] as Dictionary).fn as FrameNode
+		if fn0.bend != null:
+			# a curved desk zooms its contents about the spot between the two pointers on its surface
+			var sa := _surface_spot(fn0, seen[pair[0]], bool((_holds[pair[0]] as Dictionary).direct))
+			var sb := _surface_spot(fn0, seen[pair[1]], bool((_holds[pair[1]] as Dictionary).direct))
+			_two.merge({"spot0": (sa + sb) * 0.5, "pan0": g.get("pan", f.bend_pan)})
 		return
 	var mid := (a + b) * 0.5
 	var v2 := b - a
-	var fixed := ((_holds[pair[0]] as Dictionary).fn as FrameNode).bend != null
+	var spread := clampf(a.distance_to(b) / float(_two.d0), InputTuning.TWO_HAND_RATIO.x, InputTuning.TWO_HAND_RATIO.y)
 	# (a curved desk turns and moves but keeps its size: its bend and wall are in real metres)
-	var ratio := 1.0 if fixed else clampf(a.distance_to(b) / float(_two.d0), InputTuning.TWO_HAND_RATIO.x, InputTuning.TWO_HAND_RATIO.y)
+	var fixed := _two.has("spot0")
+	var ratio := 1.0 if fixed else spread
 	var dyaw := angle_difference(float(_two.yaw0), atan2(v2.x, v2.z))
 	var rot := Basis(Vector3.UP, dyaw)
 	var xf := g.xf as Transform3D
 	xf.basis = rot * (_two.basis0 as Basis)
 	xf.origin = mid + rot * (((_two.origin0 as Vector3) - (_two.mid0 as Vector3)) * ratio)
 	g.xf = xf
-	if not fixed:
+	if fixed:
+		# ...spreading the hands zooms its contents instead, about the spot between them, which stays where it is on the surface (the
+		# desk turns and moves with the hands, so it stays between them too)
+		var zoom := DeskBend.clamp_zoom(float(_two.scale0) * spread)
+		var spot := _two.spot0 as Vector2
+		g.scale = zoom
+		g.pan = spot - (spot - (_two.pan0 as Vector2)) * (zoom / float(_two.scale0))
+	else:
 		g.scale = clampf(float(_two.scale0) * ratio, InputTuning.CANVAS_SCALE.x, InputTuning.CANVAS_SCALE.y)
+
+
+## Where a pointer is on the surface of a curved desk (u, s): under the pinch point when touching, where the ray meets it when pointing.
+func _surface_spot(fn: FrameNode, h: HandInput, direct: bool) -> Vector2:
+	var inv := fn.global_transform.affine_inverse()
+	if not direct:
+		var hit := fn.bend.ray(inv * h.aim_o, inv.basis * h.aim_d, 0.0)
+		if not hit.is_empty():
+			return Vector2((hit.surface as Vector3).x, (hit.surface as Vector3).y)
+	var on := fn.bend.node_to_surface(inv * h.pinch_point)
+	return Vector2(on.x, on.y)
 
 
 ## Another pointer that has pinched empty canvas of `fn` and not moved yet (not a drag or a tap so far), or "".

@@ -980,10 +980,11 @@ func _place_frames(dt: float) -> void:
 				xf = _on_surface_world(f, xf)               # carried or turned, a desk canvas slides along its surface
 			var sc: float = (grabs[fid] as Dictionary).scale if grabs.has(fid) else (float((remote_grabs[fid] as Dictionary).scale) if remote_grabs.has(fid) else f.scale)
 			if fn.bend != null:
-				# a curved desk keeps its size (its bend is in real metres); its contents slide along the surface by the pan of whoever holds it
-				sc = 1.0
+				# a curved desk keeps its size (its bend is in real metres): its scale zooms the contents on it, which also slide along the
+				# surface by the pan of whoever holds it
 				var g: Dictionary = grabs.get(fid, remote_grabs.get(fid, {}))
-				fn.set_bend_live(float(g.get("bend_at", f.bend_at)), float(g.get("bend_radius", f.bend_radius)), g.get("pan", f.bend_pan))
+				fn.set_bend_live(float(g.get("bend_at", f.bend_at)), float(g.get("bend_radius", f.bend_radius)), g.get("pan", f.bend_pan), sc)
+				sc = 1.0
 			fn.transform = Transform3D(xf.basis.orthonormalized().scaled(Vector3.ONE * sc), xf.origin)
 
 
@@ -1108,11 +1109,12 @@ func end_grab(f: FrameData) -> void:
 	_dirty_overlay(f.id)
 
 
-## A curved desk is let go: where the contents slid to, the numbers of the bend a marker set, and where the desk was carried to (on the
-## desk's plane, keeping its size) are kept.
+## A curved desk is let go: where the contents slid to and how far they were zoomed, the numbers of the bend a marker set, and where the desk
+## was carried to (on the desk's plane, keeping its size) are kept.
 func _end_bend_grab(f: FrameData, g: Dictionary) -> void:
 	var after := f.copy()
 	after.bend_pan = g.get("pan", f.bend_pan)
+	after.scale = DeskBend.clamp_zoom(float(g.scale))
 	after.bend_at = DeskBend.clamp_at(float(g.get("bend_at", f.bend_at)))
 	after.bend_radius = DeskBend.clamp_radius(float(g.get("bend_radius", f.bend_radius)))
 	var carried := not (g.xf as Transform3D).is_equal_approx(g.get("xf0", g.xf) as Transform3D)
@@ -1125,7 +1127,7 @@ func _end_bend_grab(f: FrameData, g: Dictionary) -> void:
 	grabs.erase(f.id)
 	_dirty_overlay(f.id)
 	var before: FrameData = g.before
-	if not carried and after.bend_pan.is_equal_approx(before.bend_pan) and is_equal_approx(after.bend_at, before.bend_at) \
+	if not carried and after.bend_pan.is_equal_approx(before.bend_pan) and is_equal_approx(after.scale, before.scale) and is_equal_approx(after.bend_at, before.bend_at) \
 			and is_equal_approx(after.bend_radius, before.bend_radius) and after.size.is_equal_approx(before.size) and after.offset.is_equal_approx(before.offset):
 		return                                          # a touch that moved nothing
 	history.do(History.op_frame(before, after))
@@ -1193,21 +1195,23 @@ func make_curved(f: FrameData, rw: Transform3D) -> void:
 		first = false
 	var c := Vector2.ZERO if first else content.get_center()
 	f.xf = rw.affine_inverse() * world
-	f.scale = 1.0
+	f.scale = DeskBend.clamp_zoom(f.scale)              # (what is drawn keeps the size it had; the desk itself is in real metres)
 	f.bend = true
 	f.bend_at = DeskBend.DEFAULT_AT
 	f.bend_radius = DeskBend.DEFAULT_RADIUS
 	f.size = DeskBend.DEFAULT_SIZE
 	f.offset = Vector2(0.0, f.size.y * 0.5)
-	f.bend_pan = Vector2(-c.x, CURVE_FRONT - c.y) if not first else Vector2.ZERO
+	f.bend_pan = Vector2(-c.x * f.scale, CURVE_FRONT - c.y * f.scale) if not first else Vector2.ZERO
 
 
-## Make `f` (a curved desk) a flat canvas again: it keeps what it shows where it is on the desk (the contents have slid by `bend_pan`). Changes `f`.
+## Make `f` (a curved desk) a flat canvas again: it keeps what it shows where it is on the desk (the contents have slid by `bend_pan`) and
+## as big (its scale, the zoom, stays). Changes `f`.
 func make_flat(f: FrameData) -> void:
 	if not f.bend:
 		return
 	f.xf = Transform3D(f.xf.basis, f.xf.origin + f.xf.basis * Vector3(f.bend_pan.x, f.bend_pan.y, 0.0))
-	f.offset -= f.bend_pan
+	f.offset = (f.offset - f.bend_pan) / f.scale        # (the shown part was in surface metres: now canvas coordinates)
+	f.size /= f.scale
 	f.bend = false
 	f.bend_pan = Vector2.ZERO
 
@@ -2305,6 +2309,10 @@ func refresh_overlays() -> void:
 			active[str(bar_ghost.frame)] = true
 	if pen_ctl.cursor_frame != "":
 		active[pen_ctl.cursor_frame] = true
+	for c in hand_ctl.controllers():                  # a loop drawn from a distance
+		var ctl := c as PenController
+		if ctl.state == PenController.S.LASSO and ctl.working_frame() != null:
+			active[ctl.working_frame().data.id] = true
 	for fid in active.keys():
 		_dirty_overlay(fid)
 		var fn: FrameNode = frame_nodes.get(fid)
@@ -2323,6 +2331,8 @@ func _draw_overlay(od: OverlayDraw, frame_id: String) -> void:
 	if fn == null:
 		return
 	pen_ctl.draw_overlay(od, fn)
+	for c in hand_ctl.controllers():
+		(c as PenController).draw_lasso(od, fn)
 
 
 func _process(_delta: float) -> void:

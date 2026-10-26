@@ -148,8 +148,8 @@ not a finger). Radii are in world metres, so on a scaled canvas they stay the sa
 
 | Grab on... | Action | Release |
 |---|---|---|
-| **Item** | select it and drag it; handles reshape it (corners scale, edge stretches, top handle rotates with a 15° snap). Identical to the **Select** tool *whatever tool is chosen*, with one difference: **no lasso**. A grab inside an unselected box selects the box and drags it | commit (one undo step) |
-| **Empty canvas** | undecided: the pointer must move **2 cm** to become a **canvas carry**; if you let go first it is a **tap** that clears the selection | tap = deselect |
+| **Item** | select it and drag it; handles reshape it (corners scale, edge stretches, top handle rotates with a 15° snap). Identical to the **Select** tool *whatever tool is chosen*, with one difference: **no lasso** (except pointing with the Select tool, see Empty canvas). A grab inside an unselected box selects the box and drags it | commit (one undo step) |
+| **Empty canvas** | undecided: the pointer must move **2 cm** to become a **canvas carry**; if you let go first it is a **tap** that clears the selection. **Pointing with the Select tool chosen**: a **lasso** instead, drawn where the ray runs (`PenController.lasso_ok`); the canvas is then carried by its bar or with two hands | tap = deselect; a loop selects what is >= 60 % inside it |
 | **Bar** | **carry the canvas.** The canvas follows the pinch point | the canvas stays; new anchor |
 | **Corner** | **resize**: the corner follows the pointer on the canvas plane, the opposite corner stays fixed. Minimum size 0.25 × 0.18 m | commit |
 | **Anywhere on a canvas already carried by the other hand** | joins that canvas (second hand, or the stylus's front button): see 9.2 | |
@@ -297,7 +297,8 @@ Moving a shape moves glued connectors with it; moving a connector alone unglues 
 
 Code: [hand_controller.gd](../src/board/hand_controller.gd). Unless "Draw with a pinch" is on and there is no stylus, **hands never draw**.
 **Hands arrange; the stylus marks.** A pinch does the same thing whichever tool is chosen: it is the Select tool's moves, without the lasso,
-plus carrying and resizing canvases. Nothing is picked up by accident: what a pinch does depends *only* on what the pointer is on (section 5).
+plus carrying and resizing canvases. The one exception: with the **Select** tool chosen, a pinch (or the stylus front button) *pointing* at
+empty canvas draws a lasso, so things can be gathered from a distance; touching, it still carries the canvas. Nothing is picked up by accident: what a pinch does depends *only* on what the pointer is on (section 5).
 A hand in Erase mode selects, it never erases.
 
 ### 9.1 Touching or pointing
@@ -313,7 +314,7 @@ When one hand is carrying a canvas (bar or empty-canvas drag, not a corner) and 
 |---|---|
 | Move together | translate with the midpoint |
 | Rotate around each other | **yaw only** (about the vertical axis) |
-| Move apart / together | **scale** by the distance ratio (ratio clamped 0.2 to 6, canvas scale 0.15 to 8) |
+| Move apart / together | **scale** by the distance ratio (ratio clamped 0.2 to 6, canvas scale 0.15 to 8). A **curved desk** keeps its outline: its *contents* zoom instead (section 10.3) |
 
 Needs the hands > 4 cm apart to start. Letting go with one hand re-bases the other, so the canvas does not jump. A second hand on a *different* canvas is its own grab. The stylus's **front button counts as a pinch here too**: the nib is its pinch point, so a hand plus the stylus (front button held) turn and resize a canvas exactly like two hands, in either order. The hand that holds the stylus cannot pinch, so this is the way to do it with a stylus in hand.
 
@@ -471,7 +472,12 @@ What has slid off the shown part is hidden and is not picked (it would cover the
 
 **Moving the desk.** A pinch or the front button on the **bar** in front of the desk carries the desk itself; it slides on the desk's plane (`FrameData.on_surface`) and gets a new anchor where
 it is let go. A second pointer on the desk (bar or empty canvas, also while the first is sliding the contents, which then stop where they are) carries and turns it with the first, about the
-desk's normal; the desk never scales (its bend and wall are in real metres). One undo step. In a session the others see the contents slide and the markers move live (`p`, `ba`, `br` in the
+desk's normal; the desk never scales (its bend and wall are in real metres). Moving the two apart or together **zooms the contents** instead
+(the frame's `scale` is the zoom on a curved desk, `DeskBend.MIN_ZOOM` 0.25 to `MAX_ZOOM` 4): u = x * zoom + pan.x, s = y * zoom + pan.y, about the spot between
+the two on the surface (under the pinch point touching, where the ray meets it pointing), which stays put. The outline, the bend and the markers keep their size
+and place (the edge and markers are drawn in surface coordinates with `DeskBend.surface_material`). Geometry is cut finer above 2x (`DeskBend.cut_pitch`:
+8 mm of canvas, halved per doubling past 2x, so a strip never covers more than 16 mm of the surface); the views are rebuilt only when that step changes.
+Flattening keeps the zoom as the flat canvas's scale, and curving keeps a flat canvas's scale (clamped). One undo step. In a session the others see the contents slide and the markers move live (`p`, `ba`, `br` in the
 grab message), as well as the desk moving.
 
 **The markers.** Two round amber handles stand 4 cm outside the left edge, with a dashed line across: the **distance** marker where the flat part ends and the **radius** marker at the foot of the wall.
@@ -484,7 +490,7 @@ In a session the numbers are part of the canvas, so every headset shows the same
 
 | Tunable | |
 |---|---|
-| `DeskBend` | `PITCH` 8 mm · `MIN_AT` 5 cm · `MAX_AT` 1.2 m · `MIN_RADIUS` 4 cm · `MAX_RADIUS` 60 cm · `DEFAULT_AT` 40 cm · `DEFAULT_RADIUS` 12 cm · `DEFAULT_SIZE` 1.0 x 1.5 m |
+| `DeskBend` | `PITCH` 8 mm · `MIN_AT` 5 cm · `MAX_AT` 1.2 m · `MIN_RADIUS` 4 cm · `MAX_RADIUS` 60 cm · `DEFAULT_AT` 40 cm · `DEFAULT_RADIUS` 12 cm · `DEFAULT_SIZE` 1.0 x 1.5 m · `MIN_ZOOM` 0.25 · `MAX_ZOOM` 4 |
 | `Board` | `CHEST` 15 cm · `CURVE_LEVEL` 0.9 · `CURVE_FRONT` 30 cm (where existing drawings are put) · `ALIGN_MIN` 15 cm · `WALL_ABOVE` 60 cm |
 | `InputTuning` | `MARKER_SIDE` 4 cm · `MARKER_R` 2.4 cm · `MARKER_HIT` 5 cm · `BEND_SLIDE_NEAR` 6 cm |
 

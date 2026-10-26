@@ -131,6 +131,23 @@ func run() -> void:
 	var pan := DeskBend.new(0.4, 0.15, Vector2(0.1, 0.3), Rect2(Vector2(-0.5, 0.0), Vector2(1.0, 1.5)))
 	t.check(pan.to_node(Vector3(0.0, 0.0, 0.0)).is_equal_approx(Vector3(0.1, 0.3, 0.0)), "the pan is how far the contents have slid along the surface")
 	t.check(pan.canvas_window().position.is_equal_approx(Vector2(-0.6, -0.3)), "...so the shown part is the other way in canvas coordinates")
+	# the zoom: the contents shown bigger on the same surface
+	var zb := DeskBend.new(0.4, 0.15, Vector2(0.1, 0.3), Rect2(Vector2(-0.5, 0.0), Vector2(1.0, 1.5)), 2.0)
+	t.check(zb.to_node(Vector3(0.05, 0.4, 0.0)).is_equal_approx(b.to_node(Vector3(0.2, 1.1, 0.0))), "zoomed twice: a canvas point lies twice as far along the surface (plus the pan)")
+	t.check(zb.canvas_window().is_equal_approx(Rect2(Vector2(-0.3, -0.15), Vector2(0.5, 0.75))), "...and half as much of the canvas is shown: %s" % str(zb.canvas_window()))
+	var zworst := 0.0
+	for i in 200:
+		var zc := Vector3(rng.randf_range(-0.2, 0.2), rng.randf_range(-0.2, 0.6), rng.randf_range(-0.02, 0.02))
+		zworst = maxf(zworst, zb.from_node(zb.to_node(zc)).distance_to(zc))
+	t.check(zworst < 1e-5, "...and converts back exactly: worst %f" % zworst)
+	var zp := zb.to_node(Vector3(0.1, 0.35, 0.0))
+	var zhit := zb.ray(zp + Vector3(0, -0.3, 0.3), (zp - (zp + Vector3(0, -0.3, 0.3))).normalized(), 0.0)
+	t.check(not zhit.is_empty() and (zhit.canvas as Vector3).is_equal_approx(Vector3(0.1, 0.35, 0.0)), "...a ray lands on the canvas point it is aimed at")
+	t.near(zb.cut_pitch(), DeskBend.PITCH, 1e-9, "twice its size, the strips stay 8 mm of canvas (16 mm of surface)")
+	zb.set_params(0.4, 0.15, Vector2.ZERO, zb.window, 3.0)
+	t.near(zb.cut_pitch(), DeskBend.PITCH * 0.5, 1e-9, "...three times: halved")
+	zb.set_params(0.4, 0.15, Vector2.ZERO, zb.window, 50.0)
+	t.near(zb.zoom, DeskBend.MAX_ZOOM, 1e-9, "the zoom has its limits")
 	# a ray from in front of each part of the surface meets it where it is aimed
 	var miss := 0
 	for sv in [-0.1, 0.1, 0.39, 0.45, 0.5, 0.54, 0.6, 0.8, 1.2]:
@@ -620,4 +637,52 @@ func hands_on_the_desk(fid: String) -> void:
 	t.check(f.bend and is_equal_approx(f.scale, 1.0) and f.xf.basis.z.normalized().dot(Vector3.UP) > 0.999, "...it stays a level curved desk, not scaled")
 	t.near(f.bend_pan.distance_to(pan0), 0.0, 0.005, "...with its contents where they were on it")
 	await undo_if_moved(fid, pan0, xf_a)
+
+	# spreading two hands zooms the contents about the spot between them; the desk, its edge and its markers keep their size and place
+	f = board.doc.frames[fid]
+	var win0 := f.bend_window()
+	var z0 := f.scale
+	var spot := Vector2(0.0, 0.25)
+	var spot_c := fn.bend.to_canvas(spot)                 # the canvas point between the hands
+	var span0 := fn.to_world_point(Vector3(spot_c.x - 0.05, spot_c.y, 0.0)).distance_to(fn.to_world_point(Vector3(spot_c.x + 0.05, spot_c.y, 0.0)))
+	var marker_w := fn.to_world_point(Vector3(fn.marker_pos("r").x, fn.marker_pos("r").y, 0.0))
+	hand_at(hand, fn, Vector3(0.15, 0.25, 0.03), Vector3(0.15, 0.25, 0.0))
+	hand_at(left, fn, Vector3(-0.15, 0.25, 0.03), Vector3(-0.15, 0.25, 0.0))
+	await tick(2)
+	await pinch(hand, true)
+	await pinch(left, true)
+	for i in 10:
+		var out := fn.global_transform.basis.x.normalized() * 0.015
+		hand.pinch_point += out
+		left.pinch_point -= out
+		for hd in [hand, left]:
+			(hd as HandInput).tip = (hd as HandInput).pinch_point
+			(hd as HandInput).aim_o = (hd as HandInput).pinch_point
+		await tick(1)
+	await tick(1)
+	t.near(fn.bend.zoom, z0 * 2.0, 0.02, "hands spread to twice as far apart show the contents twice as big: %.2f" % fn.bend.zoom)
+	await pinch(left, false)
+	await pinch(hand, false)
+	await tick(3)
+	f = board.doc.frames[fid]
+	t.near(f.scale, z0 * 2.0, 0.02, "...and it is kept: zoom %.2f" % f.scale)
+	t.check(f.bend_window().is_equal_approx(win0), "the outline keeps its size and place on the desk")
+	t.check(f.xf.origin.distance_to(xf_a.origin) < 0.003 and is_equal_approx(f.bend_at, (board.doc.frames[fid] as FrameData).bend_at), "...and so does the desk")
+	t.check(fn.bend.to_surface(spot_c).distance_to(spot) < 0.003, "the spot between the hands stays where it was: %s" % str(fn.bend.to_surface(spot_c)))
+	var span1 := fn.to_world_point(Vector3(spot_c.x - 0.05, spot_c.y, 0.0)).distance_to(fn.to_world_point(Vector3(spot_c.x + 0.05, spot_c.y, 0.0)))
+	t.near(span1 / span0, 2.0, 0.03, "what is drawn there is twice as big in the room")
+	t.check(fn.to_world_point(Vector3(fn.marker_pos("r").x, fn.marker_pos("r").y, 0.0)).distance_to(marker_w) < 0.001, "...and the markers have not moved")
+	t.near(fn.bend.wall_at(), b.wall_at(), 1e-6, "...nor has the bend")
+	# flattened while zoomed, what is drawn stays where it is (the zoom becomes the flat canvas's scale), and back
+	var here := fn.to_world_point(Vector3(spot_c.x + 0.05, spot_c.y + 0.02, 0.0))
+	board.curve_frame(fid, false)
+	await tick(3)
+	t.check(fn.to_world_point(Vector3(spot_c.x + 0.05, spot_c.y + 0.02, 0.0)).distance_to(here) < 0.002, "flattening a zoomed curved desk keeps its contents in place")
+	t.near((board.doc.frames[fid] as FrameData).scale, z0 * 2.0, 0.02, "...at their size")
+	board.undo()
+	await tick(3)
+	t.check(fn.bend != null and fn.to_world_point(Vector3(spot_c.x + 0.05, spot_c.y + 0.02, 0.0)).distance_to(here) < 0.002, "undo curves it again, the same")
+	board.undo()
+	await tick(3)
+	t.near((board.doc.frames[fid] as FrameData).scale, z0, 1e-6, "undo puts the zoom back")
 	hands = []

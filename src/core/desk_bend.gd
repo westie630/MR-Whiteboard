@@ -6,8 +6,9 @@ extends RefCounted
 ## stretched. Only where a point of the page appears in the room depends on the bend.
 ##
 ##   canvas (x, y)      the page: x to the right, y away from you, z the height above the surface (0 = on it)
-##   surface (u, s, h)  the page as it lies on the surface: u = x + pan.x, s = y + pan.y, the distance run along the surface from your
-##                      edge. Moving the contents away from you is changing `pan`: the page slides along the fixed surface
+##   surface (u, s, h)  the page as it lies on the surface: u = x * zoom + pan.x, s = y * zoom + pan.y, the distance run along the surface
+##                      from your edge. Moving the contents away from you is changing `pan`: the page slides along the fixed surface;
+##                      `zoom` (the frame's scale) shows the page bigger or smaller on it, while the surface keeps its size
 ##   node (x, y, z)     the frame's own space, in which the surface stands: your edge at y = 0 on the desk, z up
 ##
 ## The surface in node space, by s: s <= at flat on the desk | then a quarter circle of `radius` round the axis (y = at, z = radius), its
@@ -25,17 +26,21 @@ const DEFAULT_SIZE := Vector2(1.0, 1.5)    # the window of a new curved desk: wi
 const SCREEN_SHADER := "res://shaders/ink_overlay.gdshader"
 const EPS := 1e-6                          # a vertex this close to a cutting line is on it (a micron: vertices are 32-bit floats)
 const FAR := 6.0                           # the frame is never culled by its own (unbent) bounds: a bent surface lies far from them
+const MIN_ZOOM := 0.25                     # how much smaller / bigger the contents of a curved desk can be shown (the frame's scale)
+const MAX_ZOOM := 4.0
 
 var at := DEFAULT_AT                       # surface distance from your edge where the flat part ends
 var radius := DEFAULT_RADIUS
 var pan := Vector2.ZERO                    # canvas -> surface offset
+var zoom := 1.0                            # canvas -> surface scale
 var window := Rect2(Vector2(-0.5, 0.0), DEFAULT_SIZE)   # the shown part of the surface
 
 var _variants := {}                        # source material instance id -> the copy with this bend's uniforms
 
 
-func _init(at_: float = DEFAULT_AT, radius_: float = DEFAULT_RADIUS, pan_: Vector2 = Vector2.ZERO, win: Rect2 = Rect2(Vector2(-0.5, 0.0), DEFAULT_SIZE)) -> void:
-	set_params(at_, radius_, pan_, win)
+func _init(at_: float = DEFAULT_AT, radius_: float = DEFAULT_RADIUS, pan_: Vector2 = Vector2.ZERO, win: Rect2 = Rect2(Vector2(-0.5, 0.0), DEFAULT_SIZE),
+		zoom_: float = 1.0) -> void:
+	set_params(at_, radius_, pan_, win, zoom_)
 
 
 static func clamp_at(v: float) -> float:
@@ -46,12 +51,23 @@ static func clamp_radius(v: float) -> float:
 	return clampf(v, MIN_RADIUS, MAX_RADIUS)
 
 
-func set_params(at_: float, radius_: float, pan_: Vector2, win: Rect2) -> void:
+static func clamp_zoom(v: float) -> float:
+	return clampf(v, MIN_ZOOM, MAX_ZOOM) if is_finite(v) else 1.0
+
+
+func set_params(at_: float, radius_: float, pan_: Vector2, win: Rect2, zoom_: float = 1.0) -> void:
 	at = clamp_at(at_)
 	radius = clamp_radius(radius_)
 	pan = pan_
 	window = win
+	zoom = clamp_zoom(zoom_)
 	sync()
+
+
+## How tall (canvas metres) the strips are that geometry on this bend is cut into: PITCH, halved for a page shown more than twice its size,
+## so that a strip never covers more than 2 x PITCH of the surface. Stepped, so that zooming rebuilds the geometry only when a step is passed.
+func cut_pitch() -> float:
+	return PITCH / pow(2.0, maxf(ceilf(log(zoom * 0.5) / log(2.0)), 0.0))
 
 
 ## The length of the quarter circle.
@@ -66,7 +82,16 @@ func wall_at() -> float:
 
 ## The part of the canvas (canvas coordinates) that is shown.
 func canvas_window() -> Rect2:
-	return Rect2(window.position - pan, window.size)
+	return Rect2((window.position - pan) / zoom, window.size / zoom)
+
+
+## Surface coordinates (u, s) of a canvas point, and back.
+func to_surface(c: Vector2) -> Vector2:
+	return c * zoom + pan
+
+
+func to_canvas(surf: Vector2) -> Vector2:
+	return (surf - pan) / zoom
 
 
 # ------------------------------------------------------------------------------------------------ the mapping
@@ -84,7 +109,7 @@ func surface_to_node(u: float, s: float, h: float = 0.0) -> Vector3:
 
 ## Node-space position of a canvas point (x, y, height).
 func to_node(c: Vector3) -> Vector3:
-	return surface_to_node(c.x + pan.x, c.y + pan.y, c.z)
+	return surface_to_node(c.x * zoom + pan.x, c.y * zoom + pan.y, c.z * zoom)
 
 
 ## Surface coordinates (u, s, h) of a node-space point: h is the signed distance off the surface (positive towards you).
@@ -103,7 +128,7 @@ func node_to_surface(p: Vector3) -> Vector3:
 ## Canvas coordinates (x, y, height) of a node-space point.
 func from_node(p: Vector3) -> Vector3:
 	var s := node_to_surface(p)
-	return Vector3(s.x - pan.x, s.y - pan.y, s.z)
+	return Vector3((s.x - pan.x) / zoom, (s.y - pan.y) / zoom, s.z / zoom)
 
 
 ## The direction along the surface (away from you) at surface distance s, in node space.
@@ -126,12 +151,16 @@ func normal_at(s: float) -> Vector3:
 	return Vector3(0, -1, 0)
 
 
-## The frame a thing standing on the surface at canvas point (x, y) has, in node space: x along u, y along the surface, z off it.
+## The frame a thing standing on the surface at canvas point (x, y) has, in node space: x along u, y along the surface, z off it (unit
+## axes: a thing in metres; `lift` is in canvas metres).
 func frame_at(c: Vector2, lift: float = 0.0) -> Transform3D:
-	var s := c.y + pan.y
-	var n := normal_at(s)
-	var t := tangent_at(s)
-	return Transform3D(Basis(Vector3(1, 0, 0), t, n), to_node(Vector3(c.x, c.y, lift)))
+	var sf := to_surface(c)
+	return frame_at_surface(sf.x, sf.y, lift * zoom)
+
+
+## The same at surface point (u, s), `lift` metres off it.
+func frame_at_surface(u: float, s: float, lift: float = 0.0) -> Transform3D:
+	return Transform3D(Basis(Vector3(1, 0, 0), tangent_at(s), normal_at(s)), surface_to_node(u, s, lift))
 
 
 ## The first place a node-space ray meets the surface at or after distance `tmin`: {t, canvas: Vector3 (x, y, 0), surface: Vector3}, or {}.
@@ -171,22 +200,22 @@ func ray(o: Vector3, d: Vector3, tmin: float = 0.0) -> Dictionary:
 	if best_t == INF:
 		return {}
 	var u := o.x + d.x * best_t
-	return {"t": best_t, "canvas": Vector3(u - pan.x, best_s - pan.y, 0.0), "surface": Vector3(u, best_s, 0.0)}
+	return {"t": best_t, "canvas": Vector3((u - pan.x) / zoom, (best_s - pan.y) / zoom, 0.0), "surface": Vector3(u, best_s, 0.0)}
 
 
 # ------------------------------------------------------------------------------------------------ cutting geometry
 
-## A line (points and widths, for StrokeMesher.ribbon_arrays) with points put in wherever it climbs more than a strip between two of its
-## points, so that its ribbon bends instead of cutting the corner. Cheap: this, not slice(), is how lines are made bendable (the overlay is
-## drawn again every frame). Unchanged when no segment is that long. Returns [points, widths].
-static func subdivide(pts: PackedVector3Array, widths: PackedFloat32Array, closed: bool = false) -> Array:
+## A line (points and widths, for StrokeMesher.ribbon_arrays) with points put in wherever it climbs more than a strip (`pitch`) between two
+## of its points, so that its ribbon bends instead of cutting the corner. Cheap: this, not slice(), is how lines are made bendable (the
+## overlay is drawn again every frame). Unchanged when no segment is that long. Returns [points, widths].
+static func subdivide(pts: PackedVector3Array, widths: PackedFloat32Array, closed: bool = false, pitch: float = PITCH) -> Array:
 	var n := pts.size()
 	if n < 2:
 		return [pts, widths]
 	var segs := n if closed else n - 1
 	var need := false
 	for i in segs:
-		if absf(pts[(i + 1) % n].y - pts[i].y) > PITCH:
+		if absf(pts[(i + 1) % n].y - pts[i].y) > pitch:
 			need = true
 			break
 	if not need:
@@ -200,7 +229,7 @@ static func subdivide(pts: PackedVector3Array, widths: PackedFloat32Array, close
 		ow.append(wi)
 		if i < segs:
 			var j := (i + 1) % n
-			var k := ceili(absf(pts[j].y - pts[i].y) / PITCH)
+			var k := ceili(absf(pts[j].y - pts[i].y) / pitch)
 			var wj := widths[mini(j, last)]
 			for m in range(1, k):
 				var t := float(m) / float(k)
@@ -209,10 +238,10 @@ static func subdivide(pts: PackedVector3Array, widths: PackedFloat32Array, close
 	return [op, ow]
 
 
-## Cut triangles (arrays as ArrayMesh takes them: vertex, uv, colour, index) wherever they cross a line y = k * PITCH, so that each piece is
+## Cut triangles (arrays as ArrayMesh takes them: vertex, uv, colour, index) wherever they cross a line y = k * pitch, so that each piece is
 ## short enough for a vertex shader to bend it without cutting a corner. Every attribute is interpolated; arrays without a triangle that
 ## crosses are returned as they are.
-static func slice(arrays: Array) -> Array:
+static func slice(arrays: Array, pitch: float = PITCH) -> Array:
 	if arrays.is_empty():
 		return arrays
 	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
@@ -226,7 +255,7 @@ static func slice(arrays: Array) -> Array:
 		var y2 := verts[idx[t * 3 + 2]].y
 		if not is_finite(y0 + y1 + y2):
 			broken[t] = true
-		elif floorf((minf(y0, minf(y1, y2)) + EPS) / PITCH) < floorf((maxf(y0, maxf(y1, y2)) - EPS) / PITCH):
+		elif floorf((minf(y0, minf(y1, y2)) + EPS) / pitch) < floorf((maxf(y0, maxf(y1, y2)) - EPS) / pitch):
 			crossing.append(t)
 	if crossing.is_empty() and broken.is_empty():
 		return arrays
@@ -265,15 +294,15 @@ static func slice(arrays: Array) -> Array:
 			b = sw3
 		var yb := verts[b].y
 		var yc := verts[c].y
-		var lo := int(floorf((verts[a].y + EPS) / PITCH))
-		var hi := int(floorf((yc - EPS) / PITCH))
+		var lo := int(floorf((verts[a].y + EPS) / pitch))
+		var hi := int(floorf((yc - EPS) / pitch))
 		# one strip after the other, bottom up: each is the part of the triangle between two cutting lines, a convex polygon
 		var prev_l := a
 		var prev_s := a
 		var prev_y := verts[a].y
 		for k in range(lo + 1, hi + 2):
 			var top := k > hi
-			var y := yc if top else float(k) * PITCH
+			var y := yc if top else float(k) * pitch
 			var l := c if top else _lerp_vertex(verts, uvs, cols, a, c, y)
 			var sv := c
 			if not top:
@@ -344,6 +373,17 @@ func material(src: Material) -> Material:
 	return _variants[key]
 
 
+## The material of geometry laid out in surface coordinates (the edge and the markers, which keep their size and place whatever the
+## contents do): the overlay's, without the pan and the zoom.
+func surface_material() -> Material:
+	var key := -2
+	if not _variants.has(key):
+		var m := (overlay_material() as ShaderMaterial).duplicate() as ShaderMaterial
+		_variants[key] = m
+		apply(m)
+	return _variants[key]
+
+
 ## The material of the overlay (selection, handles, markers): ink that is never hidden by the depth of anything in front of it.
 func overlay_material() -> Material:
 	var key := -1
@@ -359,8 +399,9 @@ func overlay_material() -> Material:
 
 ## Put this bend into a material's uniforms.
 func apply(m: ShaderMaterial) -> void:
-	m.set_shader_parameter("bend_a", Vector4(1.0, at, radius, 0.0))
-	m.set_shader_parameter("bend_pan", pan)
+	var on_surface: bool = _variants.get(-2) == m
+	m.set_shader_parameter("bend_a", Vector4(1.0, at, radius, 1.0 if on_surface else zoom))
+	m.set_shader_parameter("bend_pan", Vector2.ZERO if on_surface else pan)
 	m.set_shader_parameter("bend_win", Vector4(window.position.x, window.position.y, window.end.x, window.end.y))
 
 

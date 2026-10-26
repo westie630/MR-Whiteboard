@@ -18,12 +18,13 @@ uniform vec4 line_color : source_color = vec4(0.55, 0.9, 1.0, 1.0);
 uniform vec4 backing : source_color = vec4(1.0, 1.0, 1.0, 0.0);
 uniform float hover = 0.0;                          // 0..1: the border lights up when a pen or hand is near
 uniform vec2 canvas_shift = vec2(0.0);              // curved desk: the mesh is laid out in surface coordinates, the grid pattern belongs to the canvas
+uniform float canvas_zoom = 1.0;                    // ...which is shown this many times its size
 
 varying vec2 lp;
 varying vec2 v_surf;
 
 void vertex() {
-	lp = VERTEX.xy + canvas_shift;
+	lp = (VERTEX.xy + canvas_shift) / canvas_zoom;
 	v_surf = desk_surf(VERTEX);
 	VERTEX = desk_bend(VERTEX);
 }

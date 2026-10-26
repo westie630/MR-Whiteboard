@@ -285,11 +285,12 @@ func run() -> void:
 	t.check(await until(func(): return (doc_of(A).frames["f1"] as FrameData).bend), "a curved desk reaches the guests")
 	(H.board as Board).begin_grab(doc_of(H).frames["f1"])
 	((H.board as Board).grabs["f1"] as Dictionary).pan = Vector2(0.0, 0.25)
+	((H.board as Board).grabs["f1"] as Dictionary).scale = 1.5
 	t.check(await until(func():
 		var fa: FrameNode = (A.board as Board).frame_nodes.get("f1")
-		return fa != null and fa.bend != null and fa.bend.pan.is_equal_approx(Vector2(0.0, 0.25))), "...and see its contents slide while the owner slides them")
+		return fa != null and fa.bend != null and fa.bend.pan.is_equal_approx(Vector2(0.0, 0.25)) and is_equal_approx(fa.bend.zoom, 1.5)), "...and see its contents slide and zoom while the owner moves them")
 	(H.board as Board).end_grab(doc_of(H).frames["f1"])
-	t.check(await until(func(): return (doc_of(A).frames["f1"] as FrameData).bend_pan.is_equal_approx(Vector2(0.0, 0.25))), "...and where they were let go")
+	t.check(await until(func(): return (doc_of(A).frames["f1"] as FrameData).bend_pan.is_equal_approx(Vector2(0.0, 0.25)) and is_equal_approx((doc_of(A).frames["f1"] as FrameData).scale, 1.5)), "...and where they were let go, at that size")
 	(H.board as Board).history.undo()
 	(H.board as Board).history.undo()
 	t.check(await until(func(): return not (doc_of(A).frames["f1"] as FrameData).bend), "...and the owner's undo makes it flat again for them")

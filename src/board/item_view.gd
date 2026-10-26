@@ -76,7 +76,7 @@ func _stroke_points() -> Array:
 func _build_ribbon() -> void:
 	var pw := _stroke_points()
 	if _bend != null:
-		pw = DeskBend.subdivide(pw[0], pw[1])
+		pw = DeskBend.subdivide(pw[0], pw[1], false, _bend.cut_pitch())
 	var def := Brushes.get_def(item.brush)
 	var col := Brushes.color_for(item.brush, item.color)
 	var arrays := StrokeMesher.ribbon_arrays(pw[0], pw[1], col, false, bool(def.get("caps", true)), float(def.get("nib", -1.0)))
@@ -139,7 +139,7 @@ func _add_ribbon(pts: PackedVector2Array, closed: bool, col: Color, mat: Materia
 		p3.append(Vector3(p.x, p.y, 0.0))
 		w.append(item.width)
 	if _bend != null:
-		var sub := DeskBend.subdivide(p3, w, closed)
+		var sub := DeskBend.subdivide(p3, w, closed, _bend.cut_pitch())
 		p3 = sub[0]
 		w = sub[1]
 	_add_mesh(StrokeMesher.ribbon_arrays(p3, w, col, closed, not closed), mat)
@@ -222,7 +222,7 @@ func _add_mesh(arrays: Array, mat: Material, cut: bool = false) -> void:
 	var mi := MeshInstance3D.new()
 	if _bend != null:
 		if cut:
-			arrays = DeskBend.slice(arrays)
+			arrays = DeskBend.slice(arrays, _bend.cut_pitch())
 		mat = _bend.material(mat)
 		mi.custom_aabb = AABB(Vector3.ONE * -DeskBend.FAR, Vector3.ONE * (2.0 * DeskBend.FAR))
 	mi.mesh = StrokeMesher.to_mesh(arrays)
