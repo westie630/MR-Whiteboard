@@ -14,6 +14,9 @@ const ERASE_R := InputTuning.ERASE_R
 const PICK_R := InputTuning.PICK_R
 const HANDLE_R := 0.016                    # drawn radius of a handle (world metres)
 const HANDLE_HIT := InputTuning.HANDLE_HIT
+const HANDLE_INSIDE := InputTuning.HANDLE_INSIDE
+const HANDLE_INSIDE_MIN := InputTuning.HANDLE_INSIDE_MIN
+const HANDLE_BODY_FRAC := InputTuning.HANDLE_BODY_FRAC
 const BTN_R := 0.019                       # drawn radius of an undo / redo / delete button beside the selection
 const BTN_GAP := 0.052                     # distance between button centres
 const BTN_SIDE := 0.075                    # distance of the button column from the selection box (clear of the corner handles)
@@ -955,16 +958,41 @@ func group_bounds(items: Array) -> Rect2:
 	return r.grow(0.008)
 
 
+## The handle of the selection a point of the frame is on, or {}. Moving the selection and reshaping it must not fight over a press: the handles
+## stand on the selection's own corners, so a full-size grab zone would cover much of its body. On the body (inside the shape, along a line,
+## inside the box round a group) a handle is only grabbed at its very centre, as far as `HANDLE_INSIDE` and at most `HANDLE_BODY_FRAC` of the
+## shape's smaller side; just outside it the zone is the full `HANDLE_HIT`. So: inside = move, just outside a corner = reshape.
 func hit_handle(fn: FrameNode, l: Vector2) -> Dictionary:
 	var s := fn.data.scale
 	var best := {}
 	var bd := HANDLE_HIT * reach / s
+	var body := _body_at(l)
+	if bool(body.inside):
+		bd = minf(bd, maxf(minf(HANDLE_INSIDE * sqrt(reach) / s, HANDLE_BODY_FRAC * float(body.span)), HANDLE_INSIDE_MIN / s))
 	for h in handles(fn):
 		var d := (h.pos as Vector2).distance_to(l)
 		if d < bd:
 			bd = d
 			best = h
 	return best
+
+
+## Is a point of the frame on the body of the selection? {inside: bool, span: the smaller side of it (a line's length)}, frame coordinates.
+func _body_at(l: Vector2) -> Dictionary:
+	var items := board.selected_items()
+	if items.is_empty():
+		return {"inside": false, "span": 0.0}
+	if items.size() == 1 and (items[0] as Item).kind == Item.SHAPE and (items[0] as Item).shape != "poly":
+		var it := items[0] as Item
+		if it.is_line():
+			var ab := it.b - it.a
+			var t := (l - it.a).dot(ab) / maxf(ab.length_squared(), 1e-9)
+			return {"inside": t > 0.0 and t < 1.0, "span": ab.length()}
+		var hw := it.size * 0.5
+		var loc := Geom2D.rot(l - it.center, -it.rot)
+		return {"inside": absf(loc.x) <= hw.x and absf(loc.y) <= hw.y, "span": minf(it.size.x, it.size.y)}
+	var r := group_bounds(items)
+	return {"inside": r.grow(1e-4).has_point(l), "span": minf(r.size.x, r.size.y)}
 
 
 func _start_handle(fn: FrameNode, h: Dictionary, l: Vector2) -> void:

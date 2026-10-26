@@ -301,6 +301,37 @@ func run() -> void:
 	await tick(3)
 	hb = board.doc.items[hb.id]
 	hc = hb.center
+	# moving and reshaping do not fight: the handles stand on the box's own corners, so a press inside the box moves it; only dead on a corner
+	# or just outside it reshapes
+	var c1: Dictionary = {}
+	for h in board.pen_ctl.handles(fnode):
+		if h.id == "corner1":
+			c1 = h
+	var cp: Vector2 = c1.pos
+	t.eq(str(board.pen_ctl.hit_handle(fnode, cp).get("id", "")), "corner1", "a press dead on a corner handle reshapes")
+	t.eq(str(board.pen_ctl.hit_handle(fnode, cp + Vector2(0.02, 0.02)).get("id", "")), "corner1", "...and so does one just outside the box")
+	t.check(board.pen_ctl.hit_handle(fnode, cp + Vector2(-0.018, -0.018)).is_empty(), "...but a nib 25 mm inside the box from the corner does not")
+	board.pen_ctl.reach = InputTuning.REACH
+	t.check(board.pen_ctl.hit_handle(fnode, cp + Vector2(-0.03, -0.03)).is_empty(), "pointing from afar, 42 mm inside the box does not reshape it either")
+	t.eq(str(board.pen_ctl.hit_handle(fnode, cp + Vector2(0.04, 0.04)).get("id", "")), "corner1", "...while 57 mm outside it still does (a ray is not a nib)")
+	board.pen_ctl.reach = 1.0
+	var size_in := hb.size
+	var center_in := hb.center
+	await hover(world(cp.x - 0.018, cp.y - 0.018))
+	pen.down = true
+	await tick(2)
+	for i in 6:
+		pen.tip = world(cp.x - 0.018 + 0.02 * float(i + 1), cp.y - 0.018)
+		await tick(1)
+	pen.down = false
+	await tick(3)
+	var moved_in: Item = board.doc.items[hb.id]
+	t.near(moved_in.center.x - center_in.x, 0.12, 0.01, "dragging from just inside a corner moves the box")
+	t.check(moved_in.size.is_equal_approx(size_in), "...and does not scale it")
+	board.undo()
+	await tick(3)
+	hb = board.doc.items[hb.id]
+	hc = hb.center
 	# the corner handle scales
 	var box_size0 := hb.size
 	var corner: Dictionary = {}
