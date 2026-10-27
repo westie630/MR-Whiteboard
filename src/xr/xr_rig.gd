@@ -87,6 +87,7 @@ var _handle_hits := {}                     # source -> {point, touch}: the bar u
 var _pen_front := false                    # the stylus's front button last frame (for its press edge)
 var _palm_t := {"left": 0.0, "right": 0.0}
 var _board_pen := PenState.new()
+var _pinch_pen := false                    # Draw with a pinch: the right hand is the pen (on a canvas), not a grabbing hand
 var _no_hands_t := 0.0
 var _diag_t := 0.0
 var _slowest := 0.0                        # the longest frame since the last [perf] line (s)
@@ -655,6 +656,25 @@ func _stylus_in_hand(pen: PenState, delta: float) -> bool:
 	return not _stylus_put_down
 
 
+## Draw with a pinch, no stylus: is the right hand the pen? Yes while its pinch point is on a canvas, within reach of drawing on it (as
+## near as a nib must be) and not on its bar or a corner; there the pinch draws with the current tool. Pointing from afar, on the bar, a
+## corner, a panel's handle or a 3D model, it grabs like the left hand. Decided while the hand is open (or as it closes) and kept until
+## the pen has finished, so a stroke that wanders off the canvas is not taken over by the hand halfway.
+func _pinch_draws(h: HandInput) -> bool:
+	if board.pen_ctl.state != PenController.S.IDLE or (h.pinching and not h.pinch_down):
+		return _pinch_pen
+	_pinch_pen = false
+	if not h.tracked or h.palm_up:
+		return false
+	var t := board.pen_target(h.pinch_point, Board.CAPTURE, InputTuning.PLANE_SLACK)
+	if t.is_empty():
+		return false
+	var l := t.local as Vector3
+	var kind := str(board.hand_ctl.classify(t.fn as FrameNode, Vector3(l.x, l.y, 0.0), h.side).kind)
+	_pinch_pen = kind != "bar" and kind != "corner"
+	return _pinch_pen
+
+
 ## How far a hand is from the stylus's body (its pinch point, index knuckle or palm, whichever is nearest), in metres.
 static func stylus_gap(pen: PenState, h: HandInput) -> float:
 	var a := pen.tip
@@ -729,13 +749,12 @@ func _process(delta: float) -> void:
 		bp.front = false
 		bp.back = false
 		bp.source = "none"
-		if bool(App.val("finger_draw")):
-			# no stylus: the right hand draws with a pinch, the left hand moves canvases
-			var draw_hand := hands["right"] as HandInput
-			var grab_hand := hands["left"] as HandInput
-			board_hands = [grab_hand] if (grab_hand.tracked and not captured.get("left", false)) else []
+		var draw_hand := hands["right"] as HandInput
+		if bool(App.val("finger_draw")) and _pinch_draws(draw_hand) and not captured.get("right", false):
+			# no stylus: the right hand draws with a pinch where it touches a canvas; anywhere else it is a hand like the left
+			board_hands.erase(draw_hand)
 			bp.source = "pinch"
-			bp.tracked = draw_hand.tracked and not captured.get("right", false)
+			bp.tracked = draw_hand.tracked
 			bp.tip = draw_hand.pinch_point
 			bp.dir = draw_hand.aim_d
 			bp.basis = draw_hand.grip                      # (a pinch on a 3D model turns it with the hand)

@@ -339,8 +339,10 @@ Needs the hands > 4 cm apart to start. Letting go with one hand re-bases the oth
 
 | Hand | Role |
 |---|---|
-| **Right** | draws: the **pinch point** is the nib (so you must be within 12 cm of the canvas, like the stylus), pinching = pen-down, fixed pressure 0.7. It uses the *current tool* like the stylus (so Select works through the nib), but this hand no longer grabs canvases. A pinch on a **3D model** (touching or pointing) still carries, selects and turns it, as for a free hand |
+| **Right** | draws where it **touches a canvas**: the **pinch point** is the nib (within 12 cm of the canvas, like the stylus), pinching = pen-down, fixed pressure 0.7, with the *current tool* like the stylus (so Select works through the nib). **Everywhere else it is a hand like the left**: pointing from afar, on a canvas's bar or a corner, a panel's handle, a 3D model, it carries, resizes and selects. Decided while the hand is open (or as the pinch closes) and kept until the stroke or grab ends (`XrRig._pinch_draws`) |
 | **Left** | the normal pointing hand |
+
+So two hands still turn and resize a canvas: the right hand takes the bar (or points at the canvas) while the left holds it.
 
 When the right hand touches or presses the menu it is captured and does not draw. A docked or absent stylus switches to this mode; with the setting off, no stylus means two pointing hands and nothing draws.
 

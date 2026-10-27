@@ -73,6 +73,7 @@ func _ready() -> void:
 	_menu_rules(t, rig, board, cv, spare_node)
 	await _panel_rules(t, rig, board, cv)
 	_stylus_put_down(t, rig)
+	_pinch_pen_rules(t, rig, board, fnode)
 	DocStore.delete(board.doc.id)
 	get_tree().quit(t.done())
 
@@ -117,6 +118,45 @@ func _stylus_put_down(t: TestCase, rig: XrRig) -> void:
 	rig.stylus.active = ""
 	rig._stylus_in_hand(pen, 0.1)
 
+
+## Draw with a pinch, no stylus: the right hand is the pen only where its pinch point touches a canvas; pointing from afar or on the
+## canvas's bar it is a hand like the left (it carries, resizes, moves panels). A stroke keeps the pen until it has ended.
+func _pinch_pen_rules(t: TestCase, rig: XrRig, board: Board, fnode: FrameNode) -> void:
+	var h: HandInput = rig.hands["right"]
+	var n := fnode.global_transform.basis.z.normalized()
+	var c := fnode.bounds().get_center()
+	h.tracked = true
+	h.palm_up = false
+	h.pinching = false
+	h.pinch_down = false
+	h.pinch_point = fnode.to_world_point(Vector3(c.x, c.y, 0.0)) + n * 0.05
+	t.check(rig._pinch_draws(h), "the pinch point on a canvas: the right hand draws")
+	var bc := HandController.bar_center(fnode)
+	h.pinch_point = fnode.to_world_point(Vector3(bc.x, bc.y, 0.0)) + n * 0.03
+	t.check(not rig._pinch_draws(h), "on the canvas's bar: it grabs like the left hand")
+	h.pinch_point = fnode.to_world_point(Vector3(c.x, c.y, 0.0)) + n * 0.6
+	t.check(not rig._pinch_draws(h), "pointing from afar: it grabs like the left hand")
+	h.pinch_point = fnode.to_world_point(Vector3(c.x, c.y, 0.0)) + n * 0.05
+	h.pinching = true
+	h.pinch_down = true
+	t.check(rig._pinch_draws(h), "a pinch closing on the canvas is the pen's")
+	h.pinch_down = false
+	board.pen_ctl.state = PenController.S.DRAWING
+	h.pinch_point += n * 0.6
+	t.check(rig._pinch_draws(h), "...and stays the pen's while the stroke wanders off the canvas")
+	h.pinching = false
+	t.check(rig._pinch_draws(h), "...until the stroke has ended")
+	board.pen_ctl.state = PenController.S.IDLE
+	t.check(not rig._pinch_draws(h), "then, away from the canvas, it is a hand again")
+	h.pinch_point = fnode.to_world_point(Vector3(c.x, c.y, 0.0)) + n * 0.6
+	h.pinching = true
+	h.pinch_down = true
+	rig._pinch_draws(h)
+	h.pinch_down = false
+	h.pinch_point = fnode.to_world_point(Vector3(c.x, c.y, 0.0)) + n * 0.05
+	t.check(not rig._pinch_draws(h), "a grab that began away from the canvas stays a grab when the hand comes close")
+	h.pinching = false
+	h.tracked = false
 
 ## The stylus's beam (StylusRay): out of the nib up to its ring on the menu, a canvas or a drawing; a short one into nothing; none while
 ## the nib touches a canvas, the menu or a real surface, or with the setting off. Nothing awaits (the rig's frame would hide it again).

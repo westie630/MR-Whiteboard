@@ -86,7 +86,7 @@ Undo and redo are always on the dock. A pinch ticks (a soft click) and the stylu
 
 Every input, threshold and tunable number is documented in [docs/INTERACTIONS.md](docs/INTERACTIONS.md).
 
-Drawing is the stylus's job and happens only on canvases (drawing in the air is switched off). **Home > Settings > Draw with a pinch** lets the right hand draw by pinching on a canvas when there is no stylus.
+Drawing is the stylus's job and happens only on canvases (drawing in the air is switched off). **Home > Settings > Draw with a pinch** lets the right hand draw by pinching on a canvas when there is no stylus; away from a canvas's surface (pointing, its bar, a corner, a panel's handle) it grabs like the left hand.
 
 ## The interface
 
