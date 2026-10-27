@@ -36,6 +36,7 @@ func _ready() -> void:
 	await ticks(5)
 	_glb_bytes = _box_glb(Vector3(0.2, 0.1, 0.3))
 	_obj_reader()
+	_steady_pictures()
 	await _library()
 	await _placing()
 	await _handles()
@@ -213,6 +214,61 @@ func _obj_reader() -> void:
 	tiny.max_triangles = 5
 	var big := ObjImport.parse(CUBE_OBJ, {}, tiny)
 	t.check(not bool(big.ok) and str(big.message).contains("too detailed"), "more triangles than the device takes is refused: %s" % str(big.get("message", "")))
+
+
+## A textured glTF with a sampler that asks for no mipmaps, a normal map and a cut-out material: every picture gets mipmaps (they crawl and
+## sparkle in a headset without), filtering is anisotropic, cut-outs get smooth edges; nearest filtering (pixel art) is kept up close.
+func _steady_pictures() -> void:
+	var img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0.3, 0.6, 0.9))
+	var flat := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	flat.fill(Color(0.5, 0.5, 1.0))
+	var root := Node3D.new()
+	root.name = "Tiles"
+	var filters := [BaseMaterial3D.TEXTURE_FILTER_LINEAR, BaseMaterial3D.TEXTURE_FILTER_NEAREST]
+	for i in filters.size():
+		var m := StandardMaterial3D.new()
+		m.albedo_texture = ImageTexture.create_from_image(img)
+		m.normal_enabled = true
+		m.normal_texture = ImageTexture.create_from_image(flat)
+		m.texture_filter = filters[i]
+		if i == 0:
+			m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+		var bx := BoxMesh.new()
+		bx.surface_set_material(0, m)
+		var mi := MeshInstance3D.new()
+		mi.mesh = bx
+		mi.position.x = i
+		root.add_child(mi)
+		mi.owner = root
+	var doc := GLTFDocument.new()
+	var st := GLTFState.new()
+	doc.append_from_scene(root, st)
+	var bytes := doc.generate_buffer(st)
+	root.free()
+	var res := ModelLoader.load_model(bytes, ModelBudget.for_tier("high"), "user://test_steady.zip")
+	t.check(bool(res.ok), "a textured glTF is read: %s" % str(res.get("message", "")))
+	if not bool(res.ok):
+		return
+	var mats: Array = []
+	for n in (res.root as Node3D).find_children("*", "MeshInstance3D", true, false):
+		mats.append((n as MeshInstance3D).mesh.surface_get_material(0))
+	mats.sort_custom(func(a, b): return int((a as BaseMaterial3D).texture_filter) > int((b as BaseMaterial3D).texture_filter))
+	t.eq(mats.size(), 2, "both tiles are there")
+	if mats.size() == 2:
+		var smooth := mats[0] as BaseMaterial3D
+		var pixel := mats[1] as BaseMaterial3D
+		t.eq(smooth.texture_filter, BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC, "a file's no-mipmap sampler becomes mipmapped, anisotropic")
+		t.eq(pixel.texture_filter, BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS_ANISOTROPIC, "nearest (pixel art) stays nearest, with mipmaps")
+		t.check(smooth.albedo_texture.get_image().has_mipmaps(), "its picture has mipmaps (Godot's glTF reader makes none)")
+		t.check(smooth.normal_texture != null and smooth.normal_texture.get_image().has_mipmaps(), "and so has its normal map")
+		t.eq(smooth.alpha_antialiasing_mode, BaseMaterial3D.ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE_AND_TO_ONE, "a cut-out gets smooth edges")
+	(res.root as Node3D).free()
+	var obj := ObjImport.parse(CUBE_OBJ, {"cube.mtl": CUBE_MTL.to_utf8_buffer(), "tex.png": _png()}, ModelBudget.for_tier("high"))
+	var om := ((obj.root as Node3D).get_child(0) as MeshInstance3D).mesh.surface_get_material(0) as BaseMaterial3D
+	ModelLoader.smooth(obj.root)
+	t.eq(om.texture_filter, BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC, "an OBJ's pictures are filtered the same way")
+	(obj.root as Node3D).free()
 
 
 ## +1 when the triangles' right-hand normals agree with the vertex normals, -1 when they are opposite.

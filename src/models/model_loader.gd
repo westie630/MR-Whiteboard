@@ -184,6 +184,7 @@ static func _load_files(files: Dictionary, main: String, budget: ModelBudget) ->
 	if not bool(res.get("ok", false)):
 		return res
 	var root: Node3D = res.root
+	smooth(root)
 	var box := bounds(root)
 	if box.size == Vector3.ZERO:
 		root.free()
@@ -284,7 +285,7 @@ static func _inline(files: Dictionary, main: String) -> PackedByteArray:
 	return JSON.stringify(json).to_utf8_buffer()
 
 
-## A picture no bigger than the budget allows (on the graphics chip), with its mipmaps.
+## A picture no bigger than the budget allows (on the graphics chip). Its mipmaps are made by smooth(), which knows which pictures are normal maps.
 static func _shrink(tex: Texture2D, budget: ModelBudget) -> void:
 	if not (tex is ImageTexture):
 		return
@@ -295,10 +296,46 @@ static func _shrink(tex: Texture2D, budget: ModelBudget) -> void:
 	if longest <= budget.max_texture:
 		return
 	var k := float(budget.max_texture) / float(longest)
+	img.clear_mipmaps()
 	img.resize(maxi(roundi(img.get_width() * k), 1), maxi(roundi(img.get_height() * k), 1), Image.INTERPOLATE_LANCZOS)
-	if not img.has_mipmaps():
-		img.generate_mipmaps()
 	(tex as ImageTexture).set_image(img)
+
+
+## Makes the materials of a model steady to look at in a headset, where the head never stays still. Every picture gets its mipmaps (Godot's glTF
+## reader makes none, and a file's sampler may ask for none): without them a picture seen from further than arm's length is sampled from its
+## full size, and its pixels crawl and sparkle as you move; normal maps the same, in the highlights. Filtering is anisotropic, so surfaces seen
+## at a slant stay sharp. Cut-out materials (leaves, fences: alpha scissor) get smooth edges from the multisampling (alpha to coverage).
+## A file that asks for nearest filtering (pixel art) keeps its square pixels up close.
+static func smooth(root: Node) -> void:
+	var done := {}
+	for n in root.find_children("*", "GeometryInstance3D", true, false):
+		var mats: Array = [(n as GeometryInstance3D).material_override]
+		if n is MeshInstance3D and (n as MeshInstance3D).mesh != null:
+			var mi := n as MeshInstance3D
+			for s in mi.mesh.get_surface_count():
+				mats.append(mi.mesh.surface_get_material(s))
+				mats.append(mi.get_surface_override_material(s))
+		for m in mats:
+			if m is BaseMaterial3D and not done.has(m):
+				done[m] = true
+				_smooth_material(m as BaseMaterial3D, done)
+
+
+static func _smooth_material(m: BaseMaterial3D, done: Dictionary) -> void:
+	var nearest := m.texture_filter in [BaseMaterial3D.TEXTURE_FILTER_NEAREST, BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS, BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS_ANISOTROPIC]
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS_ANISOTROPIC if nearest else BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	if m.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR:
+		m.alpha_antialiasing_mode = BaseMaterial3D.ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE_AND_TO_ONE
+	for i in BaseMaterial3D.TEXTURE_MAX:
+		var tex := m.get_texture(i)
+		if not (tex is ImageTexture) or done.has(tex):
+			continue
+		done[tex] = true
+		var img := tex.get_image()
+		if img == null or img.is_compressed() or img.has_mipmaps() or img.get_width() < 2 or img.get_height() < 2:
+			continue
+		img.generate_mipmaps(i == BaseMaterial3D.TEXTURE_NORMAL)       # (normal maps: each smaller level made unit length again)
+		(tex as ImageTexture).set_image(img)
 
 
 ## A picture from a file's bytes (`ext` its extension), within the budget, with mipmaps; null if it cannot be read.
