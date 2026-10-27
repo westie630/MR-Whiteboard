@@ -41,6 +41,7 @@ func _ready() -> void:
 	await _handles()
 	await _two_hands()
 	await _one_hand_turn()
+	await _pinch_pen()
 	await _priority_and_locks()
 	await _lay_down()
 	_saving()
@@ -555,6 +556,36 @@ func _one_hand_turn() -> void:
 	hand.grip = Basis.IDENTITY
 	away()
 	await ticks(1)
+
+
+func _pinch_pen() -> void:
+	# no stylus and "Draw with a pinch": the right hand is the board's pen (source "pinch"), and its pinch still carries a model
+	var c := node().global_position
+	var pen := PenState.new()
+	pen.source = "pinch"
+	pen.tracked = true
+	pen.dir = Vector3.FORWARD
+	var p := c + Vector3(0.03, 0.0, 0.0)
+	for k in range(0, 8):
+		pen.tip = p + Vector3(0, 0.01 * maxi(k - 1, 0), 0)
+		pen.pressure = 0.7 if k > 0 else 0.0
+		pen.down = k > 0
+		await get_tree().process_frame
+		board.tick(pen, [], 0.016)
+	await get_tree().process_frame
+	board.tick(pen, [], 0.016)
+	t.check(board.model_ctl._holds.has("pen"), "a pinch of the hand that is the pen carries a model")
+	t.near(node().global_position.distance_to(c + Vector3(0, 0.06, 0)), 0.0, 0.003, "and the model follows it")
+	pen.down = false
+	pen.pressure = 0.0
+	await get_tree().process_frame
+	board.tick(pen, [], 0.016)
+	t.check(not board.model_ctl._holds.has("pen"), "until it lets go")
+	await get_tree().process_frame
+	board.tick(PenState.new(), [], 0.016)
+	board.undo()
+	await ticks(2)
+	t.near(node().global_position.distance_to(c), 0.0, 0.002, "(undone)")
 
 
 func _priority_and_locks() -> void:

@@ -125,13 +125,13 @@ func update(hands: Array, dt: float, pen: PenState = null) -> void:
 
 ## The stylus as a pointer: the nib is its pinch point and its body the ray, the front button pinches (as in HandController). The mouse: its
 ## ray from the eye, and either button that acts (left: the "nib", Shift+left: the front button) pinches; its pinch point stays at the depth
-## it pressed at.
+## it pressed at. Without a stylus the right hand is the pen (Draw with a pinch): its pinch is the pinch, as for a free hand.
 func _feed_pen(pen: PenState) -> HandInput:
 	_pen_state = pen
 	var p := _pen_ptr
 	p.pinch_down = false
 	p.pinch_up = false
-	var live := pen != null and pen.tracked and not pen.docked and (pen.source == "stylus" or pen.source == "mouse")
+	var live := pen != null and pen.tracked and not pen.docked and (pen.source == "stylus" or pen.source == "mouse" or pen.source == "pinch")
 	if not live:
 		_armed = false
 		_prev_press = false
@@ -151,9 +151,10 @@ func _feed_pen(pen: PenState) -> HandInput:
 	p.live_d = p.aim_d
 	p.press_o = o
 	p.press_d = p.aim_d
-	var press := pen.front or (_pen_mouse and pen.down)
+	var by_hand := pen.source == "pinch"
+	var press := pen.front or ((_pen_mouse or by_hand) and pen.down)
 	if press and not _prev_press:
-		_armed = board.pen_ctl.state == PenController.S.IDLE and not board.hand_ctl.pen_busy() and (_pen_mouse or not pen.down)
+		_armed = board.pen_ctl.state == PenController.S.IDLE and not board.hand_ctl.pen_busy() and (_pen_mouse or by_hand or not pen.down)
 	_prev_press = press
 	if not press:
 		_armed = false
@@ -163,7 +164,7 @@ func _feed_pen(pen: PenState) -> HandInput:
 	p.pinching = now
 	p.pinch_point = o + p.aim_d * _mouse_depth if _pen_mouse else pen.tip
 	p.has_grip = not _pen_mouse
-	p.grip = pen.basis
+	p.grip = pen.basis                                   # (a pinch: the hand's own orientation, set by the rig)
 	return p
 
 
@@ -231,7 +232,7 @@ func _hand_busy(side: String) -> bool:
 		return true
 	if hc._pens.has(side) and (hc._pens[side] as PenController).state != PenController.S.IDLE:
 		return true
-	return side == "pen" and _pen_state != null and (_pen_state.down and not _pen_mouse or board.pen_ctl.state != PenController.S.IDLE)
+	return side == "pen" and _pen_state != null and (_pen_state.down and _pen_state.source == "stylus" or board.pen_ctl.state != PenController.S.IDLE)
 
 
 ## The canvas this pointer is on (as the HandController would see it): {t, direct, ...} or {}.

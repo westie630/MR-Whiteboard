@@ -339,7 +339,7 @@ Needs the hands > 4 cm apart to start. Letting go with one hand re-bases the oth
 
 | Hand | Role |
 |---|---|
-| **Right** | draws: the **pinch point** is the nib (so you must be within 12 cm of the canvas, like the stylus), pinching = pen-down, fixed pressure 0.7. It uses the *current tool* like the stylus (so Select works through the nib), but this hand no longer grabs canvases |
+| **Right** | draws: the **pinch point** is the nib (so you must be within 12 cm of the canvas, like the stylus), pinching = pen-down, fixed pressure 0.7. It uses the *current tool* like the stylus (so Select works through the nib), but this hand no longer grabs canvases. A pinch on a **3D model** (touching or pointing) still carries, selects and turns it, as for a free hand |
 | **Left** | the normal pointing hand |
 
 When the right hand touches or presses the menu it is captured and does not draw. A docked or absent stylus switches to this mode; with the setting off, no stylus means two pointing hands and nothing draws.

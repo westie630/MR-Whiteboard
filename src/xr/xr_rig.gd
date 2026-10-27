@@ -738,6 +738,7 @@ func _process(delta: float) -> void:
 			bp.tracked = draw_hand.tracked and not captured.get("right", false)
 			bp.tip = draw_hand.pinch_point
 			bp.dir = draw_hand.aim_d
+			bp.basis = draw_hand.grip                      # (a pinch on a 3D model turns it with the hand)
 			bp.down = draw_hand.pinching
 			bp.pressure = 0.7 if draw_hand.pinching else 0.0
 			bp.haptic = Callable()

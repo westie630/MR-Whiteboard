@@ -142,9 +142,10 @@ func update(hands: Dictionary, menu: Dictionary, hover: Dictionary, head: Vector
 		elif models.has("pen"):
 			var pmv: Dictionary = models["pen"]
 			var mk := _model_kind(str(pmv.kind))
-			_ring(ps, pmv.point, mk, pen.front, false, head)
+			var squeezed := pen.front or (pen.source == "pinch" and pen.down)
+			_ring(ps, pmv.point, mk, squeezed, false, head)
 			if rays and not bool(pmv.get("direct", false)):
-				beam.aim(pen.tip, pen.dir, pmv.point, _color(mk, pen.front), pen.front, _ring_r(head, pmv.point))
+				beam.aim(pen.tip, pen.dir, pmv.point, _color(mk, squeezed), squeezed, _ring_r(head, pmv.point))
 		elif not pv.is_empty() and is_instance_valid(pv.fn) and (not bool(pv.get("direct", false)) or str(pv.kind) == "hold"):
 			_ring(ps, pv.point, str(pv.kind), pen.front, false, head)
 			_chrome(ps, pv)
