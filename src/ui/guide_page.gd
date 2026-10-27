@@ -181,6 +181,7 @@ const TOPICS := [
 			"On a PC on the same Wi-Fi: Home, Share, switch on the web page, open its address and type the code. Drop a model on the page: a glTF .glb (or a .gltf with its .bin), or an .obj together with its .mtl and pictures, or all of them in one .zip. It stands in front of you, lit. An .mtl and pictures sent a few minutes after their .obj (or before it) are joined to it.",
 			"A model the headset has already: Add (+), 3D model, then tap it. Or Home, Docs, 3D models.",
 			"Tap a model (pinch, or the stylus front button) to select it: handles appear round it and a bar under it. Pinch the model itself (your hand in it) and move or turn your hand to carry and turn it: the box and handles hide while it moves, tap it to get them back. A second hand on it turns and resizes it.",
+			"Or grab it like a real thing: put your open hand in it and close it into a fist. It moves and turns with your hand until you open it.",
 			"The bar switches the handles: Move (arrows, squares, the ball in the middle), Rotate (rings), Scale (cubes). Snap moves in centimetres and turns in 15 degree steps.",
 			"Put down lets it stand on the table or the floor under it, with its shadow. Real size is as big as the file says. Reset makes it upright again.",
 			"In a session every headset is given the model by the owner, once, and sees it move while somebody holds it. A Quest 2 takes smaller, simpler models; if it cannot show one, a box of its size says why.",

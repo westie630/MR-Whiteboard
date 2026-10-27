@@ -115,7 +115,9 @@ Each headset then loads the model itself within its own budget (`ModelBudget`: a
 1.5 million and 2048 px; both make simpler versions of detailed meshes for a distance). A model over a headset's limit is not shown there: a box of its
 size says *too detailed for this headset*, and the other headsets are not held up. Moving, turning, resizing and stretching go through `Board.grabs`,
 so the others see the model move while it is held (`LiveOut` sends its pose, scale and stretch) and get the result when it is let go. Adding,
-moving and deleting models follow *Guests can add and move canvases*. Protocol 3 (a headset with an older build is told to update).
+moving and deleting models follow *Guests can add and move canvases*. A guest needs no stylus: a pinch, or a fist closed in the model (read from each
+headset's own hand tracking, a Quest 2's too), carries it through the same grabs; nothing new goes over the network. Protocol 3 (a headset with an
+older build is told to update).
 
 ## 5. Presence
 

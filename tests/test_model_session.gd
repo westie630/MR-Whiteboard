@@ -150,6 +150,33 @@ func drag(h: Dictionary, o: Vector3, from: Vector3, to: Vector3, mid_check: Call
 	await tick(2)
 
 
+## A carry with a fist (a guest has no stylus): `h`'s right hand closes at `from`, moves by `to - from`, opens.
+func fist_carry(h: Dictionary, from: Vector3, to: Vector3, mid_check: Callable = Callable()) -> void:
+	var hand := HandInput.new("right")
+	h.hands = [hand]
+	for k in range(0, 9):
+		var at := from if k < 3 else from.lerp(to, (k - 2) / 5.0)
+		var closed := k >= 2 and k < 8
+		if k == 8:
+			at = to
+		hand.tracked = true
+		hand.fist_point = at
+		hand.pinch_point = at + Vector3(0, 0, 0.5)           # (its pinch point is not on the model)
+		hand.aim_o = hand.pinch_point
+		hand.aim_d = Vector3.BACK
+		hand.fist_down = closed and not hand.fist
+		hand.fist_up = hand.fist and not closed
+		hand.fist = closed
+		await tick()
+		hand.fist_down = false
+		if k == 6 and mid_check.is_valid():
+			for i in 10:
+				await tick()
+			mid_check.call()
+	h.hands = []
+	await tick(2)
+
+
 static func _box_glb() -> PackedByteArray:
 	var root := Node3D.new()
 	var mi := MeshInstance3D.new()
@@ -240,6 +267,9 @@ func run() -> void:
 	await settle(0.3)
 	t.near(in_room(H).distance_to(start_a), 0.0, 0.002, "Ana cannot carry it while guests may not move things")
 	t.near(in_room(A).distance_to(start_a), 0.0, 0.002, "(nor on her own headset)")
+	await fist_carry(A, ca, ca + Vector3(0.0, 0.2, 0.0))
+	await settle(0.3)
+	t.near(in_room(H).distance_to(start_a), 0.0, 0.002, "nor with her fist")
 	sess(H).set_canvas_edit(true)
 	t.check(await until(func(): return sess(A).can_edit_canvases()), "the owner lets guests move things")
 	ca = model_node(A).global_position
@@ -257,6 +287,15 @@ func run() -> void:
 	t.check(bare[0], "Ana's hand in the selected model carries it with no box or handles showing")
 	t.check(await until(func(): return absf(in_room(H).x - start_b.x - 0.1) < 0.005), "1:1, and the owner sees it: %s" % str(in_room(H) - start_b))
 	t.check(actl.selected == "", "let go, it stays unselected for her")
+	# her fist closed in it: grabbed as in real life, the owner sees it move while she holds it and where she lets go
+	var cf := model_node(A).global_position
+	var start_f := in_room(H)
+	var held := [false]
+	await fist_carry(A, cf + Vector3(0.03, 0, 0), cf + Vector3(0.03, 0, -0.15), func():
+		held[0] = actl.fist_holds("right") and bd(H).remote_grabs.has(model_frame(H).id))
+	t.check(held[0], "Ana's fist holds it and the owner sees it move meanwhile")
+	t.check(await until(func(): return absf(in_room(H).z - start_f.z + 0.15) < 0.005), "1:1, and it stays where she opens her hand: %s" % str(in_room(H) - start_f))
+	t.check(await until(func(): return absf(in_room(B).z - in_room(H).z) < 0.005), "Ben (a Quest 2) sees it there too")
 	t.check(fa != null, "(Ana's frame was there)")
 
 	# ---- an .mtl sent after its .obj: where the model stands, every headset shows the one with its materials

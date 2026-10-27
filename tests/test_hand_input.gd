@@ -32,6 +32,39 @@ func _grip(t: TestCase) -> void:
 	t.check(rad_to_deg((h.grip * still.inverse()).get_rotation_quaternion().get_angle()) < 0.5, "a one-degree twitch of a still hand is mostly smoothed away")
 
 
+## A fist from the joints: every fingertip curled in to the palm. A pinch with the other fingers curled is not one (the index is out at
+## the thumb); it opens again once the fingers are out; nothing without the fingertips (the PC's hand).
+func _fist(t: TestCase) -> void:
+	var h := HandInput.new("left")
+	var palm := Vector3(0.0, 1.2, -0.35)
+	var feed := func(index: float, others: float) -> void:
+		var out := Vector3(0, 0, -1)
+		h.feed(1.0 / 72.0, head, {"valid": true, "tip": palm + out * index, "thumb": palm + Vector3(0.04, 0.0, -0.05), "knuckle": palm + out * 0.05,
+			"palm": palm, "palm_normal": Vector3(0, -1, 0), "hand_fwd": out * 0.09, "hand_len": 0.09,
+			"fingers": [palm + out * index, palm + out * others, palm + out * others, palm + out * others]})
+	feed.call(0.11, 0.11)
+	t.check(not h.fist and h.curl > 1.0, "an open hand is no fist (curl %.2f)" % h.curl)
+	feed.call(0.06, 0.03)
+	t.check(not h.fist, "a pinch with the other fingers curled is no fist (curl %.2f)" % h.curl)
+	feed.call(0.075, 0.075)
+	t.check(not h.fist, "nor is a relaxed hand")
+	feed.call(0.03, 0.03)
+	t.check(h.fist and h.fist_down, "all four fingertips in to the palm: a fist")
+	t.near(h.fist_point.distance_to(h.palm + Vector3(0, -1, 0) * InputTuning.FIST_OUT), 0.0, 1e-5, "what it holds is in front of the palm")
+	feed.call(0.045, 0.045)
+	t.check(h.fist and not h.fist_down, "loosening a little keeps it closed")
+	feed.call(0.08, 0.08)
+	t.check(not h.fist and h.fist_up, "opening the fingers opens it")
+	var pc := HandInput.new("right")
+	pc.feed(1.0 / 72.0, head, {"valid": true, "tip": palm, "thumb": palm, "knuckle": palm, "palm": palm, "palm_normal": Vector3(0, -1, 0)})
+	t.check(not pc.fist, "no fingertips (the PC's hand): never a fist")
+	feed.call(0.03, 0.03)
+	t.check(h.fist, "(closed again)")
+	for i in 20:
+		h.feed(1.0 / 72.0, head, {"valid": false})
+	t.check(not h.fist and not h.tracked, "a hand lost from view lets go")
+
+
 func _ready() -> void:
 	var t := TestCase.new("hand_input")
 	var h := HandInput.new("right")
@@ -85,4 +118,5 @@ func _ready() -> void:
 	t.near(InputTuning.carry_gain(Vector3(0, 1.6, 0), Vector3(0, 1.6, -3.0), Vector3(0, 1.6, -0.5)), 6.0, 1e-6, "carrying gain is capped at MAX_GAIN")
 	t.near(InputTuning.carry_gain(Vector3(0, 1.6, 0), Vector3(0, 1.6, -0.4), Vector3(0, 1.6, -0.5)), 1.0, 1e-6, "...and never below 1")
 	_grip(t)
+	_fist(t)
 	get_tree().quit(t.done())

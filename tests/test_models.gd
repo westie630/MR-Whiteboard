@@ -2,7 +2,8 @@ extends Node
 ## 3D models on a real board: the library (glTF .glb, a .gltf with its .bin beside it, an .obj with its .mtl and picture, a .zip, what is
 ## refused and why), the OBJ reader (normals, winding, materials), a model put down in front of you, fitted to the room when it is first
 ## loaded, and every handle of the gizmo driven by simulated hands: tap to select, carry it, slide along an axis, turn on a ring (with snap),
-## resize at a corner, stretch along an axis, two hands turning and resizing it, a canvas in front of it taking the pointer, a locked place,
+## resize at a corner, stretch along an axis, two hands turning and resizing it, a fist grabbing it as in real life, a canvas in front of it
+## taking the pointer, a locked place,
 ## putting it down on the floor, undo, saving, the device budget (a Quest 2 refusing a model that is too detailed) and the web page.
 
 const HEAD := {"x-requested-with": "mrw"}
@@ -43,6 +44,7 @@ func _ready() -> void:
 	await _handles()
 	await _two_hands()
 	await _one_hand_turn()
+	await _fist()
 	await _pinch_pen()
 	await _priority_and_locks()
 	await _lay_down()
@@ -69,6 +71,9 @@ func ticks(n: int = 1) -> void:
 		hand.pinch_up = false
 		left.pinch_down = false
 		left.pinch_up = false
+		for h in [hand, left]:
+			(h as HandInput).fist_down = false
+			(h as HandInput).fist_up = false
 
 
 func _hands() -> Array:
@@ -113,11 +118,28 @@ func touch(p: Vector3, pinch: bool, h: HandInput = hand) -> void:
 	h.pinching = pinch
 
 
+## A hand closed into a fist (or opened) with what it holds at `p`; its pinch point is elsewhere, its ray points away.
+func fist(p: Vector3, closed: bool, h: HandInput = hand) -> void:
+	h.tracked = true
+	h.aiming = false
+	h.palm_up = false
+	h.fist_point = p
+	h.pinch_point = p + Vector3(0, 0, 0.3)
+	h.tip = h.pinch_point
+	h.aim_o = h.pinch_point
+	h.aim_d = Vector3.BACK
+	h.press_o = h.aim_o
+	h.press_d = h.aim_d
+	h.fist_down = closed and not h.fist
+	h.fist_up = h.fist and not closed
+	h.fist = closed
+
+
 func away() -> void:
-	hand.tracked = false
-	hand.pinching = false
-	left.tracked = false
-	left.pinching = false
+	for h in [hand, left]:
+		(h as HandInput).tracked = false
+		(h as HandInput).pinching = false
+		(h as HandInput).fist = false
 
 
 ## A drag with the right hand's ray from `o`: pinch on `from`, move to `to` in a few steps, let go.
@@ -660,6 +682,127 @@ func _one_hand_turn() -> void:
 	await ticks(2)
 	hand.has_grip = false
 	hand.grip = Basis.IDENTITY
+	away()
+	await ticks(1)
+
+
+## A fist grabs a model as in real life: closed in (or at) it, it holds it at once (no tap first), 1:1, turning about the fist, until it opens;
+## one undo step. A fist away from it, or an open hand in it, takes nothing; a fist in the selected model takes the model, not the handles;
+## a pinch carrying it hands it to a fist where it is; a fist and a pinch turn and resize it together.
+func _fist() -> void:
+	var ctl := board.model_ctl
+	ctl.deselect()
+	var c := node().global_position
+	var b0 := node().global_transform.basis.orthonormalized()
+	var p := c + Vector3(0.04, 0.0, 0.0)
+	hand.has_grip = true
+	hand.grip = Basis.IDENTITY
+	fist(p, false)
+	await ticks(1)
+	t.check(not ctl.claimed.has("right"), "an open hand in a model takes nothing (its pinch point is elsewhere)")
+	fist(p, true)
+	await ticks(1)
+	t.check(ctl.fist_holds("right"), "a fist closing in the model holds it at once")
+	t.check(ctl.claimed.has("right"), "and the canvases leave that hand alone")
+	for k in range(1, 7):
+		hand.grip = Basis(Vector3.UP, deg_to_rad(10.0 * k))
+		fist(p + Vector3(0, 0.01 * k, -0.01 * k), true)
+		await ticks(1)
+	await ticks(1)
+	var turn := Basis(Vector3.UP, deg_to_rad(60.0))
+	var want := p + Vector3(0, 0.06, -0.06) + turn * (c - p)
+	t.check(node().global_position.distance_to(want) < 0.003, "it moves 1:1 with the fist and turns about it: %s" % str(node().global_position - want))
+	var b := node().global_transform.basis.orthonormalized()
+	t.near(rad_to_deg((b * b0.inverse()).get_rotation_quaternion().get_angle()), 60.0, 0.5, "by as much as the hand turned")
+	t.check(ctl.selected == "" and not ctl.gizmo.visible, "no box or handles while it is held")
+	fist(p + Vector3(0, 0.06, -0.06), false)
+	await ticks(2)
+	t.check(not ctl.fist_holds("right") and not ctl.is_holding(), "opening the hand lets go")
+	var moved := node().global_position
+	fist(p + Vector3(0, 0.2, 0), false)
+	await ticks(2)
+	t.near(node().global_position.distance_to(moved), 0.0, 1e-4, "and it stays where it was let go")
+	board.undo()
+	await ticks(2)
+	t.near(node().global_position.distance_to(c), 0.0, 0.002, "one undo step puts it back")
+	hand.grip = Basis.IDENTITY
+	# a fist closed away from it takes nothing
+	var off := c + Vector3(0.0, 0.0, node().world_box().half.z + InputTuning.FIST_REACH + 0.05)
+	fist(off, false)
+	await ticks(1)
+	fist(off, true)
+	await ticks(1)
+	t.check(not ctl.is_holding(), "a fist closed away from the model takes nothing")
+	fist(c, true)
+	await ticks(2)
+	t.check(not ctl.is_holding(), "nor does a closed fist pushed into it (it closes in it, as in real life)")
+	fist(c, false)
+	await ticks(1)
+	# the selected model: the fist takes the model itself, whatever handle is inside it
+	ctl.select(fid)
+	await ticks(1)
+	fist(c, true)
+	await ticks(1)
+	t.check(ctl.fist_holds("right") and str((ctl._holds["right"] as Dictionary).what) == ModelController.BODY, "a fist in the selected model takes the model, not a handle")
+	t.check(ctl.selected == "", "(which hides its handles)")
+	fist(c + Vector3(0.05, 0, 0), true)
+	await ticks(1)
+	fist(c + Vector3(0.05, 0, 0), false)
+	await ticks(2)
+	board.undo()
+	await ticks(2)
+	# a pinch carrying it, then the hand closes: the fist takes it over where it is, no jump
+	touch(p, false)
+	await ticks(1)
+	touch(p, true)
+	await ticks(1)
+	touch(p + Vector3(0.05, 0, 0), true)
+	await ticks(2)
+	t.check(ctl._holds.has("right") and not ctl.fist_holds("right"), "(a pinch carries it)")
+	var at := node().global_position
+	hand.fist_point = p + Vector3(0.05, 0, 0.02)
+	hand.fist_down = true
+	hand.fist = true
+	await ticks(1)
+	t.check(ctl.fist_holds("right"), "the hand closing into a fist takes it over")
+	t.near(node().global_position.distance_to(at), 0.0, 1e-4, "without a jump")
+	hand.pinching = false                                # (the pinch opens inside the fist: it still holds)
+	fist(p + Vector3(0.05, 0.05, 0.02), true)
+	await ticks(2)
+	t.near(node().global_position.distance_to(at + Vector3(0, 0.05, 0)), 0.0, 0.002, "and carries on from there")
+	fist(p + Vector3(0.05, 0.05, 0.02), false)
+	await ticks(2)
+	t.check(not ctl.is_holding(), "(let go)")
+	board.undo()
+	await ticks(2)
+	# a fist and a pinch on it: they turn and resize it like two pinches
+	c = node().global_position
+	var s0 := frame().scale
+	fist(c + Vector3(0.05, 0, 0), false)
+	touch(c - Vector3(0.05, 0, 0), false, left)
+	await ticks(1)
+	fist(c + Vector3(0.05, 0, 0), true)
+	touch(c - Vector3(0.05, 0, 0), true, left)
+	await ticks(1)
+	touch(c - Vector3(0.08, 0, 0), true, left)
+	await ticks(2)
+	for k in range(1, 9):
+		var half := 0.06 + 0.0125 * k
+		var tk := Basis(Vector3.UP, deg_to_rad(5.0 * k))
+		fist(c + tk * Vector3(half, 0, 0), true)
+		touch(c - tk * Vector3(half, 0, 0), true, left)
+		await ticks(1)
+	t.check(ctl.fist_holds("right") and ctl._holds.has("left"), "(both hold it)")
+	fist(c, false)
+	touch(c, false, left)
+	await ticks(2)
+	t.check(frame().scale / s0 > 1.2, "a fist and a pinch moving apart resize it (x%.2f)" % (frame().scale / s0))
+	b = node().global_transform.basis.orthonormalized()
+	t.check(rad_to_deg(atan2(-b.x.z, b.x.x)) > 20.0, "and turning together turn it (%.1f deg)" % rad_to_deg(atan2(-b.x.z, b.x.x)))
+	board.undo()
+	await ticks(2)
+	t.near(frame().scale, s0, 1e-4, "(undone)")
+	hand.has_grip = false
 	away()
 	await ticks(1)
 

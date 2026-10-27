@@ -8,6 +8,9 @@ extends RefCounted
 ##    if it were in the hand; pointing, about its middle. A second pointer on it turns and resizes it with the first (in any direction); while it
 ##    is carried it shows no box, no handles and no bar, and it stays unselected afterwards (a tap selects it again). A hand inside the
 ##    selected model grabs the model, not the handles inside it (those are pointed at; the ones outside it can be touched too),
+##  - a fist closed in (or on) a model grabs it as in real life: at once, 1:1, turning with the hand about the fist, until the hand opens; a
+##    pinch carrying the model hands it to the fist where it is. A fist never takes a handle, and only touches (two fists, or a fist and a
+##    pinch, turn and resize it like two pinches),
 ##  - the handles of the selected model: Move (an arrow slides along an axis, a square in a plane, the ball moves freely), Rotate (a ring
 ##    turns about its axis), Scale (a corner makes it bigger or smaller about its middle, an axis cube stretches it along its own axis).
 ## Snap (the bar) moves in centimetre steps, turns in 15 degree steps and sizes in centimetre steps. Every hold is one undo step, done through
@@ -34,6 +37,7 @@ var _holds: Dictionary = {}                # side -> {fid, what, p0, xf0, scale0
 var _taps: Dictionary = {}                 # side -> {fid, p0, point, direct}: a pinch on a model, not yet a drag or a tap
 var _two: Dictionary = {}                  # two pointers turning and resizing one model
 var _pen_ptr := HandInput.new("pen")
+var _fists := {"left": HandInput.new("left"), "right": HandInput.new("right")}   # a fist as a pointer: what it holds is its pinch point
 var _pen_mouse := false
 var _pen_state: PenState
 var _armed := false
@@ -92,6 +96,11 @@ func is_holding() -> bool:
 	return not _holds.is_empty() or not _taps.is_empty()
 
 
+## This hand's fist holds a model.
+func fist_holds(side: String) -> bool:
+	return bool((_holds.get(side, {}) as Dictionary).get("fist", false))
+
+
 ## The stylus (or the mouse) is busy with a model: no stroke may start under it.
 func pen_busy() -> bool:
 	return _holds.has("pen") or _taps.has("pen")
@@ -116,6 +125,9 @@ func update(hands: Array, dt: float, pen: PenState = null) -> void:
 		if h == null or not h.tracked:
 			_release(side)
 			_taps.erase(side)
+			continue
+		if side != "pen" and _update_fist(side, h):
+			seen[side] = _fists[side]                    # (two hands on it turn and resize it from the fist)
 			continue
 		_update_pointer(side, h)
 	_update_two(seen)
@@ -223,6 +235,67 @@ func _update_pointer(side: String, h: HandInput) -> void:
 	else:
 		_taps[side] = {"fid": t.fid, "p0": h.pinch_point, "b0": h.grip, "point": t.point, "direct": t.direct}
 		_tick(side, 0.3, 0.02)
+
+
+## A fist closing in (or on) a model takes hold of it, holds it while it stays closed and lets go as it opens. A pinch carrying that model
+## (touching it) is taken over where the model is; a pinch on a handle keeps it. true while the fist holds (the pinch is not looked at then).
+func _update_fist(side: String, h: HandInput) -> bool:
+	var hold: Dictionary = _holds.get(side, {})
+	if bool(hold.get("fist", false)):
+		claimed[side] = true
+		if h.fist:
+			_step(side, _fist_ptr(side, h))
+		else:
+			_release(side)
+		return true
+	if not h.fist_down or (not hold.is_empty() and str(hold.what) != BODY) or (hold.is_empty() and _hand_busy(side)):
+		return false
+	var fid := _fist_model(h.fist_point)
+	if fid == "" or (not hold.is_empty() and str(hold.fid) != fid):
+		return false
+	var fp := _fist_ptr(side, h)
+	_taps.erase(side)
+	if hold.is_empty():
+		_begin_hold(side, fp, fid, BODY, {"direct": true})
+		if not _holds.has(side):
+			return false
+		hold = _holds[side]
+	else:
+		var g: Dictionary = board.grabs[fid]
+		hold.merge({"xf0": g.xf, "c0": (g.xf as Transform3D).origin, "scale0": float(g.scale), "p0": fp.pinch_point, "b0": fp.grip,
+			"direct": true, "gain": 1.0}, true)
+		if not _two.is_empty() and str(_two.fid) == fid:
+			_two = {}                                    # (both hands start again from here)
+	hold.fist = true
+	claimed[side] = true
+	_step(side, fp)
+	return true
+
+
+## The model a fist closing at `p` takes: the one it is in (or at), the nearest middle first; "" none.
+func _fist_model(p: Vector3) -> String:
+	var best := ""
+	var best_d := INF
+	for fid in board.model_nodes:
+		var mn: ModelNode = board.model_nodes[fid]
+		if mn.visible and not _locked(fid) and mn.contains(p, InputTuning.FIST_REACH) and p.distance_to(mn.global_position) < best_d:
+			best_d = p.distance_to(mn.global_position)
+			best = fid
+	return best
+
+
+## The fist as a pointer: closed = pinching, what it holds = the pinch point, the hand's orientation.
+func _fist_ptr(side: String, h: HandInput) -> HandInput:
+	var p: HandInput = _fists[side]
+	p.tracked = h.tracked
+	p.pinching = h.fist
+	p.pinch_point = h.fist_point
+	p.tip = h.fist_point
+	p.aim_o = h.fist_point
+	p.aim_d = h.aim_d
+	p.grip = h.grip
+	p.has_grip = h.has_grip
+	return p
 
 
 ## Is this pointer busy with a canvas (holding one, or the pen in the middle of something)?

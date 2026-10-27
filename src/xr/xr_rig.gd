@@ -18,7 +18,11 @@ const J_WRIST := 1
 const J_THUMB_TIP := 5
 const J_INDEX_PROX := 7
 const J_INDEX_TIP := 10
+const J_MIDDLE_PROX := 12
+const J_MIDDLE_TIP := 15
+const J_RING_TIP := 20
 const J_LITTLE_PROX := 22
+const J_LITTLE_TIP := 25
 const QUALITY := {"performance": 1.0, "sharp": 1.4, "ultra": 1.8}
 const POKE_PRESS := InputTuning.POKE_PRESS     # a fingertip or nib this close in front of the menu presses (the tracked tip sits inside the finger)...
 const POKE_RELEASE := InputTuning.POKE_RELEASE # ...and lets go this far out
@@ -67,6 +71,8 @@ var _stylus_away_s := 0.0                  # how long its hand has been away fro
 var _stylus_rest := Vector3.ZERO           # where it was put down
 var _front_t := 0.0
 var _pinch_peak := {}                      # side -> the strongest pinch since the last status line (for the log)
+var _fist_held := {}                       # side -> true while that hand's fist holds a 3D model (for its click)
+var _curl_low := {}                        # side -> the tightest fist since the last status line (HandInput.curl, for the log: FIST_ON / FIST_OFF)
 var _glove_mats := {}                       # side -> that glove's ShaderMaterial (its fade)
 var _glove_fade := {"left": 0.0, "right": 0.0}
 var _gloves := {}                          # side -> the Node3D holding that ghost glove
@@ -518,6 +524,11 @@ func _read_hand(side: String) -> Dictionary:
 		"palm_normal": n,
 		"hand_fwd": (idx + lit) * 0.5 - wrist,
 	}
+	if [J_MIDDLE_PROX, J_MIDDLE_TIP, J_RING_TIP, J_LITTLE_TIP].all(func(j: int) -> bool: return tr.get_hand_joint_flags(j) & XRHandTracker.HAND_JOINT_FLAG_POSITION_VALID):
+		# the fingertips and the hand's length: a fist (HandInput) grabs 3D models
+		out.fingers = [out.tip, xf * tr.get_hand_joint_transform(J_MIDDLE_TIP).origin, xf * tr.get_hand_joint_transform(J_RING_TIP).origin,
+			xf * tr.get_hand_joint_transform(J_LITTLE_TIP).origin]
+		out.hand_len = wrist.distance_to(xf * tr.get_hand_joint_transform(J_MIDDLE_PROX).origin)
 	out.merge(_read_actions(side))
 	return out
 
@@ -766,6 +777,7 @@ func _process(delta: float) -> void:
 	_update_gloves(pen, stylus_here, delta)
 	for side in ["left", "right"]:
 		_pinch_peak[side] = maxf(float(_pinch_peak.get(side, 0.0)), (hands[side] as HandInput).pinch_strength)
+		_curl_low[side] = minf(float(_curl_low.get(side, 9.0)), (hands[side] as HandInput).curl)
 	_diag_t += delta
 	_slowest = maxf(_slowest, delta)
 	if _diag_t > 5.0:
@@ -777,8 +789,9 @@ func _process(delta: float) -> void:
 		_slowest = 0.0
 		var l := hands["left"] as HandInput
 		var r := hands["right"] as HandInput
-		print("[xr] stylus=%s pen=%s down=%s hands=%d panel=%s aim L=%s R=%s pinch peak L=%.2f R=%.2f anchors: %s" % [stylus.active, str(pen.tracked), str(pen.down), board_hands.size(), str(panel.visible), _aim_note(l), _aim_note(r), float(_pinch_peak.get("left", 0.0)), float(_pinch_peak.get("right", 0.0)), anchors.status()])
+		print("[xr] stylus=%s pen=%s down=%s hands=%d panel=%s aim L=%s R=%s pinch peak L=%.2f R=%.2f curl low L=%.2f R=%.2f anchors: %s" % [stylus.active, str(pen.tracked), str(pen.down), board_hands.size(), str(panel.visible), _aim_note(l), _aim_note(r), float(_pinch_peak.get("left", 0.0)), float(_pinch_peak.get("right", 0.0)), float(_curl_low.get("left", 9.0)), float(_curl_low.get("right", 9.0)), anchors.status()])
 		_pinch_peak.clear()
+		_curl_low.clear()
 
 
 # ------------------------------------------------------------------------------------------------ menu interaction
@@ -1033,13 +1046,18 @@ func _summon_gesture(delta: float, stylus_here: bool) -> void:
 			_palm_t[side] = minf(_palm_t[side] + delta, 0.0) if _palm_t[side] < 0.0 else 0.0
 
 
-## A tick for each pinch that closes or opens (the hands have no haptics).
+## A tick for each pinch that closes or opens, and for a fist taking hold of a 3D model or letting go of it (the hands have no haptics).
 func _hand_feedback(stylus_here: bool) -> void:
 	for side in ["left", "right"]:
 		var h := hands[side] as HandInput
 		if not h.tracked or (stylus_here and side == stylus.active):
 			continue
-		if h.pinch_down:
+		var fisted := board.model_ctl.fist_holds(side)
+		if h.pinch_down or (fisted and not _fist_held.has(side)):
 			feedback.play("press")
-		elif h.pinch_up:
+		elif h.pinch_up or (not fisted and _fist_held.has(side)):
 			feedback.play("release")
+		if fisted:
+			_fist_held[side] = true
+		else:
+			_fist_held.erase(side)

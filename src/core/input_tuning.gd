@@ -18,6 +18,9 @@ const PALM_UP_Y := 0.6                     # the palm normal's Y above which the
 const AIM_DOT_PROFILE := 0.0               # the ray must point this far forward (dot with the head's forward) to count as aiming...
 const AIM_DOT_JOINT := 0.1                 # ...and this far for the finger-joint fallback ray
 const GRIP_FILTER := Vector2(1.5, 2.0)     # the hand's orientation (a grab turns what it holds): smoothing cutoff at rest (Hz), + this per rad/s
+const FIST_ON := 0.45                      # a fist: the fingertips' mean distance from the palm (and the index tip's) under this many hand lengths...
+const FIST_OFF := 0.6                      # ...and opened again when their mean is past this (an open hand is about 1.2, a relaxed one 0.8)
+const FIST_OUT := 0.025                    # what a fist holds is this far out from the palm (m)
 
 # ------------------------------------------------------------------------------------------------ stylus (StylusInput, PenController)
 const TIP_ON := 0.035
@@ -104,6 +107,7 @@ const CANVAS_SCALE := Vector2(0.15, 8.0)
 # ------------------------------------------------------------------------------------------------ 3D models (ModelController, ModelGizmo)
 const MODEL_TOUCH := 0.03                  # a pinch point or nib this far inside / outside a model's box touches it (direct, 1:1)
 const MODEL_RAY_GROW := 0.01               # a ray this close to a model's box is on it
+const FIST_REACH := 0.05                   # a fist closing with its middle this far inside / outside a model's box grabs it (a hand is not a point)
 const GIZMO_SIZE := 0.02                   # a handle's size, per metre between the head and the model (same size on the eye)...
 const GIZMO_SIZE_MIN := 0.005              # ...clamped to this range (m)
 const GIZMO_SIZE_MAX := 0.06

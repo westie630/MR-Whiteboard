@@ -6,7 +6,8 @@ extends RefCounted
 ##  - the pinch strength (0..1),
 ##  - the index fingertip (its poke pose), for touching the menu directly.
 ## The hand tracker's joints add the pinch point (between thumb and index) and the palm direction (palm up brings the menu), and stand
-## in for the ray (along the index finger) and the pinch (fingertip distance) when the runtime does not report the profile.
+## in for the ray (along the index finger) and the pinch (fingertip distance) when the runtime does not report the profile. They also tell
+## a fist (all four fingertips curled in to the palm: a 3D model is grabbed by it, as in real life), held in front of the palm (`fist_point`).
 ##
 ## Pinch stabilisation (the hand moves while the fingers close, and the raw ray slides off what it was on):
 ##  - open: the ray is the live one;
@@ -40,6 +41,11 @@ var pinch_strength := 0.0
 var pinching := false
 var pinch_down := false                    # true for the single frame the pinch closes
 var pinch_up := false                      # ...and the frame it opens
+var fist := false                          # the hand is closed into a fist (from the joints; never on the PC)
+var fist_down := false                     # true for the single frame it closes...
+var fist_up := false                       # ...and the frame it opens
+var fist_point := Vector3.ZERO             # what a fist holds: in front of the middle of the palm
+var curl := 1.0                            # how far the fingertips are from the palm, per hand length (open about 1.2, a fist about 0.3)
 var phase := Phase.OPEN
 var aiming := false                        # the ray is pointing somewhere useful (forward, palm not up)
 var system_aim := false                    # the ray comes from the runtime's aim pose (false: the index-finger fallback)
@@ -70,12 +76,15 @@ func _init(s: String = "right") -> void:
 	_f_knuckle.d_cutoff = 8.0
 
 
-## data: {valid, tip, thumb, knuckle, palm, palm_normal, hand_fwd (wrist to knuckles)} from the joints, plus from the action map when the runtime reports the hand
-## interaction profile: {aim_valid, aim_o, aim_d, pinch_value, poke}.
+## data: {valid, tip, thumb, knuckle, palm, palm_normal, hand_fwd (wrist to knuckles), fingers (the index, middle, ring and little tips),
+## hand_len (wrist to the middle knuckle)} from the joints, plus from the action map when the runtime reports the hand interaction profile:
+## {aim_valid, aim_o, aim_d, pinch_value, poke}.
 func feed(dt: float, head: Transform3D, data: Dictionary) -> void:
 	_now += dt
 	pinch_down = false
 	pinch_up = false
+	fist_down = false
+	fist_up = false
 	if not bool(data.get("valid", false)):
 		_lost += dt
 		if _lost > LOST_GRACE and tracked:
@@ -100,6 +109,7 @@ func feed(dt: float, head: Transform3D, data: Dictionary) -> void:
 	pinch_point = (raw_tip + raw_thumb) * 0.5
 	if data.has("hand_fwd"):
 		_steer_grip(data.hand_fwd, data.palm_normal, dt)
+	_fist(data)
 	# the live ray
 	var head_fwd := -head.basis.z
 	if bool(data.get("aim_valid", false)):
@@ -140,6 +150,32 @@ func _steer_grip(fwd: Vector3, normal: Vector3, dt: float) -> void:
 		_grip_q = _grip_q.slerp(q, 1.0 / (1.0 + 1.0 / (TAU * cutoff * dt))).normalized()
 	grip = Basis(_grip_q)
 	has_grip = true
+
+
+## A fist: every fingertip in to the palm (their mean distance and the index's under FIST_ON hand lengths: a pinch with the other fingers
+## curled keeps the index out at the thumb), opened again when their mean is past FIST_OFF.
+func _fist(data: Dictionary) -> void:
+	var fingers: Array = data.get("fingers", [])
+	var hand_len := float(data.get("hand_len", 0.0))
+	if fingers.size() < 4 or hand_len < 0.03:
+		curl = 1.0
+		_set_fist(false)
+		return
+	var sum := 0.0
+	for f in fingers:
+		sum += (f as Vector3).distance_to(data.palm) / hand_len
+	curl = sum / fingers.size()
+	var index := (fingers[0] as Vector3).distance_to(data.palm) / hand_len
+	_set_fist(curl < InputTuning.FIST_OFF if fist else curl < InputTuning.FIST_ON and index < InputTuning.FIST_ON)
+	fist_point = palm + (data.palm_normal as Vector3).normalized() * InputTuning.FIST_OUT
+
+
+func _set_fist(on: bool) -> void:
+	if on == fist:
+		return
+	fist = on
+	fist_down = on
+	fist_up = not on
 
 
 func _step(s: float) -> void:
@@ -204,6 +240,7 @@ func _drop() -> void:
 	if pinching:
 		pinching = false
 		pinch_up = true
+	_set_fist(false)
 	tracked = false
 	aiming = false
 	palm_up = false
