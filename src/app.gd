@@ -54,6 +54,7 @@ const DEFAULTS := {
 	"session_resume": {},              # the session this headset was in when the app stopped: started / joined again at the next start (Session)
 	"ui_scale": 1.0,                 # size of the interface (PC: its scale; headset: the panels' size)
 	"ui_fade": true,                 # the panels fade back while you draw
+	"keep_awake": false,             # the headset keeps running when it is taken off: its proximity sensor is told it is still worn (ProximitySensor)
 	"panel_pos": {},                 # PC: where the movable panels were dragged to (id -> offset from their home position)
 	"last_doc": "",
 	"sim_room": "A",                 # PC: which simulated room the anchors belong to

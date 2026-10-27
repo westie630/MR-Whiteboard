@@ -212,6 +212,7 @@ const TOPICS := [
 			"Pen and hands: choose the hand that holds the stylus, switch the clicks and stylus pulses on or off, and set how long you hold still to snap a shape.",
 			"Canvas defaults: grid lines or dots, and the backing (clear, glass, dark or white), for new canvases. Each canvas can differ in Home, Canvases.",
 			"On-screen keyboard or a pad to write on: Settings, Display.",
+			"Keep running when taken off (Settings, Display): the headset ignores the sensor that notices it coming off, so a session or the web page carries on with the headset on the desk. The screen stays on and the battery runs down; leaving the app gives the sensor back.",
 		]],
 		["try", [["settings", "Open Settings", "tab:settings"]]],
 	]},

@@ -3,7 +3,7 @@ extends RefCounted
 ## The stylesheet, the script and the icons of the web pages the app serves (see ExportServer / WebPages). Kept as strings so they
 ## travel inside the app without any extra files in the export.
 
-const VERSION := 11                     # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
+const VERSION := 12                     # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
 
 const LOGO := r"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#g)"/><path d="M14 40c6-14 11-14 14-4s8 10 12-4 6-8 10-2" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="50" cy="19" r="4" fill="#fff" opacity=".85"/></svg>"""
 
@@ -28,6 +28,7 @@ const SPRITE := r"""<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0"
 <symbol id="i-right" viewBox="0 0 24 24"><path d="m10 6 6 6-6 6"/></symbol>
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
 <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+<symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></symbol>
 <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3.5 13.9 9.6 20 11.5 13.9 13.4 12 19.5 10.1 13.4 4 11.5 10.1 9.6Z"/><path d="M19 3v3M17.5 4.5h3"/></symbol>
 <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5"/></symbol>
 <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
@@ -1130,6 +1131,31 @@ const JS := r"""
     });
     document.addEventListener('visibilitychange', function () { if (!document.hidden) kSoon(); });
     kLoad();
+  }
+
+  // ---- headset: settings of the headset itself (the proximity sensor)
+  var hsPage = $('#headset');
+  if (hsPage) {
+    var hsBox = $('#hs-awake'), hsTimer = null;
+    var hsLoad = function () {
+      clearTimeout(hsTimer);
+      fetch('/api/headset/state', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) {
+        if (r.status === 401) { location.href = '/login'; return null; }
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      }).then(function (j) {
+        if (!j) return;
+        hsBox.checked = !!j.keep_awake;
+        $('#hs-stat').textContent = j.available ? (j.keep_awake ? 'Stays on when taken off' : 'Sleeps when taken off') : 'Not a Quest: the switch has no effect here';
+        var live = $('.live'); if (live) live.classList.remove('off');
+      }).catch(function () {
+        var live = $('.live'); if (live) live.classList.add('off');
+      }).then(function () { hsTimer = setTimeout(hsLoad, document.hidden ? 8000 : 4000); });
+    };
+    hsBox.addEventListener('change', function () {
+      api('/api/headset/set', { keep_awake: hsBox.checked }).then(function (j) { toast(j.message); hsLoad(); }).catch(function (e) { toast(e.message, true); hsLoad(); });
+    });
+    hsLoad();
   }
 
   bind();

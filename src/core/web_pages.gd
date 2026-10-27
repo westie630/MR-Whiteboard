@@ -38,6 +38,7 @@ static func shell(title: String, body: String, doc_name: String = "", rev: Strin
 		out += "<a class='btn btn-ghost btn-sm' href='/live' title='Watch the canvases as they are drawn'>%s<span>Live view</span></a>" % ic("eye")
 		out += "<a class='btn btn-ghost btn-sm' href='/ai' title='Work on a canvas with an AI: keys, models, questions'>%s<span>AI</span></a>" % ic("spark")
 		out += "<a class='btn btn-ghost btn-sm' href='/keys' title='API keys for the AI assistant and speech to text'>%s<span>Keys</span></a>" % ic("lock")
+		out += "<a class='btn btn-ghost btn-sm' href='/headset' title='Settings of the headset itself'>%s<span>Headset</span></a>" % ic("power")
 		out += "<span class=live title='Live connection to the headset'><i></i><span>Connected</span></span>"
 	out += "<button class='btn btn-ghost btn-sm' id=theme title='Light / dark'>%s</button>" % ic("moon")
 	if signed_in:
@@ -274,6 +275,22 @@ static func keys(doc_name: String) -> String:
 	b += "Choose the model and thinking level on the <a href='/ai'>AI page</a>.</p>"
 	b += "</div></section></section>"
 	return shell("API keys", b, doc_name, "", true, "keys")
+
+
+# ------------------------------------------------------------------------------------------------ headset
+
+## The headset's own settings: an empty frame that the script (WebAssets.JS, "headset") fills from /api/headset/state.
+static func headset(doc_name: String) -> String:
+	var b := "<section id=headset class=ai>"
+	b += "<div class=head><div><p class=eyebrow>Settings</p><h1>Headset</h1>"
+	b += "<div class=stats><span class=chip id=hs-stat>Connecting...</span></div></div></div>"
+	b += "<section class=panel><div class=panel-h>%s<h2>Taking the headset off</h2></div><div class=ai-body>" % ic("power")
+	b += "<label class=chk><input type=checkbox id=hs-awake> Keep running when taken off</label>"
+	b += "<p class=hint>Normally the sensor inside the headset notices it being taken off: the app pauses and the headset goes to sleep. "
+	b += "With this on the headset ignores that sensor, so the app, a session and this page keep going with the headset on the desk; the screen stays on and the battery runs down. "
+	b += "It is given back to the headset when you leave or close the app. The same switch is in the headset: Home, Settings, Display.</p>"
+	b += "</div></section></section>"
+	return shell("Headset", b, doc_name, "", true, "headset")
 
 
 # ------------------------------------------------------------------------------------------------ gallery and viewer

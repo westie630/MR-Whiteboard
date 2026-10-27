@@ -29,6 +29,7 @@ extends Node
 ##   GET  /api/ai/state       what the AI page shows (keys only as their last four characters)
 ##   POST /api/ai/<command>   key | select | refresh | ask | accept | discard | show | forget  (see AiController.api)
 ##   GET  /keys               the API keys page: Claude, OpenAI, MiniMax and Wit.ai (GET /api/keys/state; POST /api/keys/set)
+##   GET  /headset            the headset's own settings: keep running when taken off (GET /api/headset/state; POST /api/headset/set)
 ##
 ## It listens only while it is switched on. Because it can change things, every page needs the 6-digit access code shown in the
 ## headset (a new one each time it is switched on; a wrong code five times in a row locks that address for a minute), and every
@@ -429,6 +430,10 @@ func route(target: String) -> Dictionary:
 		return _html(200, WebPages.ai(doc.name))
 	if path == "/keys":
 		return _html(200, WebPages.keys(doc.name))
+	if path == "/headset":
+		return _html(200, WebPages.headset(doc.name))
+	if path == "/api/headset/state":
+		return _json_plain(200, ProximitySensor.web_state())
 	if path == "/api/keys/state":
 		if not keys_api.is_valid():
 			return _json_plain(501, {"ok": false, "message": "The keys page is not available."})
@@ -928,6 +933,9 @@ func _api(path: String, qs: String, body: PackedByteArray) -> Dictionary:
 		var res: Dictionary = ai_api.call(path.substr(8), _json_body(body))
 		return _json_plain(200 if bool(res.get("ok", false)) else 422, res)
 	match path:
+		"/api/headset/set":
+			var hres := ProximitySensor.web_set(_json_body(body))
+			return _json_plain(200 if bool(hres.get("ok", false)) else 422, hres)
 		"/api/delete":
 			var data := _json_body(body)
 			var removed := 0

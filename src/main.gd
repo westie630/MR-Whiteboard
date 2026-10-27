@@ -24,6 +24,7 @@ func _ready() -> void:
 		Battery.set_fake(str(args["battery"]))
 	var headset := _headset_active()
 	App.xr_active = headset
+	add_child(ProximitySensor.new())                     # "Keep running when taken off" (keep_awake)
 	board = Board.new()
 	add_child(board)
 	var anchors: AnchorService
