@@ -65,7 +65,8 @@ const DEFAULTS := {
 	"model_tier": "",                # how much a 3D model may ask of this device: "" (by the headset: a Quest 2 is "low") | low | high
 	"model_light": "studio",         # the light on 3D models: soft | studio | bright (ModelLighting)
 	"model_shadow": true,            # a soft shadow on the surface under each 3D model
-	"show_anchors": false,           # draw the spatial anchors (axes + label) where the headset holds them (AnchorMarkers)
+	"share_on": false,               # the web page on the Wi-Fi (ExportServer) was switched on: it is switched on again at the next start (a new access code)
+	"show_anchors": false,          # draw the spatial anchors (axes + label) where the headset holds them (AnchorMarkers)
 }
 
 var settings_path := SETTINGS_PATH

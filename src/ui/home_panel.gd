@@ -596,6 +596,7 @@ func _set_sharing(on: bool) -> void:
 	var b: Board = shell.board
 	if on == b.share.is_running():
 		return
+	App.put("share_on", on)
 	if on:
 		if not b.share.start():
 			b.toast.emit("Could not start the web server (no free port).")
@@ -617,7 +618,7 @@ func _sync_share() -> void:
 	if urls.is_empty():
 		_share_label.text = "Waiting for a Wi-Fi connection: the address appears here (port %d)." % b.share.port
 		return
-	_share_label.text = "On your PC open:\n%s\n\nAnyone on this network who knows the code can change your canvases while this is on. It switches off when the app closes." % "\n".join(urls.slice(0, 3))
+	_share_label.text = "On your PC open:\n%s\n\nAnyone on this network who knows the code can change your canvases while this is on. It stays on, with a new code, the next time the app starts, until you switch it off." % "\n".join(urls.slice(0, 3))
 
 
 # ------------------------------------------------------------------------------------------------ settings
