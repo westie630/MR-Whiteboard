@@ -90,6 +90,10 @@ func locating(uuid: String) -> bool:
 	return slow.has(uuid) and _store.has(uuid)
 
 
+func known() -> Array:
+	return _tracked.keys()
+
+
 func pose(uuid: String) -> Transform3D:
 	return shift * U.xf_from_array(_store[uuid].pose) if _store.has(uuid) else Transform3D.IDENTITY
 

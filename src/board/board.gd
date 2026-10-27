@@ -28,6 +28,8 @@ const HOVER_RANGE := InputTuning.HOVER_RANGE
 var doc: Document
 var history: History
 var anchors: AnchorService
+var anchor_markers: AnchorMarkers          # the anchors drawn on request (Settings > Show spatial anchors)
+var extra_anchor_roles: Array[Callable] = []   # more {uuid: "kind|name"} for the markers (the XR rig adds the panels' anchor)
 var head_provider := Callable()            # -> Transform3D, the head in world space
 var surface_hit := Callable()              # (origin, dir) -> {point, normal} for real surfaces (Meta scene walls and tables), optional
 
@@ -154,6 +156,10 @@ func setup(anchor_service: AnchorService) -> void:
 	anchors.created.connect(_on_anchor_created)
 	anchors.create_failed.connect(_on_anchor_failed)
 	session.bind(anchors)
+	anchor_markers = AnchorMarkers.new()
+	anchor_markers.anchors = anchors
+	anchor_markers.role_sources.append(anchor_roles)
+	add_child(anchor_markers)
 	App.setting_changed.connect(_on_setting)
 
 
@@ -489,6 +495,22 @@ static func _level(xf: Transform3D) -> Transform3D:
 	if Vector2(f.x, f.z).length() < 0.2:                # (an anchor lying flat: its y axis is the heading)
 		f = xf.basis.y
 	return Transform3D(Basis(Vector3.UP, atan2(-f.x, -f.z)), xf.origin)
+
+
+## What each of the document's anchors holds, as "kind|name" (AnchorMarkers labels).
+func anchor_roles() -> Dictionary:
+	var out := {}
+	for src in extra_anchor_roles:
+		out.merge(src.call(), true)
+	if doc == null:
+		return out
+	for r in doc.rooms:
+		if str(r.anchor) != "":
+			out[str(r.anchor)] = "room|%s" % str(r.get("name", "Room"))
+	for f in doc.frames.values():
+		if (f as FrameData).anchor != "":
+			out[(f as FrameData).anchor] = "canvas|%s" % ((f as FrameData).name if (f as FrameData).name != "" else "Canvas")
+	return out
 
 
 ## Every room's pose for this tick, from its anchors; a room whose anchors dropped out a moment ago keeps its last pose for ROOM_HOLD_S

@@ -321,7 +321,7 @@ src/core/      document model (Document, FrameData, Item), History (undo/redo), 
                ShapeRecognizer, StrokeMesher, Brushes, SvgExport, Exporter, SvgImport, ExportServer + WebPages + WebAssets (the Wi-Fi web page), TextLayout,
                InputTuning (every number that decides how hands, stylus and menu feel)
 src/board/     Board (the world: rooms, anchors, frames, selection), PeerAvatars (the others of a session), LivePreview (what they are in the middle of), SurfaceController (the desk), PenController, HandController, InkController, TextController, Shortcuts,
-               AiController (the AI assistant: asking, notes, suggestion layers), FrameNode / ItemView (3D views), LiveStroke, AnchorService (+ SimAnchors for the PC)
+               AiController (the AI assistant: asking, notes, suggestion layers), FrameNode / ItemView (3D views), LiveStroke, AnchorService (+ SimAnchors for the PC), AnchorMarkers (the anchors drawn on request)
 src/pdf/       the PDF engine: PdfDoc (objects, cross-reference, encryption), PdfLex / PdfFilters, fonts (PdfFont over PdfFontTtf / PdfFontCff / PdfFontT1, PdfStdFonts, PdfCMap, glyph names and encodings), PdfInterp (a page's content -> PdfDisplay),
                PdfGeom (filling outlines, clipping), PdfStroker, PdfShading, PdfImage, PdfRaster (soft masks), PdfBuilder (-> PdfPageData), PdfLibrary (the files, the worker), PdfPageNode (the page in the room), PdfBudget
 src/ai/        LlmApi (Claude / OpenAI / MiniMax requests and answers, model lists, thinking levels), LlmClient (HTTP), CanvasBrief (a canvas as JSON + picture),

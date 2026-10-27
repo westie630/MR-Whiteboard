@@ -44,6 +44,11 @@ func locating(_uuid: String) -> bool:
 	return false
 
 
+## The uuids of the anchors being followed now (placed or not), for AnchorMarkers.
+func known() -> Array:
+	return []
+
+
 func pose(_uuid: String) -> Transform3D:
 	return Transform3D.IDENTITY
 

@@ -669,6 +669,7 @@ func _build_settings(p: VBoxContainer) -> void:
 	_kit.slider(dp, "Interface size", 0.7, 1.6, "ui_scale", 0.05, func(v: float): return "%d %%" % int(v * 100.0))
 	_kit.switch(dp, "On-screen keyboard", "vkeyboard", "Otherwise a pad to write on")
 	_kit.switch(dp, "Fade the interface while drawing", "ui_fade")
+	_kit.switch(dp, "Show spatial anchors", "show_anchors", "Axes and a label where the headset holds the rooms, canvases and panels in place")
 
 	UiKit.header(p, "How to use it")
 	var hu := UiKit.card(p)

@@ -112,7 +112,7 @@ const TOPICS := [
 			"Home, Canvases lists them: rename, hide, lock, clear, delete, grid and backing. Bring to me fetches one that is far away.",
 			"The eye button hides a canvas: it disappears (for everyone in a session) and nothing can touch it, but what is on it is kept. Press the crossed-out eye to show it again.",
 			"The button with the four arrows and a padlock locks a canvas's place: it stays where it is, facing the same way, and two hands only make it bigger or smaller (a curved desk: what is drawn on it). Press it again to move it.",
-			"Canvases are fixed in the room by spatial anchors: after a restart, or with the headset taken off and put back on, they are where you left them, at the size you left them. Home, Rooms keeps them apart by room.",
+			"Canvases are fixed in the room by spatial anchors: after a restart, or with the headset taken off and put back on, they are where you left them, at the size you left them. Home, Rooms keeps them apart by room. To see the anchors, switch on Home, Settings, Show spatial anchors: each one gets small axes and a label.",
 		]],
 		["try", [["canvas", "Put one on a wall", "place:wall"], ["canvas", "List my canvases", "tab:canvas"], ["room", "Rooms", "tab:rooms"]]],
 	]},

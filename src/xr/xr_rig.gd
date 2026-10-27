@@ -149,6 +149,7 @@ func start(b: Board, service: AnchorService = null) -> AnchorService:
 	_build_menu()
 	places = PanelPlaces.new()
 	places.setup(anchors, App.panel_places_path)
+	board.extra_anchor_roles.append(func() -> Dictionary: return {places.anchor: "panels|Panels"} if places.anchor != "" else {})
 	board.head_provider = func(): return camera.global_transform
 	board.surface_hit = func(o: Vector3, d: Vector3) -> Dictionary: return scene.hit(o, d)
 	App.setting_changed.connect(_on_setting)

@@ -108,6 +108,10 @@ func has_pose(uuid: String) -> bool:
 	return n != null and is_instance_valid(n) and bool((n as Node3D).call("get_has_tracking_data")) and bool((n as Node3D).call("get_is_active"))
 
 
+func known() -> Array:
+	return _nodes.keys()
+
+
 func pose(uuid: String) -> Transform3D:
 	var n: Variant = _nodes.get(uuid)
 	return (n as Node3D).global_transform if n != null and is_instance_valid(n) else Transform3D.IDENTITY
