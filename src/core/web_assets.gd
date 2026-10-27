@@ -3,7 +3,7 @@ extends RefCounted
 ## The stylesheet, the script and the icons of the web pages the app serves (see ExportServer / WebPages). Kept as strings so they
 ## travel inside the app without any extra files in the export.
 
-const VERSION := 10                     # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
+const VERSION := 11                     # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
 
 const LOGO := r"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#g)"/><path d="M14 40c6-14 11-14 14-4s8 10 12-4 6-8 10-2" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="50" cy="19" r="4" fill="#fff" opacity=".85"/></svg>"""
 
@@ -1039,10 +1039,10 @@ const JS := r"""
     load();
   }
 
-  // ---- API keys: one box per service (the AI providers and Wit.ai); a saved key is only ever shown as its last four characters
+  // ---- API keys: one box per service (the AI providers, Wit.ai, Telegram); a saved key is only ever shown as its last four characters
   var keysPage = $('#keys');
   if (keysPage) {
-    var kBox = $('#keys-list'), kTimer = null, kFails = 0, kBuilt = false, kList = [];
+    var kBox = $('#keys-list'), kTimer = null, kFails = 0, kBuilt = false, kList = [], kTg = null;
     var kSoon = function (ms) { clearTimeout(kTimer); kTimer = setTimeout(kLoad, ms || 250); };
     var kRender = function () {
       if (!kBuilt) {
@@ -1052,10 +1052,13 @@ const JS := r"""
           el.className = 'prov';
           el.setAttribute('data-s', s.id);
           el.innerHTML = '<div class="prov-h"><b>' + esc(s.name) + '</b><span class="chip">' + esc(s.what) + '</span><span class="chip keyhint"></span>' +
-            '<a class="get" target="_blank" rel="noopener" href="' + esc(s.keys_url) + '">Get a key</a></div>' +
-            '<div class="ai-row"><input class="field key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your ' + esc(s.name) + (s.id === 'wit' ? ' server access token' : ' API key') + '">' +
+            '<a class="get" target="_blank" rel="noopener" href="' + esc(s.keys_url) + '">' + esc(s.get || 'Get a key') + '</a></div>' +
+            '<div class="ai-row"><input class="field key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your ' + esc(s.name) + ' ' + esc(s.field || 'API key') + '">' +
             '<button class="btn" data-k="save">Save</button><button class="icon-btn danger" data-k="remove" title="Remove the key">' + icon('trash') + '</button></div>' +
-            '<div class="note"></div>';
+            '<div class="note"></div>' + (s.id === 'telegram' ? '<div class="tg" hidden><div class="tg-state"></div><div class="ai-row">' +
+            '<a class="btn btn-primary" data-k="tglink" target="_blank" rel="noopener" hidden>Link my Telegram</a>' +
+            '<button class="btn" data-k="tgtest">Send a test message</button><button class="btn" data-k="tgonoff"></button>' +
+            '<button class="btn danger" data-k="tgunlink">Unlink</button></div></div>' : '');
           kBox.appendChild(el);
         });
         kBuilt = true;
@@ -1071,6 +1074,20 @@ const JS := r"""
       });
       var n = kList.filter(function (s) { return s.has_key; }).length;
       $('#keys-stat').textContent = n + ' of ' + kList.length + ' keys saved';
+      var tgEl = $('.prov[data-s="telegram"] .tg', kBox), tg = kTg;
+      if (tgEl) {
+        tgEl.hidden = !tg || !tg.has_token;
+        if (tg && tg.has_token) {
+          var words = { off: 'Switched off.', checking: 'Checking the token with Telegram...', bad_token: tg.error, offline: 'No connection to Telegram, trying again. ' + tg.error, conflict: tg.error,
+            unlinked: tg.link ? 'Press "Link my Telegram": Telegram opens @' + tg.bot + '; press Start there and this chat is linked.' : (tg.code_in_headset ? 'Send @' + tg.bot + ' the code the headset shows in Home > Share > Telegram. (The link is given here only while this page asks for its access code.)' : ''),
+            linked: 'Linked to ' + tg.who + ' through @' + tg.bot + '.' };
+          $('.tg-state', tgEl).textContent = (tg.busy ? tg.busy + ' ' : '') + (words[tg.state] || '');
+          var ln = $('[data-k=tglink]', tgEl); ln.hidden = !tg.link; if (tg.link) ln.href = tg.link;
+          $('[data-k=tgtest]', tgEl).hidden = tg.state !== 'linked';
+          $('[data-k=tgunlink]', tgEl).hidden = !tg.linked;
+          $('[data-k=tgonoff]', tgEl).textContent = tg.on ? 'Switch off' : 'Switch on';
+        }
+      }
     };
     var kLoad = function () {
       fetch('/api/keys/state', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) {
@@ -1079,7 +1096,7 @@ const JS := r"""
         return r.json();
       }).then(function (j) {
         if (!j) return;
-        kFails = 0; kList = j.services; kRender();
+        kFails = 0; kList = j.services; kTg = j.telegram || null; kRender();
         var live = $('.live'); if (live) live.classList.remove('off');
       }).catch(function () {
         if (++kFails > 1) { var live = $('.live'); if (live) live.classList.add('off'); }
@@ -1093,6 +1110,14 @@ const JS := r"""
     keysPage.addEventListener('click', function (e) {
       var b = e.target.closest('button'); if (!b) return;
       var el = b.closest('.prov'), k = b.getAttribute('data-k');
+      var tgDo = { tgtest: 'test', tgunlink: 'unlink', tgonoff: kTg && kTg.on ? 'off' : 'on' }[k];
+      if (tgDo && tgDo !== 'unlink') { api('/api/keys/telegram', { do: tgDo }).then(function (j) { toast(j.message); kSoon(); }).catch(function (err) { toast(err.message, true); }); return; }
+      if (tgDo === 'unlink') {
+        dialog({ title: 'Unlink the Telegram chat?', text: 'The bot stops answering it until a chat is linked again.', ok: 'Unlink', danger: true }).then(function (yes) {
+          if (yes) api('/api/keys/telegram', { do: 'unlink' }).then(function (j) { toast(j.message); kSoon(); }).catch(function (err) { toast(err.message, true); });
+        });
+        return;
+      }
       if (k === 'save') kSave(el);
       else if (k === 'remove') {
         dialog({ title: 'Remove the ' + $('b', el).textContent + ' key?', text: 'The headset forgets it.', ok: 'Remove', danger: true }).then(function (yes) {

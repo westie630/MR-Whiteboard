@@ -226,6 +226,14 @@ of 1024 or more, and takes the address from the packet, not from what it says. O
 one is told no and the typed address is the way in. Guest Wi-Fi and some routers block broadcast or isolate clients: then only the typed address
 works, and if that does not either, the network is blocking it.
 
+### Files from outside: the web page and Telegram
+
+The web page's uploads and the Telegram bot (`TelegramBridge`) bring files into the headset that runs them. On the **owner's** headset that is all it
+takes: the PDF or model goes into the library, a canvas or model frame names it, and the guests are given the file as above. A **guest's** headset
+cannot give a file to the owner (files only travel owner to guest), so a PDF or model a guest's bot receives is kept in that guest's library and not
+put up as a canvas the others could not load; the bot says so. An SVG becomes ordinary canvases and items, which DocSync carries both ways, so a guest's
+SVG reaches everybody when *Guests can add and move canvases* is on. Text sent to a bot is put down with the placement tool and replicates like typed text.
+
 ## 8. Devices
 
 * **Quest 2 and Quest 3 together** work: nothing in the session depends on the model. The Android export already declares Quest 2 support. A Quest 2

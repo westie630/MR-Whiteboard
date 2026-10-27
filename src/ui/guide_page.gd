@@ -154,6 +154,16 @@ const TOPICS := [
 		]],
 		["try", [["doc", "Documents", "tab:docs"], ["wifi", "Share with a PC", "tab:share"]]],
 	]},
+	{"id": "telegram", "icon": "send", "title": "Telegram", "sum": "Send files from your phone, get exports back, anywhere", "blocks": [
+		["try", [["send", "Set up Telegram", "tab:share"]]],
+		["steps", [
+			"In Telegram, open @BotFather, send /newbot and give your bot a name and a username that ends in \"bot\". It answers with a token.",
+			"Paste the token on the web page's API keys page (or set it in Home, Share, Telegram). The headset checks it and shows a 6-digit code.",
+			"Send the code to your bot from your own chat (on the web page, Link my Telegram does it for you). From then on the bot listens only to that chat.",
+			"Send the bot a PDF, an SVG, a 3D model (.glb, .gltf, .obj or a .zip) or a .mrw document: it appears in front of you. Text you send can be put on a canvas.",
+			"To get files back: /svg, /glb or /mrw in the chat, or Home, Docs, Send to Telegram. It works on any network with internet, up to 20 MB a file.",
+		]],
+	]},
 	{"id": "pdf", "icon": "pdf", "title": "Read a PDF", "sum": "Upload one from your PC, turn the pages, draw on them", "blocks": [
 		["steps", [
 			"On a PC on the same Wi-Fi: Home, Share, switch on the web page, open its address and type the code. Drop a PDF on the page: the headset keeps it and puts it in front of you.",

@@ -392,12 +392,12 @@ func _web(board: Board, fid: String) -> void:
 	t.eq(bad.status, 422, "something that is not a key is refused")
 	var forged := srv.handle("POST", "/api/ai/key", {}, JSON.stringify({"provider": "openai", "key": "x"}).to_utf8_buffer(), "127.0.0.1")
 	t.eq(forged.status, 403, "other sites cannot set a key")
-	# the keys page: every service in one place, Wit.ai included
+	# the keys page: every service in one place, Wit.ai and Telegram included
 	srv.keys_api = func(cmd: String, data: Dictionary) -> Dictionary: return ApiKeys.new(board.ai).api(cmd, data)
 	t.eq(srv.route("/keys").status, 200, "the keys page answers")
 	t.check(WebPages.shell("x", "").contains("href='/keys'"), "every page links to it")
 	var ks: Dictionary = JSON.parse_string((srv.route("/api/keys/state").body as PackedByteArray).get_string_from_utf8())
-	t.eq((ks.services as Array).size(), 4, "it lists the three AI providers and Wit.ai")
+	t.eq((ks.services as Array).size(), 5, "it lists the three AI providers, Wit.ai and Telegram")
 	App.put("wit_token", "")
 	var wit := srv.handle("POST", "/api/keys/set", hdr, JSON.stringify({"service": "wit", "key": "WITTOKEN5678"}).to_utf8_buffer(), "127.0.0.1")
 	t.eq(wit.status, 200, "a Wit.ai token can be saved from the page")

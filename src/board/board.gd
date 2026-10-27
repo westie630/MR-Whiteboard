@@ -69,6 +69,7 @@ var texts: TextController
 var ai: AiController                       # the AI assistant (ask a language model about a canvas; its suggestion layers)
 var surface: SurfaceController             # the desk: canvases bound to a physical surface found with the stylus nib
 var share: ExportServer                   # the web server that lets a PC browser view / download the canvases (off until switched on)
+var telegram: TelegramBridge               # files to and from the user's Telegram through their own bot (runs while a bot token is set)
 var pdfs: PdfLibrary                      # the PDFs on this device, and the pages made from them (canvases that show a PDF ask it)
 var models: ModelLibrary                  # the 3D models on this device (glTF, OBJ), loaded for the model frames that show them
 var model_ctl: ModelController             # what the pointers do to 3D models: select, carry, the gizmo's handles
@@ -141,9 +142,13 @@ func _init() -> void:
 	share.model_library = models
 	share.show_model = place_model
 	share.ai_api = func(cmd: String, data: Dictionary) -> Dictionary: return ai.api(cmd, data)
-	share.keys_api = func(cmd: String, data: Dictionary) -> Dictionary: return ApiKeys.new(ai).api(cmd, data)
+	share.keys_api = func(cmd: String, data: Dictionary) -> Dictionary: return ApiKeys.new(ai, telegram, share.require_pin).api(cmd, data)
 	share.state_changed.connect(func(): changed.emit())
 	add_child(share)
+	telegram = TelegramBridge.new()
+	telegram.board = self
+	telegram.changed.connect(func(): changed.emit())
+	add_child(telegram)
 	session = Session.new()
 	session.board = self
 	session.said.connect(func(t: String): toast.emit(t))

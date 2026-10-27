@@ -270,6 +270,7 @@ static func keys(doc_name: String) -> String:
 	b += "<div id=keys-list class=ai-provs></div>"
 	b += "<p class=hint>A key goes from this page to the headset over your Wi-Fi and is kept only in the app's settings there; this page never shows it again. "
 	b += "The AI assistant sends each question to the provider you chose, and speech to text sends only the recorded audio to Wit.ai: both are billed to, or limited by, your own account. "
+	b += "With a Telegram bot token the headset reads that bot's messages over the internet: files the linked chat sends arrive in the headset, and exports go back to it. "
 	b += "Choose the model and thinking level on the <a href='/ai'>AI page</a>.</p>"
 	b += "</div></section></section>"
 	return shell("API keys", b, doc_name, "", true, "keys")

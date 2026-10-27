@@ -32,6 +32,12 @@ var _share_switch: Switch
 var _share_code: Label
 var _share_label: Label
 var _token_btn: Btn
+var _tg_switch: Switch
+var _tg_token_btn: Btn
+var _tg_code: Label
+var _tg_label: Label
+var _tg_unlink: Btn
+var _tg_send: VBoxContainer
 var grip: Dock.Grip
 var session_page := SessionPage.new()
 var guide_page := GuidePage.new()
@@ -111,6 +117,7 @@ func _init() -> void:
 	_build_canvas(_pages.canvas)
 	_build_rooms(_pages.rooms)
 	_build_share(_pages.share)
+	_build_telegram(_pages.share)
 	session_page.build(_pages["session"], self)
 	_build_settings(_pages.settings)
 	guide_page.build(_pages.guide, self)
@@ -184,6 +191,7 @@ func refresh() -> void:
 	_kit.sync()
 	_dyn.sync()
 	_sync_share()
+	_sync_telegram()
 	if tab == "session":
 		session_page.refresh()
 
@@ -220,6 +228,12 @@ func _build_docs(p: VBoxContainer) -> void:
 	ex.add_child(UiKit.button("volume", "3D .glb", func(): _export("glb"), 52.0))
 	ex.add_child(UiKit.button("doc", "File .mrw", func(): _export("mrw"), 52.0))
 	_export_label = UiKit.note(p, "SVG: one vector file per canvas (Inkscape, Illustrator, Figma). 3D: the ink as a glTF model.")
+	_tg_send = UiKit.vcol(p, 8)                    # shown once a Telegram chat is linked (Share)
+	UiKit.header(_tg_send, "Send to Telegram")
+	var tr := UiKit.hrow(_tg_send, 8)
+	tr.add_child(UiKit.button("send", "SVG", func(): _send_telegram("svg"), 52.0))
+	tr.add_child(UiKit.button("volume", "3D .glb", func(): _send_telegram("glb"), 52.0))
+	tr.add_child(UiKit.button("doc", "File .mrw", func(): _send_telegram("mrw"), 52.0))
 	UiKit.header(p, "All documents")
 	_docs_list = UiKit.vcol(p, 6)
 	UiKit.header(p, "PDF documents")
@@ -316,6 +330,11 @@ func _export(kind_id: String) -> void:
 			res = Exporter.document(b.doc)
 	_export_label.text = str(res.message)
 	b.toast.emit(str(res.message))
+
+func _send_telegram(kind_id: String) -> void:
+	var res := (shell.board as Board).telegram.send_export(kind_id)
+	_export_label.text = str(res.message)
+	shell.board.toast.emit(str(res.message))
 
 
 func _refresh_docs() -> void:
@@ -619,6 +638,76 @@ func _sync_share() -> void:
 		_share_label.text = "Waiting for a Wi-Fi connection: the address appears here (port %d)." % b.share.port
 		return
 	_share_label.text = "On your PC open:\n%s\n\nAnyone on this network who knows the code can change your canvases while this is on. It stays on, with a new code, the next time the app starts, until you switch it off." % "\n".join(urls.slice(0, 3))
+
+
+## Telegram, under the web page: the bot token, the code that links a chat, and what the connection is doing (TelegramBridge).
+func _build_telegram(p: VBoxContainer) -> void:
+	UiKit.header(p, "Telegram")
+	var c := UiKit.card(p)
+	_tg_switch = Switch.new("Telegram", "Files from your phone to the headset, and exports back")
+	_tg_switch.toggled.connect(func(v: bool): App.put("tg_on", v))
+	c.add_child(_tg_switch)
+	_tg_token_btn = UiKit.button("keyboard", "", func():
+		shell.ask_secret("Telegram bot token (from @BotFather)", func(t: String):
+			var k := t.strip_edges()
+			if k != "" and not TelegramApi.is_token(k):
+				shell.board.toast.emit("That does not look like a bot token: a number, a colon and a long code.")
+				return
+			App.put("tg_token", k)), 52.0, "ghost")
+	c.add_child(_tg_token_btn)
+	_tg_code = UiKit.label("", false, UITheme.FONT_BIG, 600)
+	_tg_code.add_theme_color_override("font_color", UITheme.GOOD)
+	c.add_child(_tg_code)
+	_tg_label = UiKit.label("", true, UITheme.FONT_SMALL)
+	c.add_child(_tg_label)
+	_tg_unlink = UiKit.button("close", "", func():
+		if _confirm == "tg_unlink":
+			_confirm = ""
+			(shell.board as Board).telegram.unlink()
+			shell.board.toast.emit("Telegram unlinked: send the new code from the chat you want to link.")
+		else:
+			_confirm = "tg_unlink"
+			shell.board.toast.emit("Press again to unlink the chat.")
+		_sync_telegram(), 52.0, "ghost")
+	c.add_child(_tg_unlink)
+
+
+func _sync_telegram() -> void:
+	var tg: TelegramBridge = (shell.board as Board).telegram
+	var tok := tg.token()
+	var bot := tg.bot()
+	_tg_switch.on = bool(App.val("tg_on"))
+	if tok == "":
+		_tg_token_btn.text = "Set the bot token"
+	elif bot != "":
+		_tg_token_btn.text = "Bot @%s (...%s): change it" % [bot, tok.right(4)]
+	else:
+		_tg_token_btn.text = "Token saved (...%s): change it" % tok.right(4)
+	_tg_code.visible = tg.state == "unlinked" and tg.code != ""
+	_tg_code.text = "Code  %s" % tg.code_text()
+	_tg_unlink.visible = tg.linked_chat() != ""
+	_tg_unlink.text = "Press again to unlink" if _confirm == "tg_unlink" else "Unlink %s" % str(App.val("tg_who"))
+	_tg_send.visible = tg.is_linked()
+	var s := ""
+	match tg.state:
+		"off":
+			if tok == "":
+				s = "Make a bot: in Telegram open @BotFather, send /newbot and give it a name and a username that ends in \"bot\". Paste the token it gives you on the web page (API keys) or set it here."
+			else:
+				s = "Switched off: the headset does not read the bot's messages."
+		"checking":
+			s = "Checking the token with Telegram..."
+		"unlinked":
+			s = "In Telegram open @%s, press Start and send it the code above. Only that chat is linked: the bot ignores everyone else." % bot
+		"linked":
+			s = "Linked to %s through @%s. Send the bot a PDF, an SVG, a 3D model or a .mrw file and it appears here; text you send can be put on a canvas. /svg, /glb or /mrw in the chat, or Docs > Send to Telegram, get files back." % [str(App.val("tg_who")), bot]
+		"offline":
+			s = "No connection to Telegram, trying again. (%s)" % tg.error
+		_:
+			s = tg.error
+	if tg.busy != "":
+		s = tg.busy + "\n\n" + s
+	_tg_label.text = s
 
 
 # ------------------------------------------------------------------------------------------------ settings
