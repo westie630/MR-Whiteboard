@@ -7,6 +7,7 @@ var tracked := false
 var source := "none"                      # stylus | mouse | pinch
 var tip := Vector3.ZERO                   # world position of the nib
 var dir := Vector3.FORWARD                # world direction the stylus points in
+var basis := Basis.IDENTITY               # the stylus's orientation (its aim pose; the mouse keeps the identity)
 var pressure := 0.0                       # 0..1
 var down := false                         # the nib is pressed (tip force or middle button) / mouse button held
 var contact := false                      # the nib itself is pressed against something (not the middle button): the stylus feels a surface

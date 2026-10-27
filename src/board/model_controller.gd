@@ -4,7 +4,8 @@ extends RefCounted
 ## the left or middle mouse button), grabs; touching (the pinch point or the nib in or at the model) moves things 1:1, pointing moves them
 ## further than the hand by the ratio of the distances from the head.
 ##  - a tap on a model selects it: its handles appear (ModelGizmo) and the model bar under it (ModelBar),
-##  - a drag on a model carries it (selected or not), a second pointer on it turns and resizes it with the first (in any direction); while it
+##  - a drag on a model carries it (selected or not) and turns it as the hand (or the stylus) turns: touching, about the pinch point, as
+##    if it were in the hand; pointing, about its middle. A second pointer on it turns and resizes it with the first (in any direction); while it
 ##    is carried it shows no box, no handles and no bar, and it stays unselected afterwards (a tap selects it again). A hand inside the
 ##    selected model grabs the model, not the handles inside it (those are pointed at; the ones outside it can be touched too),
 ##  - the handles of the selected model: Move (an arrow slides along an axis, a square in a plane, the ball moves freely), Rotate (a ring
@@ -161,6 +162,8 @@ func _feed_pen(pen: PenState) -> HandInput:
 	p.pinch_up = p.pinching and not now
 	p.pinching = now
 	p.pinch_point = o + p.aim_d * _mouse_depth if _pen_mouse else pen.tip
+	p.has_grip = not _pen_mouse
+	p.grip = pen.basis
 	return p
 
 
@@ -183,11 +186,13 @@ func _update_pointer(side: String, h: HandInput) -> void:
 			select(str(tp.fid))                          # a tap: the model is selected
 			_tick(side, 0.25, 0.015)
 			return
-		if h.pinch_point.distance_to(tp.p0 as Vector3) > InputTuning.MOVE_START:
+		var turned := h.has_grip and rad_to_deg(_turn_angle(tp.b0 as Basis, h.grip)) > InputTuning.TURN_START
+		if h.pinch_point.distance_to(tp.p0 as Vector3) > InputTuning.MOVE_START or turned:
 			_taps.erase(side)
 			_begin_hold(side, h, str(tp.fid), BODY, tp)
 			if _holds.has(side):
 				(_holds[side] as Dictionary).p0 = tp.p0       # the model catches up with the hand from where the pinch began
+				(_holds[side] as Dictionary).b0 = tp.b0
 				_step(side, h)
 			return
 		hover[side] = {"point": tp.point, "kind": "model", "handle": "", "fid": tp.fid, "direct": tp.direct}
@@ -215,7 +220,7 @@ func _update_pointer(side: String, h: HandInput) -> void:
 	elif _partner(side, str(t.fid)) != "":
 		_begin_hold(side, h, str(t.fid), BODY, t)       # the other hand carries it: this one joins (turn and resize with both)
 	else:
-		_taps[side] = {"fid": t.fid, "p0": h.pinch_point, "point": t.point, "direct": t.direct}
+		_taps[side] = {"fid": t.fid, "p0": h.pinch_point, "b0": h.grip, "point": t.point, "direct": t.direct}
 		_tick(side, 0.3, 0.02)
 
 
@@ -316,7 +321,7 @@ func _begin_hold(side: String, h: HandInput, fid: String, what: String, t: Dicti
 	var xf := g.xf as Transform3D
 	var direct := bool(t.get("direct", false))
 	var hold := {"fid": fid, "what": what, "p0": h.pinch_point, "xf0": xf, "scale0": float(g.scale), "stretch0": g.stretch, "direct": direct,
-		"c0": xf.origin, "last": h.pinch_point}
+		"c0": xf.origin, "last": h.pinch_point, "b0": h.grip, "last_b": h.grip}
 	var c0 := xf.origin
 	match what:
 		BODY, "mc":
@@ -371,6 +376,7 @@ func _step(side: String, h: HandInput) -> void:
 	var xf := g.xf as Transform3D
 	var c0 := hold.c0 as Vector3
 	hold.last = h.pinch_point
+	hold.last_b = h.grip
 	var point := h.pinch_point
 	match what:
 		BODY, "mc":
@@ -383,6 +389,12 @@ func _step(side: String, h: HandInput) -> void:
 			else:
 				var delta := (h.pinch_point - (hold.p0 as Vector3)) * float(hold.gain)
 				xf.origin = xf0.origin + _snap_vec(delta, gizmo.axes if what == "mc" else Basis.IDENTITY, what == "mc")
+				if what == BODY and h.has_grip:                      # (the PC's pointers have none: Q / E turn it)
+					var turn := _turn(hold.b0 as Basis, h.grip)
+					xf.basis = turn * xf0.basis
+					if direct:
+						var arm := xf0.origin - (hold.p0 as Vector3)
+						xf.origin += turn * arm - arm             # held in the hand: it turns about the pinch point
 				readout = _cm(delta.length()) if what == "mc" else ""
 		"mx", "my", "mz":
 			var s1: Variant = _axis_param(c0, hold.axis, h, direct)
@@ -475,6 +487,7 @@ func _rebase(fid: String) -> void:
 			hd.c0 = (g.xf as Transform3D).origin
 			hd.scale0 = float(g.scale)
 			hd.p0 = hd.get("last", hd.p0)
+			hd.b0 = hd.get("last_b", hd.b0)
 
 
 ## Two pointers carrying the same model turn it (in any direction: the line between them turns it) and resize it (their spread), about
@@ -567,6 +580,21 @@ func _ring_vec(c: Vector3, a: Vector3, h: HandInput, direct: bool) -> Variant:
 	var v := p - c
 	v -= a * a.dot(v)
 	return v if v.length() > 1e-4 else null
+
+
+## How the hand (or the stylus) has turned since `b0`; with Snap, in SNAP_TURN steps about the same axis.
+func _turn(b0: Basis, b1: Basis) -> Basis:
+	var q := (b1 * b0.inverse()).orthonormalized().get_rotation_quaternion()
+	if snap:
+		var ang := q.get_angle()
+		if ang < 1e-4:
+			return Basis.IDENTITY
+		return Basis(q.get_axis().normalized(), deg_to_rad(snappedf(rad_to_deg(ang), InputTuning.SNAP_TURN)))
+	return Basis(q)
+
+
+static func _turn_angle(b0: Basis, b1: Basis) -> float:
+	return (b1 * b0.inverse()).orthonormalized().get_rotation_quaternion().get_angle()
 
 
 func _snap_len(x: float) -> float:

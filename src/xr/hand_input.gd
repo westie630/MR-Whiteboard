@@ -33,6 +33,8 @@ var tip := Vector3.ZERO                    # index fingertip (poke pose, or the 
 var knuckle := Vector3.ZERO                # index knuckle (steadied)
 var palm := Vector3.ZERO
 var palm_up := false
+var grip := Basis.IDENTITY                 # the hand's orientation (steadied): what a grab turns what it holds by...
+var has_grip := false                      # ...once the joints have given one (the PC's simulated hand never does)
 var pinch_point := Vector3.ZERO            # between thumb and index tip
 var pinch_strength := 0.0
 var pinching := false
@@ -58,6 +60,8 @@ var _hold_o := Vector3.ZERO                # the held ray while closing
 var _hold_d := Vector3.FORWARD
 var _rel_rot := Quaternion.IDENTITY        # pinched: live ray -> the ray relative to the press point
 var _rel_off := Vector3.ZERO
+var _grip_q := Quaternion.IDENTITY
+var _grip_new := true
 
 
 func _init(s: String = "right") -> void:
@@ -66,7 +70,7 @@ func _init(s: String = "right") -> void:
 	_f_knuckle.d_cutoff = 8.0
 
 
-## data: {valid, tip, thumb, knuckle, palm, palm_normal} from the joints, plus from the action map when the runtime reports the hand
+## data: {valid, tip, thumb, knuckle, palm, palm_normal, hand_fwd (wrist to knuckles)} from the joints, plus from the action map when the runtime reports the hand
 ## interaction profile: {aim_valid, aim_o, aim_d, pinch_value, poke}.
 func feed(dt: float, head: Transform3D, data: Dictionary) -> void:
 	_now += dt
@@ -83,6 +87,7 @@ func feed(dt: float, head: Transform3D, data: Dictionary) -> void:
 		_f_tip.reset()
 		_f_knuckle.reset()
 		_f_palm.reset()
+		_grip_new = true
 		_hist.clear()
 		phase = Phase.OPEN
 	var raw_tip: Vector3 = data.tip
@@ -93,6 +98,8 @@ func feed(dt: float, head: Transform3D, data: Dictionary) -> void:
 	palm = _f_palm.filter(data.palm, dt)
 	palm_up = (data.palm_normal as Vector3).normalized().y > InputTuning.PALM_UP_Y
 	pinch_point = (raw_tip + raw_thumb) * 0.5
+	if data.has("hand_fwd"):
+		_steer_grip(data.hand_fwd, data.palm_normal, dt)
 	# the live ray
 	var head_fwd := -head.basis.z
 	if bool(data.get("aim_valid", false)):
@@ -114,6 +121,25 @@ func feed(dt: float, head: Transform3D, data: Dictionary) -> void:
 	while _hist.size() > 2 and float(_hist[0].t) < _now - InputTuning.PINCH_HISTORY_S:
 		_hist.pop_front()
 	_step(pinch_strength)
+
+
+## The hand's orientation from its joints (forward: wrist to knuckles, up: out of the palm), steadied the one-euro way: smooth while the
+## hand is nearly still, close to live while it turns fast.
+func _steer_grip(fwd: Vector3, normal: Vector3, dt: float) -> void:
+	var z := -fwd.normalized()
+	var y := (normal - z * normal.dot(z)).normalized()
+	if not z.is_finite() or not y.is_finite() or y.length_squared() < 0.5:
+		return
+	var q := Quaternion(Basis(y.cross(z), y, z).orthonormalized())
+	if _grip_new:
+		_grip_new = false
+		_grip_q = q
+	else:
+		dt = maxf(dt, 1e-4)
+		var cutoff := InputTuning.GRIP_FILTER.x + InputTuning.GRIP_FILTER.y * _grip_q.angle_to(q) / dt
+		_grip_q = _grip_q.slerp(q, 1.0 / (1.0 + 1.0 / (TAU * cutoff * dt))).normalized()
+	grip = Basis(_grip_q)
+	has_grip = true
 
 
 func _step(s: float) -> void:

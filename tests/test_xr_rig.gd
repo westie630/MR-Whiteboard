@@ -72,8 +72,50 @@ func _ready() -> void:
 	spare_node.visible = false
 	_menu_rules(t, rig, board, cv, spare_node)
 	await _panel_rules(t, rig, board, cv)
+	_stylus_put_down(t, rig)
 	DocStore.delete(board.doc.id)
 	get_tree().quit(t.done())
+
+
+## A stylus put down on the table stays tracked on its hand, and that hand is tracked too: away from it for a moment, the stylus counts as
+## docked and the hand is free (it pinches and grabs); near it again, or the stylus moving, it is held again. Nothing here awaits (the
+## rig's own frames would feed it the PC's untracked stylus).
+func _stylus_put_down(t: TestCase, rig: XrRig) -> void:
+	var pen := PenState.new()
+	pen.tracked = true
+	pen.source = "stylus"
+	pen.tip = Vector3(0.1, 0.8, -0.4)
+	pen.dir = Vector3.LEFT                                 # lying on the table
+	rig.stylus.active = "right"
+	var h: HandInput = rig.hands["right"]
+	h.tracked = true
+	var at := func(p: Vector3) -> void:
+		h.pinch_point = p
+		h.knuckle = p + Vector3(0, 0.02, 0.03)
+		h.palm = p + Vector3(0, 0.0, 0.06)
+	at.call(pen.tip + Vector3(0.06, 0.01, 0.0))             # holding it
+	t.check(rig._stylus_in_hand(pen, 0.1), "a hand at the stylus's body holds it")
+	at.call(Vector3(0.3, 1.2, -0.3))                        # the hand goes off to do something else
+	t.check(rig._stylus_in_hand(pen, InputTuning.STYLUS_LET_GO_S * 0.5), "a hand only just away from it: still held (no flicker)")
+	t.check(not rig._stylus_in_hand(pen, InputTuning.STYLUS_LET_GO_S * 0.6), "away for a moment: put down, the hand is free")
+	h.tracked = false
+	t.check(not rig._stylus_in_hand(pen, 0.1), "the hand out of sight does not pick it up")
+	h.tracked = true
+	pen.front = true
+	t.check(rig._stylus_in_hand(pen, 0.1), "a button pressed: in a hand")
+	pen.front = false
+	t.check(rig._stylus_in_hand(pen, 0.1), "(stays held after the button)")
+	t.check(not rig._stylus_in_hand(pen, InputTuning.STYLUS_LET_GO_S + 0.01), "put down again")
+	at.call(pen.tip + Vector3(0.08, 0.02, 0.0))               # (its body runs back from the nib, along +X here)
+	t.check(rig._stylus_in_hand(pen, 0.1), "the hand at it picks it up")
+	at.call(Vector3(0.3, 1.2, -0.3))
+	t.check(not rig._stylus_in_hand(pen, InputTuning.STYLUS_LET_GO_S + 0.01), "put down once more")
+	h.tracked = false
+	pen.tip += Vector3(0.0, 0.15, 0.0)
+	t.check(rig._stylus_in_hand(pen, 0.1), "the stylus lifted from where it lay: in a hand (even one out of sight)")
+	h.tracked = false
+	rig.stylus.active = ""
+	rig._stylus_in_hand(pen, 0.1)
 
 
 ## The stylus's beam (StylusRay): out of the nib up to its ring on the menu, a canvas or a drawing; a short one into nothing; none while

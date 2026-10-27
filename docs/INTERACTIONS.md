@@ -65,6 +65,7 @@ thing moves further than the hand by the ratio of its distance from the head to 
 
 - Which hand holds it: setting `stylus_hand` (auto: right first, then left, whichever reports a pose).
 - **The hand holding the stylus does not point or pinch**: it is skipped for the menu ray, the board and the palm-up gesture. This is a physical limit, not a rule to remove.
+- **A stylus put down is let go of:** lying on a table it stays tracked on its hand, and that hand is tracked too (the headset log shows it pinching at full strength). Once the hand has been more than `STYLUS_LET_GO` 12 cm from the stylus's body for `STYLUS_LET_GO_S` 0.4 s, the stylus counts as docked and the hand points, pinches and grabs again. It is held again when the hand comes within `STYLUS_HOLD_NEAR` 6 cm, a button or the nib is pressed, or it moves `STYLUS_MOVED` 5 cm from where it lay (`XrRig._stylus_in_hand`).
 - Hand tracking while the stylus is held depends on `XR_META_simultaneous_hands_and_controllers`; the rig re-requests it whenever the stylus appears.
 
 ### 3.2 Hands, [hand_input.gd](../src/xr/hand_input.gd)
@@ -415,7 +416,7 @@ pointer alone (`HandController.skip`) and no stroke starts under the stylus.
 | | |
 |---|---|
 | Tap (pinch or front button, let go within `MOVE_START`) | selects it: its handles and the model bar appear. A pinch on nothing at all, Esc, or the bar's close button lets go |
-| Pinch the model and move | carries it (selected or not): 1:1 touching, geared by distance when pointing, like a canvas. No turning with one hand. While it is carried (one hand or two) its box, handles and bar are hidden, and it stays unselected when let go: a tap shows them again. A hand inside the selected model grabs the model, not the handles inside it (those are pointed at; the ones sticking out can be touched) |
+| Pinch the model and move | carries it (selected or not): 1:1 touching, geared by distance when pointing, like a canvas. It turns as the hand (or the stylus) turns: touching, about the pinch point, as if it were in the hand; pointing, about its middle (Snap: 15° steps). A pinch whose hand only turns (`TURN_START` 12°) carries it too. While it is carried (one hand or two) its box, handles and bar are hidden, and it stays unselected when let go: a tap shows them again. A hand inside the selected model grabs the model, not the handles inside it (those are pointed at; the ones sticking out can be touched) |
 | Second pointer on it | the two turn it in any direction (the line between them) and resize it (their spread, about the point between them) |
 | Move handles | arrow: along that axis (the point of the axis nearest the ray); square: in that plane (where the ray meets it); ball: freely |
 | Rotate handles | ring: about its axis (the angle round the middle where the ray meets the ring's plane; a ray almost in that plane uses its point nearest the middle) |

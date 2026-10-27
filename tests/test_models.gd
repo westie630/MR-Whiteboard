@@ -40,6 +40,7 @@ func _ready() -> void:
 	await _placing()
 	await _handles()
 	await _two_hands()
+	await _one_hand_turn()
 	await _priority_and_locks()
 	await _lay_down()
 	_saving()
@@ -493,6 +494,65 @@ func _two_hands() -> void:
 	board.undo()
 	await ticks(2)
 	t.near(frame().scale, s0, 1e-4, "both in one undo step")
+	away()
+	await ticks(1)
+
+
+## One hand (or the stylus) turns what it carries as it turns: touching, about the pinch point as if it were in the hand; pointing, about the
+## model's middle (in 15 degree steps with Snap). A grab that only turns, without moving, carries it too.
+func _one_hand_turn() -> void:
+	var ctl := board.model_ctl
+	ctl.deselect()
+	var c := node().global_position
+	var b0 := node().global_transform.basis.orthonormalized()
+	var p := c + Vector3(0.05, 0.0, 0.0)                # held off its middle
+	hand.has_grip = true
+	hand.grip = Basis.IDENTITY
+	touch(p, false)
+	await ticks(1)
+	touch(p, true)
+	await ticks(1)
+	for k in range(1, 7):
+		hand.grip = Basis(Vector3.UP, deg_to_rad(10.0 * k))
+		touch(p + Vector3(0, 0.01 * k, 0), true)
+		await ticks(1)
+	await ticks(1)
+	var turn := Basis(Vector3.UP, deg_to_rad(60.0))
+	var want := p + Vector3(0, 0.06, 0) + turn * (c - p)
+	t.check(node().global_position.distance_to(want) < 0.003, "a hand that turns while it carries turns the model with it, about the pinch point: %s" % str(node().global_position - want))
+	var b := node().global_transform.basis.orthonormalized()
+	t.near(rad_to_deg((b * b0.inverse()).get_rotation_quaternion().get_angle()), 60.0, 0.5, "by as much as the hand turned")
+	t.check(ctl.selected == "" and not ctl.gizmo.visible, "(and shows no handles meanwhile)")
+	touch(p + Vector3(0, 0.06, 0), false)
+	await ticks(2)
+	board.undo()
+	await ticks(2)
+	t.near(node().global_position.distance_to(c), 0.0, 0.002, "undo puts it back, turned back")
+	away()
+	await ticks(1)
+	# pointing, with Snap, and the hand only turning: about its middle, 40 degrees become 45
+	ctl.set_snap(true)
+	hand.grip = Basis.IDENTITY
+	point(EYE, c, false)
+	await ticks(2)
+	point(EYE, c, true)
+	await ticks(1)
+	for k in range(1, 5):
+		hand.grip = Basis(Vector3.RIGHT, deg_to_rad(10.0 * k))
+		point(EYE, c, true)
+		await ticks(1)
+	await ticks(1)
+	t.check(ctl._holds.has("right"), "a grab that only turns carries it too")
+	b = node().global_transform.basis.orthonormalized()
+	t.near(rad_to_deg((b * b0.inverse()).get_rotation_quaternion().get_angle()), 45.0, 0.5, "pointing, it turns about its middle, in 15 degree steps with Snap")
+	t.near(node().global_position.distance_to(c), 0.0, 0.002, "its middle stays where it was")
+	point(EYE, c, false)
+	await ticks(2)
+	ctl.set_snap(false)
+	board.undo()
+	await ticks(2)
+	hand.has_grip = false
+	hand.grip = Basis.IDENTITY
 	away()
 	await ticks(1)
 

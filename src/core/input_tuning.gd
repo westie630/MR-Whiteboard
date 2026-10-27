@@ -17,6 +17,7 @@ const PINCH_HISTORY_S := 0.6               # how far back the ray is searched fo
 const PALM_UP_Y := 0.6                     # the palm normal's Y above which the palm faces up
 const AIM_DOT_PROFILE := 0.0               # the ray must point this far forward (dot with the head's forward) to count as aiming...
 const AIM_DOT_JOINT := 0.1                 # ...and this far for the finger-joint fallback ray
+const GRIP_FILTER := Vector2(1.5, 2.0)     # the hand's orientation (a grab turns what it holds): smoothing cutoff at rest (Hz), + this per rad/s
 
 # ------------------------------------------------------------------------------------------------ stylus (StylusInput, PenController)
 const TIP_ON := 0.035
@@ -26,6 +27,11 @@ const MID_OFF := 0.05
 const NIB_SAMPLES := 45                    # frames over which the nib is averaged in the grip pose's frame to align the stylus model
 const PRESSURE_EXP := 0.75
 const STYLUS_FILTER := Vector2(2.2, 45.0)  # One-Euro (min cutoff, beta) of the nib
+const STYLUS_LENGTH := 0.165               # the MX Ink's body, back from the nib (m)
+const STYLUS_HOLD_NEAR := 0.06             # its hand this close to its body (pinch point, knuckle or palm): held again...
+const STYLUS_LET_GO := 0.12                # ...and further than this for STYLUS_LET_GO_S: put down (it stays tracked on the table), the hand is free
+const STYLUS_LET_GO_S := 0.4
+const STYLUS_MOVED := 0.05                 # a stylus put down that moves this far from where it lay is in a hand again (m)
 
 # ------------------------------------------------------------------------------------------------ the menu (XrRig, XrPanel)
 const POKE_PRESS := 0.015                  # a fingertip or nib this close in front of the menu presses...
@@ -83,6 +89,7 @@ const BAR_HIT_H := 0.07
 const CORNER_HIT := 0.075
 const PLANE_SLACK := 0.2                   # a pointer may meet a canvas this far outside its extent
 const MOVE_START := 0.02                   # a pinch on empty canvas that moves this far carries the canvas; less is a tap
+const TURN_START := 12.0                   # a pinch on a 3D model whose hand turns this far (degrees) carries it too (a grab that only turns it)
 const MAX_GAIN := 6.0                      # the most a far canvas (or menu) moves per metre of hand movement
 const MIN_GAIN_DIST := 0.25
 const MIN_CANVAS := Vector2(0.25, 0.18)

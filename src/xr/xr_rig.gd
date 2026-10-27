@@ -62,6 +62,9 @@ var _panel_wait := 0.0                     # how long the dock has waited for it
 var cursor: HandCursor
 var feedback: Feedback                     # click sounds for the hands
 var _prev_stylus := ""
+var _stylus_put_down := false              # the stylus lies somewhere, tracked but not in a hand: treated as docked, its hand is free
+var _stylus_away_s := 0.0                  # how long its hand has been away from it
+var _stylus_rest := Vector3.ZERO           # where it was put down
 var _front_t := 0.0
 var _pinch_peak := {}                      # side -> the strongest pinch since the last status line (for the log)
 var _glove_mats := {}                       # side -> that glove's ShaderMaterial (its fade)
@@ -512,6 +515,7 @@ func _read_hand(side: String) -> Dictionary:
 		"knuckle": idx,
 		"palm": xf * tr.get_hand_joint_transform(J_PALM).origin,
 		"palm_normal": n,
+		"hand_fwd": (idx + lit) * 0.5 - wrist,
 	}
 	out.merge(_read_actions(side))
 	return out
@@ -622,6 +626,45 @@ func _profile(side: String) -> String:
 	return profile
 
 
+## Is the stylus in a hand? Put down on a table it stays tracked, on the hand it is set to, and that hand is tracked too (and reads as
+## pinching hard, which is why the stylus's hand is left out of the board while it holds it). Held while its hand is near its body or
+## not tracked (holding it can hide the fingers) or while a button or the nib is pressed; put down once the hand has been away from it for
+## STYLUS_LET_GO_S. Put down, it counts as docked and the hand points, pinches and grabs again; picking it up (the hand near it, or the
+## stylus moving from where it lay) undoes that.
+func _stylus_in_hand(pen: PenState, delta: float) -> bool:
+	if not pen.tracked or stylus.active == "":
+		_stylus_put_down = false
+		_stylus_away_s = 0.0
+		return true
+	var h: HandInput = hands[stylus.active]
+	var gap := stylus_gap(pen, h) if h.tracked else 0.0
+	var used := pen.down or pen.front or pen.back
+	if _stylus_put_down:
+		if used or (h.tracked and gap < InputTuning.STYLUS_HOLD_NEAR) or pen.tip.distance_to(_stylus_rest) > InputTuning.STYLUS_MOVED:
+			_stylus_put_down = false
+			_stylus_away_s = 0.0
+			print("[stylus] picked up again (the %s hand %.0f cm from it)" % [stylus.active, gap * 100.0])
+	elif used or gap <= InputTuning.STYLUS_LET_GO:
+		_stylus_away_s = 0.0
+	else:
+		_stylus_away_s += delta
+		if _stylus_away_s >= InputTuning.STYLUS_LET_GO_S:
+			_stylus_put_down = true
+			_stylus_rest = pen.tip
+			print("[stylus] put down: the %s hand is %.0f cm from it, free to pinch and grab" % [stylus.active, gap * 100.0])
+	return not _stylus_put_down
+
+
+## How far a hand is from the stylus's body (its pinch point, index knuckle or palm, whichever is nearest), in metres.
+static func stylus_gap(pen: PenState, h: HandInput) -> float:
+	var a := pen.tip
+	var b := pen.tip - pen.dir.normalized() * InputTuning.STYLUS_LENGTH
+	var best := INF
+	for p in [h.pinch_point, h.knuckle, h.palm]:
+		best = minf(best, (p as Vector3).distance_to(Geometry3D.get_closest_point_to_segment(p, a, b)))
+	return best
+
+
 func _aim_note(h: HandInput) -> String:
 	if not h.tracked:
 		return "-"
@@ -653,6 +696,8 @@ func _process(delta: float) -> void:
 		_profile(side)
 		(hands[side] as HandInput).feed(delta, head, _read_hand(side))
 	var pen := stylus.pen
+	if not _stylus_in_hand(pen, delta):
+		pen.tracked = false                            # put down: as if it were in its dock
 	var stylus_here := pen.tracked and stylus.active != ""
 	board.stylus_pen = pen                             # the real stylus, even while a menu has captured it (the dock's tooltip)
 	_place_ui(delta)

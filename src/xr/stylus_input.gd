@@ -117,6 +117,7 @@ func update() -> void:
 	var aim: XRController3D = _aims[choice]
 	var ray: XRController3D = aim if aim.get_has_tracking_data() else c2
 	pen.dir = (-ray.global_transform.basis.z).normalized()
+	pen.basis = ray.global_transform.basis.orthonormalized()
 	var grip: XRController3D = _grips[choice]
 	if _nib_n < NIB_SAMPLES and grip.get_has_tracking_data():
 		_nib_grip_sum += grip.global_transform.affine_inverse() * c2.global_position
