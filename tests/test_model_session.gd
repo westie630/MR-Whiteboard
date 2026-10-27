@@ -5,6 +5,9 @@ extends Node
 ## owner moves it with a handle and the guests see it move while it happens and where it ends; a guest without the owner's say-so cannot move
 ## it, with it they can, and the owner sees that. A guest can only ever be given a file a frame of the session shows.
 
+const TET_OBJ := "mtllib tet.mtl\nv 0 0 0\nv 0.2 0 0\nv 0 0.2 0\nv 0 0 0.2\nusemtl blue\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n"
+const TET_MTL := "newmtl blue\nKd 0.1 0.2 0.9\n"
+
 var t := TestCase.new("model_session")
 var heads: Array = []
 var _ball: PackedByteArray
@@ -255,6 +258,22 @@ func run() -> void:
 	t.check(await until(func(): return absf(in_room(H).x - start_b.x - 0.1) < 0.005), "1:1, and the owner sees it: %s" % str(in_room(H) - start_b))
 	t.check(actl.selected == "", "let go, it stays unselected for her")
 	t.check(fa != null, "(Ana's frame was there)")
+
+	# ---- an .mtl sent after its .obj: where the model stands, every headset shows the one with its materials
+	var tet := bd(H).models.add(TET_OBJ.to_utf8_buffer(), "Tet.obj")
+	var tp := bd(H).place_model(str(tet.id))
+	var tf := str(tp.id)
+	t.check(await until(func(): return bd(A).models.has(str(tet.id)) and bd(B).models.has(str(tet.id))), "an .obj sent alone reaches both guests")
+	var joined := bd(H).models.add(TET_MTL.to_utf8_buffer(), "tet.mtl")
+	var nid := str(joined.id)
+	t.check(bool(joined.ok) and str(joined.get("old", "")) == str(tet.id), "its .mtl sent afterwards is joined to it on the owner's headset")
+	t.check(await until(func(): return bd(A).doc.frames.has(tf) and bd(A).doc.frames[tf].model == nid and bd(B).doc.frames[tf].model == nid),
+		"both guests' frames show the joined model")
+	t.check(await until(func(): return bd(A).models.has(nid) and bd(B).models.has(nid)), "and they are given its file")
+	t.check(await until(func(): return (bd(A).model_nodes[tf] as ModelNode).state == "ready" and (bd(B).model_nodes[tf] as ModelNode).state == "ready"),
+		"Ana and Ben (a Quest 2) show it")
+	bd(H).delete_frame(tf)
+	await settle(0.2)
 
 	# ---- only files a frame of the session shows are given out
 	var secret := bd(H).models.add(_box_glb(), "Secret.glb")

@@ -396,8 +396,10 @@ func take(kind: String, bytes: PackedByteArray, fname: String) -> Dictionary:
 			return {"ok": true, "message": "%s. %s" % [what, "It is in front of you in the headset." if bool(shown.ok) else "Kept in the headset (not put up: %s)" % shown.message]}
 		"model":
 			var got := board.models.add(bytes, fname)
-			if not bool(got.ok):
+			if not bool(got.ok) or bool(got.get("held", false)):
 				return got
+			if str(got.get("old", "")) != "":
+				return {"ok": true, "message": "%s now has %s: it is shown with %s in the headset." % [got.name, fname, "it" if fname.get_extension().to_lower() != "mtl" else "its materials"]}
 			var mwhat := "\"%s\"%s" % [got.name, " (it was there already)" if bool(got.get("dup", false)) else ""]
 			if guest:
 				return {"ok": true, "message": "%s. %s" % [mwhat, only_here]}

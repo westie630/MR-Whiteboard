@@ -108,6 +108,35 @@ static func check(files: Dictionary) -> Dictionary:
 	return {"ok": true, "kind": kind, "main": main, "notes": notes}
 
 
+## The files `main` refers to that are not among `files` (as they are written in it, folders left out): an .obj's .mtl and the pictures of
+## the .mtl that is there, a .gltf's buffers and pictures. Empty for a .glb or a model that has everything.
+static func missing(files: Dictionary, main: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	var bytes: PackedByteArray = files.get(main, PackedByteArray())
+	match main.get_extension().to_lower():
+		"obj":
+			for line in bytes.get_string_from_utf8().split("\n", false):
+				var l := (line as String).strip_edges()
+				if l.begins_with("mtllib"):
+					var mtl := l.substr(6).strip_edges().replace("\\", "/").get_file()
+					var at := _find(files, main, mtl)
+					if at == "":
+						out.append(mtl)
+						continue
+					for pic in _mtl_pictures(files[at] as PackedByteArray):
+						if _find(files, main, pic) == "" and not out.has(pic.get_file()):
+							out.append(pic.get_file())
+		"gltf":
+			var parsed: Variant = JSON.parse_string(bytes.get_string_from_utf8())
+			if parsed is Dictionary:
+				for list_key in ["buffers", "images"]:
+					for e in (parsed as Dictionary).get(list_key, []):
+						var uri := str((e as Dictionary).get("uri", ""))
+						if uri != "" and not uri.begins_with("data:") and _find(files, main, uri) == "":
+							out.append(uri.uri_decode().replace("\\", "/").get_file())
+	return out
+
+
 static func _mtl_pictures(bytes: PackedByteArray) -> PackedStringArray:
 	var out := PackedStringArray()
 	for line in bytes.get_string_from_utf8().split("\n", false):

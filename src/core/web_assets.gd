@@ -3,7 +3,7 @@ extends RefCounted
 ## The stylesheet, the script and the icons of the web pages the app serves (see ExportServer / WebPages). Kept as strings so they
 ## travel inside the app without any extra files in the export.
 
-const VERSION := 12                     # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
+const VERSION := 13                     # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
 
 const LOGO := r"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#g)"/><path d="M14 40c6-14 11-14 14-4s8 10 12-4 6-8 10-2" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="50" cy="19" r="4" fill="#fff" opacity=".85"/></svg>"""
 
@@ -476,7 +476,7 @@ const JS := r"""
   // ---- upload
   var drop = $('#drop'), input = $('#file');
   // a 3D model can be several files (an .obj with its .mtl and pictures, a .gltf with its .bin): those dropped together go as one
-  var MODEL_MAIN = /\.(glb|gltf|obj|zip)$/i, MODEL_PART = /\.(mtl|bin|png|jpe?g|webp|tga|bmp)$/i;
+  var MODEL_MAIN = /\.(glb|gltf|obj|zip)$/i, MODEL_PART = /\.(mtl|bin|png|jpe?g|webp|tga|bmp)$/i, PICTURE = /\.(png|jpe?g|webp|bmp)$/i;
   function packBundle(group) {
     return Promise.all(group.map(function (f) { return f.arrayBuffer(); })).then(function (bufs) {
       var enc = new TextEncoder(), head = enc.encode('MRWB1\n'), names = group.map(function (f) { return enc.encode(f.name); });
@@ -501,8 +501,13 @@ const JS := r"""
       if (/\.(obj|gltf)$/i.test(f.name) && parts.length) out.push({ main: f, parts: parts });
       else out.push({ main: f, parts: [] });
     });
-    if (parts.length && !files.some(function (f) { return /\.(obj|gltf)$/i.test(f.name); }))
-      parts.forEach(function (f) { out.push({ main: f, parts: [], orphan: true }); });
+    // without an .obj or .gltf: an .mtl or .bin (with the pictures dropped with it) is joined to the model sent before or after it, in the
+    // headset; pictures alone are not a model's
+    if (parts.length && !files.some(function (f) { return /\.(obj|gltf)$/i.test(f.name); })) {
+      var lead = parts.filter(function (f) { return !PICTURE.test(f.name); });
+      if (lead.length) out.push({ main: lead[0], parts: parts.filter(function (f) { return f !== lead[0]; }), loose: true });
+      else parts.forEach(function (f) { out.push({ main: f, parts: [], orphan: true }); });
+    }
     return out;
   }
   function uploadAll(files) {
@@ -514,7 +519,7 @@ const JS := r"""
       row.className = 'up';
       var isSvg = /\.svg$/i.test(f.name) || f.type === 'image/svg+xml';
       var isPdf = /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
-      var isModel = !g.orphan && MODEL_MAIN.test(f.name);
+      var isModel = !!g.loose || (!g.orphan && MODEL_MAIN.test(f.name));
       var okType = isSvg || isPdf || isModel;
       var label = f.name + (g.parts.length ? ' (+ ' + g.parts.length + (g.parts.length === 1 ? ' file)' : ' files)') : '');
       var why = g.orphan ? 'This is part of a 3D model: drop it together with the .obj or .gltf file (or all of them in one .zip)' : 'Only .pdf, .svg and 3D models (.glb, .gltf, .obj, .zip) can be added';
@@ -534,7 +539,7 @@ const JS := r"""
             row.className = 'up ' + (j.ok ? 'ok' : 'err');
             row.firstChild.outerHTML = icon(j.ok ? 'check' : 'x');
             $('.msg', row).textContent = j.message || (j.ok ? 'Done' : 'Failed');
-            if (j.ok) { ok++; if (isPdf || isModel) pdfs++; }
+            if (j.ok && !j.held) { ok++; if (isPdf || isModel) pdfs++; }
           })
           .catch(function (e) { row.className = 'up err'; row.firstChild.outerHTML = icon('x'); $('.msg', row).textContent = e.message; });
       });

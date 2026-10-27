@@ -405,6 +405,18 @@ func _guest() -> void:
 	t.eq(board.doc.frames.size(), frames, "a guest's PDF is not put up as a canvas the others could not get")
 	t.eq(board.pdfs.list().size(), 2, "it is kept in that headset's library")
 	board.session.role = Session.Role.NONE
+	# a phone sends one file at a time: an .obj, then its .mtl, which is joined to it where it stands
+	t.eq(TelegramApi.kind_of("tet.mtl"), "model", "an .mtl is taken as part of a model")
+	var obj := tg.take("model", "mtllib tet.mtl\nv 0 0 0\nv 0.2 0 0\nv 0 0.2 0\nusemtl blue\nf 1 3 2\n".to_utf8_buffer(), "Tet.obj")
+	t.check(bool(obj.ok), "the .obj is put down: %s" % obj.message)
+	var mtl := tg.take("model", "newmtl blue\nKd 0.1 0.2 0.9\n".to_utf8_buffer(), "tet.mtl")
+	t.check(bool(mtl.ok) and str(mtl.message).contains("materials"), "its .mtl sent next is joined to it: %s" % mtl.message)
+	var shown := ""
+	for f in board.doc.frames.values():
+		if (f as FrameData).is_model():
+			shown = (f as FrameData).model
+	t.check(shown != "" and board.models.entry(shown).get("ext", "") == "zip", "the model standing there is the one with its .mtl")
+
 
 
 func _errors() -> void:

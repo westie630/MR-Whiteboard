@@ -84,7 +84,7 @@ static func dashboard(snap: Dictionary, files: Array, pdfs: Array = [], models: 
 	b += "</div></section>"
 	b += "<label class=drop id=drop tabindex=0><span class=badge>%s</span><span><strong>Drop PDF, SVG or 3D model files here</strong>" % ic("upload")
 	b += "<span>or click to choose. A <b>PDF</b> is kept in the headset and put in front of you to read, page by page, and to draw on. An <b>SVG</b> becomes a new canvas of real shapes, strokes and text you can select and change. "
-	b += "A <b>3D model</b> (glTF <b>.glb</b> / <b>.gltf</b>, or <b>.obj</b>) stands in front of you, lit, to move, turn and resize: drop an .obj together with its .mtl and pictures (or a .gltf with its .bin), or all of them in one <b>.zip</b>.</span></span>"
+	b += "A <b>3D model</b> (glTF <b>.glb</b> / <b>.gltf</b>, or <b>.obj</b>) stands in front of you, lit, to move, turn and resize: drop an .obj together with its .mtl and pictures (or a .gltf with its .bin), or all of them in one <b>.zip</b>; an .mtl sent a moment after its .obj is joined to it.</span></span>"
 	b += "<input type=file id=file accept='.pdf,application/pdf,.svg,image/svg+xml,.glb,.gltf,.obj,.mtl,.bin,.zip,.png,.jpg,.jpeg,.webp,.tga,.bmp' multiple></label><div id=uploads class=uploads></div>"
 	b += model_panel(models)
 	b += pdf_panel(pdfs)

@@ -904,7 +904,12 @@ func _add_model(files: Dictionary, name: String, show: bool, doc: Document) -> D
 	if not bool(added.ok):
 		return _json(422, added, doc)
 	var notes: PackedStringArray = added.get("notes", PackedStringArray())
+	if bool(added.get("held", false)):
+		return _json(200, added, doc)                  # (parts that wait for their model: its message says so)
 	var msg := "%s %s" % [str(added.name), "added" if not bool(added.dup) else "(it was here already)"]
+	if str(added.get("old", "")) != "":
+		msg = "Joined to %s: it is shown with them now" % str(added.name)    # (a model sent before: where it stands, it changes)
+		show = false
 	if show and show_model.is_valid():
 		var shown: Dictionary = show_model.call(str(added.id))
 		added["shown"] = bool(shown.get("ok", false))

@@ -122,6 +122,7 @@ func _init() -> void:
 	models.model_ready.connect(_on_model_ready)
 	models.model_failed.connect(_on_model_failed)
 	models.changed.connect(_on_models_changed)
+	models.replaced.connect(_on_model_replaced)
 	models.progress_changed.connect(func(_id): _on_models_changed())
 	add_child(models)
 	model_ctl = ModelController.new(self)
@@ -1812,6 +1813,21 @@ func _on_model_failed(model_id: String, message: String) -> void:
 	for mn in model_nodes.values():
 		(mn as ModelNode).on_failed(model_id, message)
 	changed.emit()
+
+
+## A model got the files it lacked (its .mtl sent after it, ModelLibrary.add_parts): the frames that show it show the new file. Not an undo
+## step: it is the same model, complete.
+func _on_model_replaced(old_id: String, new_id: String) -> void:
+	if doc == null or not canvas_edit_ok(false):
+		return
+	for f in doc.frames.values():
+		var fd := f as FrameData
+		if fd.is_model() and fd.model == old_id:
+			var upd := fd.copy()
+			upd.model = new_id
+			upd.keep_anchor_of(fd)
+			doc.replace_frame(upd)
+			toast.emit("\"%s\" has its materials now." % fd.name)
 
 
 func _on_models_changed() -> void:

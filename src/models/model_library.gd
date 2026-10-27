@@ -7,15 +7,21 @@ extends Node
 ## A model that is several files (an .obj with its .mtl and pictures, a .gltf with its .bin) is kept as ONE .zip, so it travels and is
 ## named as one thing. Loading happens on one worker thread (a big model takes seconds: the headset must not stop meanwhile); a few loaded
 ## models are kept ready, as many as the device's budget allows, and each ModelNode shows its own copy of one.
+##
+## The files of one model may also come one after another (an .obj, then its .mtl and pictures: a phone sends one file at a time). A part
+## that comes on its own waits HOLD_SEC for the model that needs it; one that a model added in that time lacks is joined to it, which makes
+## it a new file (a new id): `replaced` says so, and the frames that showed the old one show the new one.
 
 signal changed()                                  # a model was added, renamed or removed
 signal model_ready(model_id: String)
 signal model_failed(model_id: String, message: String)
 signal progress_changed(model_id: String)
 signal wanted(model_id: String)                   # a frame shows a model that is not on this device: whoever can fetch it (a session) should
+signal replaced(old_id: String, new_id: String)   # a model got the files it lacked (its .mtl sent after it): a new file, the old one is gone
 
 const INDEX_NAME := "index.json"
 const MAX_NAME := 80
+const HOLD_SEC := 600                             # how long a part sent on its own waits for its model, and a model for its parts
 
 var dir := "user://models"                        # tests point it elsewhere
 var budget: ModelBudget = ModelBudget.for_tier("high")
@@ -35,6 +41,8 @@ var _quit := false
 var _results: Array = []
 var _wanted: Dictionary = {}
 var _progress: Dictionary = {}
+var _loose: Dictionary = {}                       # lower-case file name -> {name, bytes, t}: parts sent on their own, waiting for their model
+var _held: Dictionary = {}                        # lower-case file name -> {files, main, name, t}: a .gltf refused for lack of its parts
 
 
 func _ready() -> void:
@@ -173,9 +181,8 @@ func add(bytes: PackedByteArray, file_name: String, cached: bool = false) -> Dic
 	_load_index()
 	var kind := ModelLoader.detect(bytes)
 	if kind == "":
-		var ext := file_name.get_extension().to_lower()
-		if ext in ["mtl", "bin", "png", "jpg", "jpeg"]:
-			return {"ok": false, "message": "%s is part of a model: send it together with the model file (.obj or .gltf), or put them all in one .zip." % file_name.get_file()}
+		if ModelLoader.PARTS.has(file_name.get_extension().to_lower()):
+			return add_files({file_name.get_file(): bytes}, "", cached)
 		return {"ok": false, "message": "%s is not a 3D model the headset can read (glTF .glb / .gltf, or .obj)." % file_name.get_file()}
 	if kind == "zip":
 		if bytes.size() > budget.max_file_mb * 1048576:
@@ -186,6 +193,7 @@ func add(bytes: PackedByteArray, file_name: String, cached: bool = false) -> Dic
 
 ## Takes a model in from its files (name or path -> bytes): one file is kept as it is, several as one .zip. {ok, message, id, name, dup, notes}.
 ## `cached` marks one received from a session (it may be cleaned up). `as_zip`: the bytes of the .zip they came in, kept as they are.
+## Parts that came before it (add_parts) are added to it. Parts without a model are add_parts.
 func add_files(files: Dictionary, display_name: String, cached: bool = false, as_zip: PackedByteArray = PackedByteArray()) -> Dictionary:
 	_load_index()
 	var total := 0
@@ -197,10 +205,23 @@ func add_files(files: Dictionary, display_name: String, cached: bool = false, as
 			total += (files[p] as PackedByteArray).size()
 	if kept.is_empty():
 		return {"ok": false, "message": "There is no model among these files: a .glb, .gltf or .obj file is needed."}
+	var main0 := ModelLoader.main_of(kept)
+	if main0 == "":
+		if cached:
+			return {"ok": false, "message": "There is no model among these files: a .glb, .gltf or .obj file is needed."}
+		return add_parts(kept)
+	if not cached and _fill(kept, main0):
+		as_zip = PackedByteArray()                     # (parts sent before it were added: packed again)
+		total = 0
+		for p in kept:
+			total += (kept[p] as PackedByteArray).size()
 	if total > budget.max_file_mb * 1048576 or as_zip.size() > budget.max_file_mb * 1048576:
 		return _too_big()
 	var chk := ModelLoader.check(kept)
 	if not bool(chk.ok):
+		if not cached and not ModelLoader.missing(kept, main0).is_empty():
+			_held[main0.get_file().to_lower()] = {"files": kept, "main": main0, "name": display_name, "t": Time.get_unix_time_from_system()}
+			return {"ok": false, "message": "%s Or send them in the next %d minutes: they are joined to it." % [str(chk.message), HOLD_SEC / 60]}
 		return {"ok": false, "message": str(chk.message)}
 	var main: String = chk.main
 	var nm := clean_name(display_name if display_name.strip_edges() != "" else main)
@@ -230,6 +251,127 @@ func add_files(files: Dictionary, display_name: String, cached: bool = false, as
 	_save_index()
 	changed.emit()
 	return {"ok": true, "message": "Added", "id": id, "name": nm, "dup": false, "notes": chk.notes}
+
+
+## Parts of a model sent without it (an .mtl, a .bin, pictures): joined to a model added in the last HOLD_SEC that lacks them (it becomes a
+## new file: `replaced`; the answer has `old`), or to a .gltf refused for lack of them; else kept for the model sent next (`held`). Pictures
+## alone are kept only when a waiting .mtl names them: other pictures are not a model's.
+func add_parts(parts: Dictionary) -> Dictionary:
+	_load_index()
+	_expire()
+	var now := Time.get_unix_time_from_system()
+	var names := PackedStringArray()
+	var only_pictures := true
+	for p in parts:
+		var nm := String(p).get_file()
+		_loose[nm.to_lower()] = {"name": nm, "bytes": parts[p], "t": now}
+		names.append(nm)
+		if nm.get_extension().to_lower() in ["mtl", "bin"]:
+			only_pictures = false
+	# a .gltf that was waiting for them
+	for k in _held.keys():
+		var h: Dictionary = _held[k]
+		var hf: Dictionary = h.files
+		if _fill(hf, str(h.main)) and ModelLoader.missing(hf, str(h.main)).is_empty():
+			_held.erase(k)
+			return add_files(hf, str(h.name))
+	# a model added a moment ago that lacks them
+	for e in list():
+		if bool(e.get("cached", false)) or str(e.get("format", "")) != "OBJ" or now - float(e.get("added", 0)) > HOLD_SEC:
+			continue
+		var old := str(e.id)
+		var files := _files_of(old)
+		var main := ModelLoader.main_of(files)
+		if main == "" or not _fill(files, main):
+			continue
+		var res := add_files(files, str(e.name))
+		if bool(res.ok) and str(res.id) != old:
+			_index[str(res.id)]["name"] = str(e.name)
+			_save_index()
+			replaced.emit(old, str(res.id))
+			remove(old)
+			res["old"] = old
+			res["name"] = str(e.name)
+			res["dup"] = false
+			res["message"] = "Joined to %s" % str(e.name)
+		return res
+	# nothing needs them yet
+	if only_pictures:
+		var named := {}
+		for k in _loose:
+			if String(k).get_extension() == "mtl":
+				for pic in ModelLoader._mtl_pictures((_loose[k] as Dictionary).bytes as PackedByteArray):
+					named[pic.get_file().to_lower()] = true
+		var used := false
+		for nm in names:
+			used = used or named.has(nm.to_lower())
+		if not used:
+			for nm in names:
+				_loose.erase(nm.to_lower())
+			return {"ok": false, "message": "No 3D model sent in the last %d minutes uses %s. Send a model's pictures with its .obj and .mtl (or all of them in one .zip)." % [HOLD_SEC / 60, ", ".join(names)]}
+	return {"ok": true, "held": true, "id": "", "name": ", ".join(names), "dup": false, "notes": PackedStringArray(),
+		"message": "Kept %s: send the model that uses %s in the next %d minutes and they are put together." % [", ".join(names), "it" if names.size() == 1 else "them", HOLD_SEC / 60]}
+
+
+## Whether a file of this name is a part a model is waiting for: a waiting .mtl names it, or a model added in the last HOLD_SEC (or a
+## refused .gltf) lacks it. A picture that is goes to add_parts, not among the canvases' pictures.
+func wants_part(file_name: String) -> bool:
+	_load_index()
+	_expire()
+	var want := file_name.get_file().to_lower()
+	for k in _loose:
+		if String(k).get_extension() == "mtl":
+			for pic in ModelLoader._mtl_pictures((_loose[k] as Dictionary).bytes as PackedByteArray):
+				if pic.get_file().to_lower() == want:
+					return true
+	for h in _held.values():
+		for m in ModelLoader.missing((h as Dictionary).files, str(h.main)):
+			if m.to_lower() == want:
+				return true
+	var now := Time.get_unix_time_from_system()
+	for e in list():
+		if bool(e.get("cached", false)) or str(e.get("format", "")) != "OBJ" or now - float(e.get("added", 0)) > HOLD_SEC:
+			continue
+		var files := _files_of(str(e.id))
+		for m in ModelLoader.missing(files, ModelLoader.main_of(files)):
+			if m.to_lower() == want:
+				return true
+	return false
+
+
+## Adds to `files` what its model lacks from the parts that wait (taking them). True when anything was added.
+func _fill(files: Dictionary, main: String) -> bool:
+	_expire()
+	var folder := main.get_base_dir()
+	var any := false
+	var took := true
+	while took:
+		took = false
+		for m in ModelLoader.missing(files, main):
+			var part: Dictionary = _loose.get(m.to_lower(), {})
+			if part.is_empty():
+				continue
+			files[(folder + "/" if folder != "" else "") + str(part.name)] = part.bytes
+			_loose.erase(m.to_lower())
+			took = true
+			any = true
+	return any
+
+
+func _expire() -> void:
+	var now := Time.get_unix_time_from_system()
+	for pool: Dictionary in [_loose, _held]:
+		for k in pool.keys():
+			if now - float((pool[k] as Dictionary).t) > HOLD_SEC:
+				pool.erase(k)
+
+
+## The files a model of the library is made of (name -> bytes).
+func _files_of(id: String) -> Dictionary:
+	var ext := str(entry(id).get("ext", "glb"))
+	if ext == "zip":
+		return ModelLoader.unzip(file_bytes(id), "%s/parts.tmp" % dir)
+	return {"model." + ext: file_bytes(id)}
 
 
 func _too_big() -> Dictionary:

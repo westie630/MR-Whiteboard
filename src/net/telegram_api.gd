@@ -9,7 +9,7 @@ const POLL_S := 25                         # how long one getUpdates waits on Te
 const MAX_DOWNLOAD := 20 * 1048576         # the biggest file a bot may fetch from Telegram (getFile)
 const MAX_UPLOAD := 50 * 1048576           # the biggest file a bot may send (sendDocument)
 const MAX_TEXT := 4000                     # a message holds 4096 characters; longer text is cut
-const KINDS := {"pdf": "pdf", "svg": "svg", "glb": "model", "gltf": "model", "obj": "model", "zip": "model", "mrw": "mrw"}
+const KINDS := {"pdf": "pdf", "svg": "svg", "glb": "model", "gltf": "model", "obj": "model", "zip": "model", "mtl": "model", "bin": "model", "mrw": "mrw"}
 ## The commands the chat's "/" menu offers (setMyCommands).
 const COMMANDS := [
 	["svg", "The canvases of the open document as SVG"],

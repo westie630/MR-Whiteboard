@@ -38,6 +38,7 @@ func _ready() -> void:
 	_obj_reader()
 	_steady_pictures()
 	await _library()
+	await _parts_later()
 	await _placing()
 	await _handles()
 	await _two_hands()
@@ -281,6 +282,57 @@ static func _winding(arr: Array) -> int:
 	return 1 if cross.dot(n[idx[0]]) > 0.0 else -1
 
 
+# ------------------------------------------------------------------------------------------------ parts sent one after another
+
+## An .obj, then its .mtl, then its picture (as a phone sends them, one at a time): each joins the model, which changes where it stands.
+## Then the other way round, and a picture that no model wants.
+func _parts_later() -> void:
+	var lib := board.models
+	lib._loose.clear()
+	lib._held.clear()
+	var obj := CUBE_OBJ.replace("cube.mtl", "later.mtl").to_utf8_buffer()
+	var mtl := CUBE_MTL.replace("tex.png", "later.png").to_utf8_buffer()
+	var r := lib.add(obj, "Later.obj")
+	t.check(bool(r.ok) and not (r.notes as PackedStringArray).is_empty(), "an .obj alone is taken, its materials missing: %s" % str(r.notes))
+	var placed := board.place_model(str(r.id))
+	var fid := str(placed.id)
+	t.check(lib.wants_part("later.mtl") and lib.wants_part("LATER.MTL"), "its .mtl is wanted (any case)")
+	t.check(not lib.wants_part("holiday.png"), "a picture it does not name is not")
+	var m := lib.add(mtl, "later.mtl")
+	t.check(bool(m.ok) and str(m.get("old", "")) == str(r.id), "its .mtl sent afterwards is joined to it: %s" % str(m.message))
+	t.check(not lib.has(str(r.id)) and lib.has(str(m.id)), "the model without it is gone, the one with it kept")
+	t.eq(str(lib.entry(str(m.id)).ext), "zip", "as one .zip")
+	t.eq(str(lib.entry(str(m.id)).name), "Later", "with the model's name")
+	t.eq(board.doc.frames[fid].model, str(m.id), "where it stands, it is the model with its .mtl now")
+	t.check(lib.wants_part("later.png"), "the picture its .mtl names is wanted next")
+	var p := lib.add(_png(), "later.png")
+	t.check(bool(p.ok) and str(p.get("old", "")) == str(m.id), "the picture sent last is joined too: %s" % str(p.message))
+	t.eq(board.doc.frames[fid].model, str(p.id), "and shown")
+	t.check((p.notes as PackedStringArray).is_empty(), "nothing is missing now: %s" % str(p.notes))
+	var loaded := ModelLoader.load_model(lib.file_bytes(str(p.id)), lib.budget, "user://test_models_lib/later.tmp")
+	var mesh: MeshInstance3D = (loaded.root as Node).find_children("*", "MeshInstance3D", true, false)[0] if bool(loaded.ok) else null
+	var mat: StandardMaterial3D = mesh.mesh.surface_get_material(0) if mesh != null else null
+	t.check(mat != null and mat.albedo_texture != null and mat.albedo_color.is_equal_approx(Color(0.9, 0.1, 0.1)), "it loads with its colour and picture")
+	if bool(loaded.ok):
+		(loaded.root as Node).free()
+	await ticks(3)
+	t.eq((board.model_nodes[fid] as ModelNode).state, "ready", "and is shown")
+	board.delete_frame(fid)
+	# the other way round: the .mtl and picture first, then the .obj
+	var mtl2 := CUBE_MTL.replace("tex.png", "first.png").to_utf8_buffer()
+	var h := lib.add(mtl2, "first.mtl")
+	t.check(bool(h.ok) and bool(h.get("held", false)), "an .mtl sent before its .obj waits for it: %s" % str(h.message))
+	var hp := lib.add(_png(), "first.png")
+	t.check(bool(hp.ok) and bool(hp.get("held", false)), "so does the picture it names")
+	var o := lib.add(CUBE_OBJ.replace("cube.mtl", "first.mtl").to_utf8_buffer(), "First.obj")
+	t.check(bool(o.ok) and (o.notes as PackedStringArray).is_empty(), "the .obj sent after them gets them: %s" % str(o.notes))
+	t.eq(str(lib.entry(str(o.id)).ext), "zip", "kept together")
+	t.check(lib._loose.is_empty(), "nothing waits any more")
+	var stray := lib.add(_png(), "holiday.png")
+	t.check(not bool(stray.ok) and lib._loose.is_empty(), "a picture no model names is not kept as a model's: %s" % str(stray.message))
+	await ticks(1)
+
+
 # ------------------------------------------------------------------------------------------------ the library
 
 func _library() -> void:
@@ -293,8 +345,6 @@ func _library() -> void:
 	t.check(bool(lib.add(_glb_bytes, "Again.glb").dup), "and is not stored twice")
 	var notmodel := lib.add("hello".to_utf8_buffer(), "notes.txt")
 	t.check(not bool(notmodel.ok), "a file that is not a model is refused")
-	var part := lib.add(CUBE_MTL.to_utf8_buffer(), "cube.mtl")
-	t.check(not bool(part.ok) and str(part.message).contains("part of a model"), "a lone .mtl is refused with what to do: %s" % str(part.message))
 	# an .obj with its .mtl and picture: one bundle, kept as one .zip
 	var files := {"cube.obj": CUBE_OBJ.to_utf8_buffer(), "cube.mtl": CUBE_MTL.to_utf8_buffer(), "tex.png": _png()}
 	var ro := lib.add_files(files, "cube.obj")
@@ -774,8 +824,10 @@ func _web() -> void:
 	t.check(ExportServer.unpack_bundle(pack.slice(0, pack.size() - 3)).is_empty(), "a bundle cut short is refused")
 	var torn := srv.handle("POST", "/api/model/bundle?name=x.obj", HEAD, "MRWB1\nxx".to_utf8_buffer(), "x")
 	t.eq(torn.status, 400, "and answered as such")
-	var nope := srv.handle("POST", "/api/model?name=x.mtl", HEAD, CUBE_MTL.to_utf8_buffer(), "x")
-	t.eq(nope.status, 422, "a part of a model on its own is refused")
+	var held := srv.handle("POST", "/api/model?name=x.mtl", HEAD, CUBE_MTL.to_utf8_buffer(), "x")
+	var jh: Dictionary = JSON.parse_string((held.body as PackedByteArray).get_string_from_utf8())
+	t.check(held.status == 200 and bool(jh.get("held", false)), "a part of a model on its own waits for its model: %s" % str(jh.message))
+	board.models._loose.clear()
 	t.eq(srv.handle("POST", "/api/model?name=x.glb", {}, _glb_bytes, "x").status, 403, "an upload not made from the page itself is refused")
 	var page := (srv.handle("GET", "/", {}, PackedByteArray(), "x").body as PackedByteArray).get_string_from_utf8()
 	t.check(page.contains("3D models") and page.contains("Table"), "the dashboard lists the models")
