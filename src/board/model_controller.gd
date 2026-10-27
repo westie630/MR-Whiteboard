@@ -4,7 +4,9 @@ extends RefCounted
 ## the left or middle mouse button), grabs; touching (the pinch point or the nib in or at the model) moves things 1:1, pointing moves them
 ## further than the hand by the ratio of the distances from the head.
 ##  - a tap on a model selects it: its handles appear (ModelGizmo) and the model bar under it (ModelBar),
-##  - a drag on a model carries it (selected or not), a second pointer on it turns and resizes it with the first (in any direction),
+##  - a drag on a model carries it (selected or not), a second pointer on it turns and resizes it with the first (in any direction); while it
+##    is carried it shows no box, no handles and no bar, and it stays unselected afterwards (a tap selects it again). A hand inside the
+##    selected model grabs the model, not the handles inside it (those are pointed at; the ones outside it can be touched too),
 ##  - the handles of the selected model: Move (an arrow slides along an axis, a square in a plane, the ball moves freely), Rotate (a ring
 ##    turns about its axis), Scale (a corner makes it bigger or smaller about its middle, an axis cube stretches it along its own axis).
 ## Snap (the bar) moves in centimetre steps, turns in 15 degree steps and sizes in centimetre steps. Every hold is one undo step, done through
@@ -251,11 +253,13 @@ func _target(side: String, h: HandInput, at_press: bool) -> Dictionary:
 	var can_point := h.aiming
 	if gizmo.visible and selected != "" and board.model_nodes.has(selected) and not _locked(selected):
 		var g := {}
-		if can_touch:
+		# a hand inside the model grabs the model itself (to carry it), not the handles inside it: those outside it are touched, all pointed at
+		var inside := can_touch and (board.model_nodes[selected] as ModelNode).contains(h.pinch_point)
+		if can_touch and not inside:
 			g = gizmo.pick(o, d, h.pinch_point, true)
 			if not g.is_empty():
 				return {"kind": "handle", "handle": g.id, "fid": selected, "t": 0.0, "point": h.pinch_point, "direct": true}
-		if can_point:
+		if can_point and not inside:
 			g = gizmo.pick(o, d, h.pinch_point, false)
 			if not g.is_empty():
 				return {"kind": "handle", "handle": g.id, "fid": selected, "t": float(g.t), "point": o + d * float(g.t), "direct": false}
@@ -346,7 +350,9 @@ func _begin_hold(side: String, h: HandInput, fid: String, what: String, t: Dicti
 	_holds[side] = hold
 	if what != BODY:
 		gizmo.held = what
-	select(fid)
+		select(fid)
+	elif selected == fid:
+		deselect()                                       # carried by hand: no box, no handles, no bar; a tap brings them back
 	_tick(side, 0.3, 0.02)
 
 
@@ -619,10 +625,14 @@ func layout() -> void:
 		lit[str(hv.fid)] = true
 		if str(hv.kind) == "handle" and gizmo.hot == "":
 			gizmo.hot = str(hv.handle)
+	var carried := {}
+	for side in _holds:
+		if str((_holds[side] as Dictionary).what) == BODY:
+			carried[str((_holds[side] as Dictionary).fid)] = true
 	for fid in board.model_nodes:
 		var mn: ModelNode = board.model_nodes[fid]
 		mn.set_selected(fid == selected)
-		mn.set_hover(1.0 if lit.has(fid) or board.grabs.has(fid) else 0.0)
+		mn.set_hover(1.0 if not carried.has(fid) and (lit.has(fid) or board.grabs.has(fid)) else 0.0)
 	var node: ModelNode = board.model_nodes.get(selected)
 	var rw: Variant = board.room_world(board.current_room) if board.doc != null else null
 	gizmo.readout = readout

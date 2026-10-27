@@ -258,8 +258,8 @@ bar under it ([ModelBar](src/ui/model_bar.gd)):
 | **Put down** | it comes down (or up) until it stands on the table or the floor under it |
 | **Real size**, **Reset**, **Duplicate**, lock its place, delete | |
 
-The model itself is carried by pinching it and moving (1:1 when you touch it, geared when you point from afar), and **two hands** turn it in any
-direction and resize it. Handles keep the same size on the eye at any distance, so they are as easy to take from across the room as up close, and
+The model itself is carried by grabbing it with a pinch and moving (1:1 when your hand is in it, geared when you point from afar), and **two hands**
+turn it in any direction and resize it. While it is carried its box and handles are hidden; tap it to bring them back. Handles keep the same size on the eye at any distance, so they are as easy to take from across the room as up close, and
 show what they are doing (+12.0 cm, 45 deg, 38 x 22 x 40 cm) while held. Every change is one undo step. Home > Canvases lists the models of the
 room too (select, rename, bring to me, hide, lock, delete). Details and numbers: [docs/INTERACTIONS.md](docs/INTERACTIONS.md) section 10.4.
 

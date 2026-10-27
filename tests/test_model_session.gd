@@ -242,6 +242,18 @@ func run() -> void:
 	ca = model_node(A).global_position
 	await drag(A, ca + Vector3(0, 0, 0.8), ca, ca + Vector3(0.0, 0.2, 0.0))
 	t.check(await until(func(): return in_room(H).y - start_a.y > 0.1), "Ana carries it up and the owner sees it: %s" % str(in_room(H) - start_a))
+	# her hand in the model, selected: she carries it 1:1, and sees no box or handles meanwhile
+	var actl := bd(A).model_ctl
+	actl.select(fa.id)
+	await tick(2)
+	var cb := model_node(A).global_position
+	var start_b := in_room(H)
+	var bare := [false]
+	await drag(A, cb + Vector3(0, 0, 0.02), cb, cb + Vector3(0.1, 0.0, 0.0), func():
+		bare[0] = not actl._holds.is_empty() and actl.selected == "" and not actl.gizmo.visible)
+	t.check(bare[0], "Ana's hand in the selected model carries it with no box or handles showing")
+	t.check(await until(func(): return absf(in_room(H).x - start_b.x - 0.1) < 0.005), "1:1, and the owner sees it: %s" % str(in_room(H) - start_b))
+	t.check(actl.selected == "", "let go, it stays unselected for her")
 	t.check(fa != null, "(Ana's frame was there)")
 
 	# ---- only files a frame of the session shows are given out

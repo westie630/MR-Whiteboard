@@ -415,7 +415,7 @@ pointer alone (`HandController.skip`) and no stroke starts under the stylus.
 | | |
 |---|---|
 | Tap (pinch or front button, let go within `MOVE_START`) | selects it: its handles and the model bar appear. A pinch on nothing at all, Esc, or the bar's close button lets go |
-| Pinch the model and move | carries it (selected or not): 1:1 touching, geared by distance when pointing, like a canvas. No turning with one hand |
+| Pinch the model and move | carries it (selected or not): 1:1 touching, geared by distance when pointing, like a canvas. No turning with one hand. While it is carried (one hand or two) its box, handles and bar are hidden, and it stays unselected when let go: a tap shows them again. A hand inside the selected model grabs the model, not the handles inside it (those are pointed at; the ones sticking out can be touched) |
 | Second pointer on it | the two turn it in any direction (the line between them) and resize it (their spread, about the point between them) |
 | Move handles | arrow: along that axis (the point of the axis nearest the ray); square: in that plane (where the ray meets it); ball: freely |
 | Rotate handles | ring: about its axis (the angle round the middle where the ray meets the ring's plane; a ray almost in that plane uses its point nearest the middle) |

@@ -427,18 +427,37 @@ func _handles() -> void:
 	t.near(frame().model_size().x, 0.4, 0.01, "it is twice as wide")
 	board.undo()
 	await ticks(2)
-	# carrying it by touching it: 1:1
+	# carrying it by touching it: 1:1, a hand in the middle takes the model (not the ball), and no box or handles while it is carried
+	ctl.set_mode("move")
+	await ticks(1)
+	t.check(ctl.selected == fid and g.visible, "(selected: the move handles show)")
+	c = node().global_position
+	touch(c, false)
+	await ticks(1)
+	t.eq(str((ctl.hover.get("right", {}) as Dictionary).get("kind", "")), "model", "a hand in the middle of the selected model is on the model, not on the ball")
+	touch(c, true)
+	await ticks(1)
+	var bare := true
+	for k in range(1, 6):
+		touch(c + Vector3(0, 0.02 * k, -0.01 * k), true)
+		await ticks(1)
+		if k >= 2 and (ctl.selected != "" or g.visible or node().selected or node().hover > 0.01):
+			bare = false
+	t.check(bare, "while it is carried it shows no box and no handles")
+	touch(c + Vector3(0, 0.1, -0.05), false)
+	await ticks(2)
+	t.check(node().global_position.distance_to(c + Vector3(0, 0.1, -0.05)) < 0.003, "a hand in the model carries it 1:1: %s" % str(node().global_position - c))
+	away()
+	await ticks(2)
+	t.check(ctl.selected == "" and not g.visible and node().hover < 0.01, "let go, it stays unselected: no box, no handles")
 	c = node().global_position
 	touch(c, false)
 	await ticks(1)
 	touch(c, true)
 	await ticks(1)
-	for k in range(1, 6):
-		touch(c + Vector3(0, 0.02 * k, -0.01 * k), true)
-		await ticks(1)
-	touch(c + Vector3(0, 0.1, -0.05), false)
+	touch(c, false)
 	await ticks(2)
-	t.check(node().global_position.distance_to(c + Vector3(0, 0.1, -0.05)) < 0.003, "a hand in the model carries it 1:1: %s" % str(node().global_position - c))
+	t.check(ctl.selected == fid and g.visible, "a tap selects it again: the handles are back")
 	board.undo()
 	await ticks(2)
 	away()
@@ -448,6 +467,7 @@ func _handles() -> void:
 func _two_hands() -> void:
 	var c := node().global_position
 	var s0 := frame().scale
+	board.model_ctl.select(fid)
 	touch(c + Vector3(0.05, 0, 0), false, hand)
 	touch(c - Vector3(0.05, 0, 0), false, left)
 	await ticks(1)
@@ -463,6 +483,7 @@ func _two_hands() -> void:
 		touch(c + turn * Vector3(half, 0, 0), true, hand)
 		touch(c - turn * Vector3(half, 0, 0), true, left)
 		await ticks(1)
+	t.check(board.model_ctl.selected == "" and not board.model_ctl.gizmo.visible and node().hover < 0.01, "two hands on it: no box, no handles either")
 	touch(c + Basis(Vector3.UP, deg_to_rad(40.0)) * Vector3(0.16, 0, 0), false, hand)
 	touch(c - Basis(Vector3.UP, deg_to_rad(40.0)) * Vector3(0.16, 0, 0), false, left)
 	await ticks(2)
