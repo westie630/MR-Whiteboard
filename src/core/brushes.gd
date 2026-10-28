@@ -38,6 +38,11 @@ static func width_at(brush_id: String, base_width: float, pressure: float) -> fl
 	return base_width * float(b.width_mul) * (1.0 - k + k * clampf(pressure, 0.05, 1.0) * 1.2)
 
 
+## Render priority of what is drawn over a canvas's contents (the selection, handles, markers, titles): above every ink (-127..79), below the
+## interface panels (100), which do not write depth, so a panel in front of them still covers them.
+const OVERLAY_PRIORITY := 90
+
+
 ## Drawing priority band: highlighter ink goes under everything, shape fills under outlines.
 static func priority(brush_id: String, z: int, part: String = "ink") -> int:
 	var under: bool = get_def(brush_id).get("under", false)

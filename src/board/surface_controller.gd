@@ -190,8 +190,7 @@ func _mark(p: Vector3) -> MeshInstance3D:
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.albedo_color = UITheme.DESK
-	mat.no_depth_test = true
-	mat.render_priority = 120
+	mat.render_priority = Brushes.OVERLAY_PRIORITY
 	sph.material = mat
 	m.mesh = sph
 	m.position = p

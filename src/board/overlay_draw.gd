@@ -88,6 +88,5 @@ static func material() -> StandardMaterial3D:
 	m.vertex_color_use_as_albedo = true
 	m.vertex_color_is_srgb = true
 	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	m.no_depth_test = true
-	m.render_priority = 120
+	m.render_priority = Brushes.OVERLAY_PRIORITY          # after the contents, before the panels; a model in front still hides it
 	return m

@@ -9,6 +9,7 @@ const MASKED_SHADER := "res://shaders/pdf_masked.gdshader"
 const PRIORITY := -128                      # the lowest: the ink of every brush (-127 and up) and the interface draw over the page
 const LAYER_DZ := 0.00002                   # metres between layers: among things of one priority the engine draws the farther first
 const MAX_LAYERS := 100
+const PAPER_BACK := 0.0005                  # metres: the paper (which writes depth) lies this far behind the layers, so they never lose to it
 
 var data: PdfPageData
 var mpp := 0.001
@@ -73,11 +74,20 @@ func _add_paper(sz: Vector2) -> void:
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	mi.mesh = mesh
-	mi.material_override = _tri_material(PRIORITY, "")
+	mi.material_override = _paper_material()
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	mi.position = Vector3(0, 0, -(MAX_LAYERS + 2) * LAYER_DZ)
-	mi.sorting_use_aabb_center = false
+	mi.position = Vector3(0, 0, -(MAX_LAYERS + 2) * LAYER_DZ - PAPER_BACK)
 	_root.add_child(mi)
+
+
+## The sheet is solid: it writes depth, so a canvas, a model or a stroke behind the page is hidden by it, not drawn over it.
+func _paper_material() -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.vertex_color_use_as_albedo = true
+	m.vertex_color_is_srgb = true
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return m
 
 
 func _tri_material(priority: int, blend: String) -> StandardMaterial3D:

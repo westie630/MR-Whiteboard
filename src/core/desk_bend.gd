@@ -384,14 +384,15 @@ func surface_material() -> Material:
 	return _variants[key]
 
 
-## The material of the overlay (selection, handles, markers): ink that is never hidden by the depth of anything in front of it.
+## The material of the overlay (selection, handles, markers): ink drawn after the canvas's contents, hidden only by what really stands in front
+## of it (a model, a stroke in the air).
 func overlay_material() -> Material:
 	var key := -1
 	if not _variants.has(key):
 		var m := ShaderMaterial.new()
 		m.shader = load(SCREEN_SHADER)
 		m.set_shader_parameter("style", 0)
-		m.render_priority = 120
+		m.render_priority = Brushes.OVERLAY_PRIORITY
 		_variants[key] = m
 		apply(m)
 	return _variants[key]

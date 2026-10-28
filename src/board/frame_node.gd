@@ -83,8 +83,7 @@ func setup(d: FrameData, document: Document) -> void:
 	_bend_tag.font_size = 64
 	_bend_tag.pixel_size = 0.026 / 64.0
 	_bend_tag.shaded = false
-	_bend_tag.no_depth_test = true
-	_bend_tag.render_priority = 125
+	_bend_tag.render_priority = Brushes.OVERLAY_PRIORITY + 2
 	_bend_tag.modulate = DESK_COLOR
 	_bend_tag.outline_size = 0
 	_bend_tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -96,8 +95,7 @@ func setup(d: FrameData, document: Document) -> void:
 	_title.font_size = 64
 	_title.pixel_size = 0.032 / 64.0
 	_title.shaded = false
-	_title.no_depth_test = true
-	_title.render_priority = 124
+	_title.render_priority = Brushes.OVERLAY_PRIORITY + 1
 	_title.modulate = Color(0.85, 1.0, 1.0, 0.0)
 	_title.outline_size = 0
 	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -112,8 +110,7 @@ func setup(d: FrameData, document: Document) -> void:
 	_ai_tag.font_size = 64
 	_ai_tag.pixel_size = 0.024 / 64.0
 	_ai_tag.shaded = false
-	_ai_tag.no_depth_test = true
-	_ai_tag.render_priority = 125
+	_ai_tag.render_priority = Brushes.OVERLAY_PRIORITY + 2
 	_ai_tag.modulate = AI_COLOR
 	_ai_tag.outline_size = 0
 	_ai_tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
