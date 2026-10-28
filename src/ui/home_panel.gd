@@ -31,6 +31,7 @@ var _sim_box: VBoxContainer
 var _export_label: Label
 var _share_switch: Switch
 var _share_code: Label
+var _share_pin_switch: Switch
 var _share_label: Label
 var _token_btn: Btn
 var _tg_switch: Switch
@@ -369,6 +370,7 @@ func _export(kind_id: String) -> void:
 	_export_label.text = str(res.message)
 	b.toast.emit(str(res.message))
 
+
 func _send_telegram(kind_id: String) -> void:
 	var res := (shell.board as Board).telegram.send_export(kind_id)
 	_export_label.text = str(res.message)
@@ -642,6 +644,12 @@ func _build_share(p: VBoxContainer) -> void:
 	_share_switch = Switch.new("Web page on the Wi-Fi", "View, download and upload canvases from a PC")
 	_share_switch.toggled.connect(_set_sharing)
 	c.add_child(_share_switch)
+	_share_pin_switch = Switch.new("Ask for an access code", "Off: anyone on this Wi-Fi who opens the address gets in")
+	_share_pin_switch.toggled.connect(func(v: bool):
+		App.put("share_pin", v)
+		shell.board.share.require_pin = v
+		_sync_share())
+	c.add_child(_share_pin_switch)
 	_share_code = UiKit.label("", false, UITheme.FONT_BIG, 600)
 	_share_code.add_theme_color_override("font_color", UITheme.GOOD)
 	c.add_child(_share_code)
@@ -665,17 +673,20 @@ func _set_sharing(on: bool) -> void:
 func _sync_share() -> void:
 	var b: Board = shell.board
 	var on := b.share.is_running()
+	var coded: bool = b.share.require_pin
 	_share_switch.on = on
-	_share_code.visible = on
+	_share_pin_switch.on = coded
+	_share_code.visible = on and coded
 	if not on:
-		_share_label.text = "Switch on, open the address in a browser on a PC on the same Wi-Fi and type the access code. There you see, download and delete the canvases, upload SVG files (they arrive here as canvases), set up the assistant, and follow what you draw in the live view."
+		_share_label.text = "Switch on, open the address in a browser on a PC on the same Wi-Fi and type the access code (unless you turned the code off). There you see, download and delete the canvases, upload SVG files (they arrive here as canvases), set up the assistant, and follow what you draw in the live view."
 		return
 	_share_code.text = "Code  %s" % b.share.pin_text()
 	var urls := b.share.urls()
 	if urls.is_empty():
 		_share_label.text = "Waiting for a Wi-Fi connection: the address appears here (port %d)." % b.share.port
 		return
-	_share_label.text = "On your PC open:\n%s\n\nAnyone on this network who knows the code can change your canvases while this is on. It stays on, with a new code, the next time the app starts, until you switch it off." % "\n".join(urls.slice(0, 3))
+	var warn := "Anyone on this network who knows the code can change your canvases while this is on. It stays on, with a new code, the next time the app starts, until you switch it off." if coded else "No code is asked: anyone on this network can see and change your canvases while this is on. It stays on the next time the app starts, until you switch it off."
+	_share_label.text = "On your PC open:\n%s\n\n%s" % ["\n".join(urls.slice(0, 3)), warn]
 
 
 ## Telegram, under the web page: the bot token, the code that links a chat, and what the connection is doing (TelegramBridge).

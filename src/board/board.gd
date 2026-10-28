@@ -156,6 +156,7 @@ func _init() -> void:
 	share.drop_image = drop_image_on
 	share.ai_api = func(cmd: String, data: Dictionary) -> Dictionary: return ai.api(cmd, data)
 	share.keys_api = func(cmd: String, data: Dictionary) -> Dictionary: return ApiKeys.new(ai, telegram, share.require_pin).api(cmd, data)
+	share.require_pin = bool(App.val("share_pin"))
 	share.state_changed.connect(func(): changed.emit())
 	add_child(share)
 	telegram = TelegramBridge.new()

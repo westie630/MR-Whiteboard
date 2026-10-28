@@ -37,7 +37,8 @@ extends Node
 ##   GET  /headset            the headset's own settings: keep running when taken off (GET /api/headset/state; POST /api/headset/set)
 ##
 ## It listens only while it is switched on. Because it can change things, every page needs the 6-digit access code shown in the
-## headset (a new one each time it is switched on; a wrong code five times in a row locks that address for a minute), and every
+## headset (a new one each time it is switched on; a wrong code five times in a row locks that address for a minute; the
+## "share_pin" setting can turn the code off, on a network you trust), and every
 ## change must come from the page itself (a cookie that only the same site sends, plus a header other sites cannot add). The
 ## connection is plain HTTP: use it on a network you trust.
 
@@ -345,6 +346,8 @@ func handle(method: String, target: String, headers: Dictionary, body: PackedByt
 	if path == "/favicon.ico":
 		return {"status": 204, "type": "text/plain", "body": PackedByteArray()}
 	if path == "/login":
+		if not require_pin:
+			return _redirect("/")
 		return _login(body, remote) if method == "POST" else _html(200, WebPages.login())
 	if path == "/logout":
 		var tok := _cookie(headers)

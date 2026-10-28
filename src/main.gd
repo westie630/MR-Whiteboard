@@ -58,9 +58,10 @@ func _ready() -> void:
 	if args.has("model"):
 		_model_later(args)
 	if args.has("share"):
-		board.share.require_pin = str(args["share"]) != "nopin"
+		if str(args["share"]) == "nopin":
+			board.share.require_pin = false
 		board.share.start()
-		print("[share] code %s  %s" % [board.share.pin, ", ".join(board.share.urls())])
+		print("[share] code %s  %s" % [board.share.pin if board.share.require_pin else "(none asked)", ", ".join(board.share.urls())])
 	elif App.val("share_on") and not (args.has("demo") or args.has("new") or args.has("screenshot")):
 		if not board.share.start():                      # it was on when the app stopped
 			print("[share] could not start again (no free port)")

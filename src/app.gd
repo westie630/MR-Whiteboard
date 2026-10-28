@@ -68,13 +68,14 @@ const DEFAULTS := {
 	"model_shadow": true,            # a soft shadow on the surface under each 3D model
 	"image_tier": "",                # how big a picture's texture may be on this device: "" (by the headset: a Quest 2 is "low") | low | high
 	"share_on": false,               # the web page on the Wi-Fi (ExportServer) was switched on: it is switched on again at the next start (a new access code)
+	"share_pin": true,               # the web page asks for its access code (off: anyone on the Wi-Fi who opens the address gets in)
 	"tg_on": true,                   # the Telegram connection runs while a bot token is set (TelegramBridge)
 	"tg_token": "",                  # the Telegram bot's token from @BotFather (typed on the web page or in Home > Share; kept only here)
 	"tg_bot": "",                    # the bot's @name, as Telegram gave it for that token
 	"tg_chat": "",                   # the one chat linked to this headset (its id); every other chat is ignored
 	"tg_who": "",                    # the name of whoever linked it
 	"tg_offset": 0,                  # Telegram's count of the bot's messages already taken (getUpdates offset)
-	"show_anchors": false,          # draw the spatial anchors (axes + label) where the headset holds them (AnchorMarkers)
+	"show_anchors": false,         # draw the spatial anchors (axes + label) where the headset holds them (AnchorMarkers)
 }
 
 var settings_path := SETTINGS_PATH

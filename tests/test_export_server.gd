@@ -169,6 +169,11 @@ func _auth() -> void:
 	srv.stop()
 	t.eq(srv.handle("POST", "/login", {}, "pin=".to_utf8_buffer(), "pc").status, 401, "with the server off no code works, not even an empty one")
 	srv.require_pin = false
+	t.check(srv.start(18080), "starts without a code")
+	t.eq(srv.handle("GET", "/", {}, none, "pc").status, 200, "with the code off a page opens without signing in")
+	t.eq(srv.handle("GET", "/login", {}, none, "pc").status, 303, "... and the login page leads on to the start page")
+	t.eq(srv.handle("POST", "/api/delete", {}, "{}".to_utf8_buffer(), "pc").status, 403, "... but a change still has to come from the page itself")
+	srv.stop()
 
 
 # ------------------------------------------------------------------------------------------------ changes
