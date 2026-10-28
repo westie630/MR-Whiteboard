@@ -154,6 +154,16 @@ const TOPICS := [
 		]],
 		["try", [["doc", "Documents", "tab:docs"], ["wifi", "Share with a PC", "tab:share"]]],
 	]},
+	{"id": "pictures", "icon": "canvas", "title": "Pictures", "sum": "Put a photo or picture on a canvas and draw over it", "blocks": [
+		["try", [["doc", "My pictures", "tab:docs"], ["wifi", "Upload from a PC", "tab:share"]]],
+		["steps", [
+			"Get a picture in: drop a PNG, JPEG or WebP on the web page (Home, Share), or send a photo to your Telegram bot.",
+			"Its ghost follows your stylus or hand: point at a canvas and tap (or pinch) to drop it there. Back cancels; Where I look puts it on the canvas in front of you.",
+			"It is an item like any other: select it to move it, resize it by a corner, turn it, delete it, undo. What you draw stays on top of it.",
+			"On the web page you can also drop a picture straight on a canvas's thumbnail: it lands on that canvas, at that spot.",
+			"Home, Docs, Pictures lists every picture on the headset: tap one to drop it again. Everybody in a session sees it, a guest's own pictures too.",
+		]],
+	]},
 	{"id": "telegram", "icon": "send", "title": "Telegram", "sum": "Send files from your phone, get exports back, anywhere", "blocks": [
 		["try", [["send", "Set up Telegram", "tab:share"]]],
 		["steps", [

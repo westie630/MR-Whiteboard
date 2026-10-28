@@ -7,9 +7,10 @@ extends Node
 ##            6-digit code; the user sends the bot "/start <code>" (or just the code) from a private chat, and that one chat is linked.
 ##            Nobody else can use the bot: messages from any other chat are ignored once a chat is linked, and before that a wrong code
 ##            five times in a row locks a chat out for a minute (twenty wrong codes in all and the code changes).
-##   In:      a PDF, an SVG, a 3D model (.glb, .gltf, .obj, .zip) or a .mrw document sent to the bot comes into the headset the way an
-##            upload from the web page does (PDFs and models are put in front of the viewer); plain text is put down with the text
-##            placement tool. Up to 20 MB (Telegram's limit for bots), and no more than this headset's own limits.
+##   In:      a photo or picture file (.png, .jpg, .webp, .bmp), a PDF, an SVG, a 3D model (.glb, .gltf, .obj, .zip) or a .mrw document sent to
+##            the bot comes into the headset the way an upload from the web page does (a picture is dropped on a canvas with the placement tool,
+##            PDFs and models are put in front of the viewer); plain text is put down with the text placement tool. Up to 20 MB (Telegram's limit
+##            for bots), and no more than this headset's own limits.
 ##   Out:     /svg, /glb, /mrw in the chat, or Home > Docs > Send to Telegram, send the open document's exports back as files.
 ##
 ## In a session, what the owner receives reaches the guests the usual way (DocSync for canvases, PdfShare and ModelShare for the files).
@@ -26,7 +27,7 @@ const RETRY_MIN_S := 2.0                   # after a failed request: wait, doubl
 const RETRY_MAX_S := 60.0
 const MAX_LOOSE := 4                       # more SVGs than this go out as one .zip
 const TMP_ZIP := "user://telegram_out.zip"
-const HELP := "Send me a PDF, an SVG, a 3D model (.glb, .gltf, .obj or a .zip of one) or a .mrw document and it appears in the headset. Text you send me can be put on a canvas there.\n\nTo get files back: /svg (the canvases), /glb (the ink in 3D), /mrw (the document file). /status says what is open."
+const HELP := "Send me a photo or picture, a PDF, an SVG, a 3D model (.glb, .gltf, .obj or a .zip of one) or a .mrw document and it appears in the headset (a picture you drop on a canvas there). Text you send me can be put on a canvas too.\n\nTo get files back: /svg (the canvases), /glb (the ink in 3D), /mrw (the document file). /status says what is open."
 
 var board: Board
 ## (method, url, headers, body, timeout_s, done(result, code, body)): sends one HTTP request. Tests replace it with a fake.
@@ -256,9 +257,6 @@ func _handle(m: Dictionary) -> void:
 	if m.has("file"):
 		_receive(m.file)
 		return
-	if bool(m.photo):
-		reply("Pictures are not something the whiteboard can show yet. Send a PDF, an SVG, a 3D model (.glb, .gltf, .obj or a .zip) or a .mrw document.")
-		return
 	var text := str(m.text)
 	match TelegramApi.command_of(text):
 		"":
@@ -355,7 +353,7 @@ func _receive(file: Dictionary) -> void:
 	var fname := str(file.name)
 	var kind := TelegramApi.kind_of(fname)
 	if kind == "":
-		reply("\"%s\" is not something the whiteboard can take. Send a PDF, an SVG, a 3D model (.glb, .gltf, .obj or a .zip of one) or a .mrw document." % fname)
+		reply("\"%s\" is not something the whiteboard can take. Send a photo or picture (.png, .jpg, .webp, .bmp), a PDF, an SVG, a 3D model (.glb, .gltf, .obj or a .zip of one) or a .mrw document." % fname)
 		return
 	var size := int(file.size)
 	if size > TelegramApi.MAX_DOWNLOAD:
@@ -375,6 +373,8 @@ func limit_mb(kind: String) -> int:
 			return board.pdfs.budget.max_file_mb if board != null else 48
 		"model":
 			return board.models.budget.max_file_mb if board != null else 48
+		"image":
+			return board.images.max_file_mb() if board != null else 24
 	return ExportServer.MAX_BODY / 1048576
 
 
@@ -415,6 +415,13 @@ func take(kind: String, bytes: PackedByteArray, fname: String) -> Dictionary:
 			return res
 		"mrw":
 			return import_document(bytes)
+		"image":
+			if board.models.wants_part(fname):
+				return take("model", bytes, fname)          # (a picture of a model sent a moment ago, not one for a canvas)
+			var pic := board.add_image(bytes, fname)
+			if bool(pic.ok):
+				_say("\"%s\" came from Telegram: point at a canvas and tap to drop it." % str(pic.name))
+			return pic
 	return {"ok": false, "message": "Unknown kind of file."}
 
 

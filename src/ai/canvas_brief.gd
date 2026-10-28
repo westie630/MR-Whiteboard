@@ -81,6 +81,8 @@ static func _prefix(it: Item) -> String:
 	match it.kind:
 		Item.TEXT:
 			return "t"
+		Item.IMAGE:
+			return "m"
 		Item.STROKE:
 			return "p"
 	if it.is_line():
@@ -98,6 +100,9 @@ func _row(it: Item) -> Dictionary:
 			var st := TextLayout.style_id(it.font_size, it.weight)
 			row["size"] = st if st != "" else "%.1f cm letters" % (it.font_size * 100.0)
 			row["color"] = col
+		Item.IMAGE:
+			var ib := it.bounds()
+			row.merge({"type": "picture", "x": _x(ib.position.x), "y": _y(ib.end.y), "w": _cm(ib.size.x), "h": _cm(ib.size.y)})
 		Item.STROKE:
 			var pts := it.pts_2d()
 			var eps := 0.002

@@ -23,7 +23,8 @@ func _ready() -> void:
 	App.docs_dir = "user://test_docs_telegram"
 	App.pdf_dir = "user://test_pdfs_telegram"
 	App.model_dir = "user://test_models_telegram"
-	for d in [App.docs_dir, App.pdf_dir, App.model_dir]:
+	App.image_dir = "user://test_images_telegram"
+	for d in [App.docs_dir, App.pdf_dir, App.model_dir, App.image_dir]:
 		_clean(d)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://test_sim_anchors_telegram.json"))
 	var anchors := SimAnchors.new("user://test_sim_anchors_telegram.json")
@@ -52,7 +53,7 @@ func _ready() -> void:
 	await _keys()
 	await _guest()
 	await _errors()
-	for d in [App.docs_dir, App.pdf_dir, App.model_dir]:
+	for d in [App.docs_dir, App.pdf_dir, App.model_dir, App.image_dir]:
 		_clean(d)
 	get_tree().quit(t.done())
 
@@ -307,8 +308,21 @@ func _limits() -> void:
 	await _deliver([_doc_msg(222, "huge.pdf", "x".to_utf8_buffer(), 25 * 1048576)])
 	t.check(_texts(from)[-1].contains("20 MB"), "a file over Telegram's 20 MB is refused before fetching")
 	t.eq(_count(from, "/getFile"), 0, "nothing was fetched")
-	await _deliver([_msg(222, "", "private", {"photo": [{"file_id": "p", "width": 90, "height": 90}]})])
-	t.check(_texts(from)[-1].contains("Pictures"), "a picture says what can be sent instead")
+	# a photo: Telegram sends it in several sizes; the biggest is fetched and goes into the headset's hand to drop on a canvas
+	var shot := Image.create(400, 200, false, Image.FORMAT_RGBA8)
+	shot.fill(Color(0.2, 0.5, 0.9))
+	files["documents/big"] = shot.save_jpg_to_buffer()
+	from = sent.size()
+	await _deliver([_msg(222, "", "private", {"photo": [{"file_id": "small", "width": 90, "height": 45, "file_size": 900}, {"file_id": "big", "width": 400, "height": 200, "file_size": 9000}]})])
+	t.check(_count(from, "file_id=big") == 1 and _count(from, "file_id=small") == 0, "a photo is fetched at its biggest size")
+	t.check(str(board.placing_text.get("image", "")) != "", "and goes into the headset's hand, to drop on a canvas")
+	t.check(_texts(from)[-1].contains("point at a canvas"), "the chat is told: %s" % _texts(from)[-1])
+	board.cancel_place_text()
+	from = sent.size()
+	await _deliver([_doc_msg(222, "plan.png", shot.save_png_to_buffer())])
+	t.check(str(board.placing_text.get("image", "")) != "", "a picture sent as a file too")
+	board.cancel_place_text()
+	from = sent.size()
 	# a Quest 2 takes smaller models than Telegram allows
 	var keep := board.models.budget
 	board.models.budget = ModelBudget.for_tier("low")
@@ -416,7 +430,6 @@ func _guest() -> void:
 		if (f as FrameData).is_model():
 			shown = (f as FrameData).model
 	t.check(shown != "" and board.models.entry(shown).get("ext", "") == "zip", "the model standing there is the one with its .mtl")
-
 
 
 func _errors() -> void:

@@ -31,7 +31,7 @@ signal said(text: String)                  # a line for the toast
 
 enum Role { NONE, HOST, CLIENT }
 
-const PROTOCOL := 3                        # (2: the file channel for PDFs; 3: 3D models, their files on it too)
+const PROTOCOL := 4                        # (2: the file channel for PDFs; 3: 3D models, their files on it too; 4: pictures, both ways)
 const PLACES: Array[String] = ["together", "apart"]
 const HOST_ID := 1                         # the host's id in every roster
 const PORT := 8190
@@ -67,6 +67,7 @@ var avatars: PeerAvatars
 var live_out := LiveOut.new()              # what this headset is in the middle of doing, for the others
 var pdf_share := PdfShare.new()            # PDFs: the owner gives a file out to a guest whose canvas shows it
 var model_share := ModelShare.new()        # 3D models: the same, for a guest whose room shows a model it does not have
+var image_share := ImageShare.new()        # pictures: the same, and a guest's own picture goes to the owner first
 var previews: LivePreview                  # what the others are in the middle of doing
 
 var role := Role.NONE
@@ -152,6 +153,7 @@ func _init() -> void:
 	net.failed.connect(_on_failed)
 	pdf_share.session = self
 	model_share.session = self
+	image_share.session = self
 
 
 func bind(anchors: AnchorService) -> void:
@@ -166,6 +168,7 @@ func _ready() -> void:
 	live_out.board = board
 	board.pdfs.wanted.connect(_on_pdf_wanted)
 	board.models.wanted.connect(_on_model_wanted)
+	board.images.wanted.connect(_on_image_wanted)
 	previews = LivePreview.new()
 	previews.session = self
 	board.add_child.call_deferred(previews)
@@ -473,6 +476,8 @@ func leave(quiet: bool = false, restore: bool = true) -> void:
 	board.pdfs.trim_cached(PdfShare.MAX_STORE_LOG)
 	model_share.reset()
 	board.models.trim_cached(ModelShare.MAX_STORE_LOG)
+	image_share.reset()
+	board.images.trim_cached()
 	_clear_resume()                                   # left (or turned away, or the session ended): a restart does not join it again
 	var had := client_doc
 	role = Role.NONE
@@ -516,6 +521,12 @@ func _on_pdf_wanted(pdf_id: String) -> void:
 func _on_model_wanted(model_id: String) -> void:
 	if role == Role.CLIENT and phase == "live":
 		model_share.client_want(model_id)
+
+
+## A canvas shows a picture this headset does not have: a guest asks the owner for it.
+func _on_image_wanted(image_id: String) -> void:
+	if role == Role.CLIENT and phase == "live":
+		image_share.client_want(image_id)
 
 
 func _on_connected() -> void:
@@ -609,6 +620,7 @@ func _host_update(delta: float) -> void:
 	_flush_host()
 	pdf_share.host_tick(delta)
 	model_share.host_tick(delta)
+	image_share.host_tick(delta)
 	_space_t += delta
 	if _space_t >= SPACE_S:
 		_space_t = 0.0
@@ -622,6 +634,7 @@ func _host_update(delta: float) -> void:
 func _client_update(delta: float) -> void:
 	if phase == "live":
 		_flush_client()
+		image_share.client_tick(delta)
 		_ping_t += delta
 		if _ping_t >= PING_S:
 			_ping_t = 0.0
@@ -690,6 +703,7 @@ func _on_peer_left(id: int) -> void:
 func _remove_peer(id: int) -> void:
 	pdf_share.drop_peer(id)
 	model_share.drop_peer(id)
+	image_share.drop_peer(id)
 	peers.erase(id)
 	presence.erase(id)
 	if previews != null:
@@ -726,6 +740,14 @@ func _host_msg(from: int, msg: Dictionary) -> void:
 			model_share.host_request(from, msg)
 		"mdl_stop":
 			model_share.host_stop(from, msg)
+		"img?":
+			image_share.host_request(from, msg)
+		"img_stop":
+			image_share.host_stop(from, msg)
+		"img_offer":
+			image_share.host_offer(from, msg)
+		"imgp":
+			image_share.host_piece(from, msg)
 		"ready":
 			_send_snapshot(from)
 			_send_space(from)
@@ -1048,6 +1070,8 @@ func _client_msg(msg: Dictionary) -> void:
 			pdf_share.client_msg(msg)
 		"mdl", "mdlc", "mdl_no":
 			model_share.client_msg(msg)
+		"img", "imgc", "img_no", "img_take", "img_have":
+			image_share.client_msg(msg)
 		"roster":
 			_on_roster(msg)
 		"ops":
@@ -1108,12 +1132,14 @@ func _client_open(d: Dictionary) -> void:
 	phase = "live"
 	pdf_share.reset()
 	model_share.reset()
+	image_share.reset()
 	opening = true
 	board.open(doc)
 	opening = false
 	previews.clear_all()
 	pdf_share.client_rescan()
 	model_share.client_rescan()
+	image_share.client_rescan()
 	say("You joined \"%s\"." % session_title)
 	if _wanted_here:
 		_wanted_here = false

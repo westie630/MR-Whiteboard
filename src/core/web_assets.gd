@@ -3,7 +3,7 @@ extends RefCounted
 ## The stylesheet, the script and the icons of the web pages the app serves (see ExportServer / WebPages). Kept as strings so they
 ## travel inside the app without any extra files in the export.
 
-const VERSION := 13                     # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
+const VERSION := 14                     # bump when CSS / JS change: it is part of their address so browsers fetch the new ones
 
 const LOGO := r"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#g)"/><path d="M14 40c6-14 11-14 14-4s8 10 12-4 6-8 10-2" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="50" cy="19" r="4" fill="#fff" opacity=".85"/></svg>"""
 
@@ -130,6 +130,8 @@ button{font:inherit;color:inherit}
 .thumb{position:relative;display:block;aspect-ratio:3/2;background:var(--thumb);border-bottom:1px solid var(--line)}
 .thumb img{position:absolute;inset:10px;width:calc(100% - 20px);height:calc(100% - 20px);object-fit:contain}
 .thumb:hover{text-decoration:none}
+.thumb.over{outline:2px dashed var(--brand);outline-offset:-6px;background:var(--brand-soft)}
+.file img.pic{width:52px;height:38px;object-fit:cover;border-radius:6px;flex:none;background:var(--thumb)}
 .pick{position:absolute;top:10px;left:10px;z-index:2;width:24px;height:24px;cursor:pointer}
 .pick input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}
 .pick span{position:absolute;inset:0;border-radius:7px;background:color-mix(in srgb,var(--surface) 92%,transparent);border:1.5px solid var(--line-2);display:grid;place-items:center;opacity:0;transition:opacity .12s;box-shadow:var(--shadow-1)}
@@ -470,6 +472,23 @@ const JS := r"""
         api('/api/model/rename', { id: mrid, name: v }).then(function () { afterChange('Renamed'); }).catch(function (err) { toast(err.message, true); });
       });
     }
+    else if (act === 'img-show') {
+      api('/api/image/show', { id: b.getAttribute('data-id') }).then(function (j) { toast(j.message || 'In the headset: point at a canvas and tap'); }).catch(function (err) { toast(err.message, true); });
+    }
+    else if (act === 'img-delete') {
+      var iid = b.getAttribute('data-id'), iname = b.getAttribute('data-name');
+      dialog({ title: 'Delete "' + iname + '"?', text: 'The picture is removed from the headset. Canvases that show it keep a grey box in its place until it is uploaded again.', ok: 'Delete', danger: true }).then(function (yes) {
+        if (!yes) return;
+        api('/api/image/delete', { ids: [iid] }).then(function (j) { afterChange(j.message || 'Deleted'); }).catch(function (err) { toast(err.message, true); });
+      });
+    }
+    else if (act === 'img-rename') {
+      var irid = b.getAttribute('data-id'), ircur = b.getAttribute('data-name');
+      dialog({ title: 'Rename picture', input: true, value: ircur, ok: 'Save' }).then(function (v) {
+        if (!v || v === ircur) return;
+        api('/api/image/rename', { id: irid, name: v }).then(function () { afterChange('Renamed'); }).catch(function (err) { toast(err.message, true); });
+      });
+    }
     else if (act === 'refresh') { refresh(); }
   });
 
@@ -502,16 +521,16 @@ const JS := r"""
       else out.push({ main: f, parts: [] });
     });
     // without an .obj or .gltf: an .mtl or .bin (with the pictures dropped with it) is joined to the model sent before or after it, in the
-    // headset; pictures alone are not a model's
+    // headset; pictures alone are pictures for the canvases (unless a model sent a moment ago lacks them: the headset tells)
     if (parts.length && !files.some(function (f) { return /\.(obj|gltf)$/i.test(f.name); })) {
       var lead = parts.filter(function (f) { return !PICTURE.test(f.name); });
       if (lead.length) out.push({ main: lead[0], parts: parts.filter(function (f) { return f !== lead[0]; }), loose: true });
-      else parts.forEach(function (f) { out.push({ main: f, parts: [], orphan: true }); });
+      else parts.forEach(function (f) { out.push({ main: f, parts: [], picture: true }); });
     }
     return out;
   }
   function uploadAll(files) {
-    var list = $('#uploads'), ok = 0, pdfs = 0, chain = Promise.resolve();
+    var list = $('#uploads'), ok = 0, pdfs = 0, pics = 0, chain = Promise.resolve();
     files = groupModels(Array.prototype.slice.call(files));
     files.forEach(function (g) {
       var f = g.main;
@@ -519,17 +538,18 @@ const JS := r"""
       row.className = 'up';
       var isSvg = /\.svg$/i.test(f.name) || f.type === 'image/svg+xml';
       var isPdf = /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
-      var isModel = !!g.loose || (!g.orphan && MODEL_MAIN.test(f.name));
-      var okType = isSvg || isPdf || isModel;
+      var isModel = !!g.loose || MODEL_MAIN.test(f.name);
+      var isPic = !!g.picture;
+      var okType = isSvg || isPdf || isModel || isPic;
       var label = f.name + (g.parts.length ? ' (+ ' + g.parts.length + (g.parts.length === 1 ? ' file)' : ' files)') : '');
-      var why = g.orphan ? 'This is part of a 3D model: drop it together with the .obj or .gltf file (or all of them in one .zip)' : 'Only .pdf, .svg and 3D models (.glb, .gltf, .obj, .zip) can be added';
-      row.innerHTML = (okType ? '<div class="spin"></div>' : icon('x')) + '<span class="nm">' + esc(label) + '</span><span class="msg">' + (okType ? (isPdf || isModel ? 'Sending to the headset...' : 'Importing...') : why) + '</span>';
+      var why = 'Only pictures (.png, .jpg, .webp, .bmp), .pdf, .svg and 3D models (.glb, .gltf, .obj, .zip) can be added';
+      row.innerHTML = (okType ? '<div class="spin"></div>' : icon('x')) + '<span class="nm">' + esc(label) + '</span><span class="msg">' + (okType ? (isPdf || isModel || isPic ? 'Sending to the headset...' : 'Importing...') : why) + '</span>';
       list.appendChild(row);
       if (!okType) { row.classList.add('err'); return; }
       chain = chain.then(function () {
-        var url = isPdf ? '/api/pdf?name=' + encodeURIComponent(f.name) : (isModel ? (g.parts.length ? '/api/model/bundle?name=' : '/api/model?name=') + encodeURIComponent(f.name) : '/api/upload?name=' + encodeURIComponent(f.name));
+        var url = isPic ? '/api/image?name=' + encodeURIComponent(f.name) : isPdf ? '/api/pdf?name=' + encodeURIComponent(f.name) : (isModel ? (g.parts.length ? '/api/model/bundle?name=' : '/api/model?name=') + encodeURIComponent(f.name) : '/api/upload?name=' + encodeURIComponent(f.name));
         var body = isModel && g.parts.length ? packBundle([f].concat(g.parts)) : Promise.resolve(f);
-        return body.then(function (data) { return fetch(url, { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'Content-Type': isPdf ? 'application/pdf' : (isModel ? 'application/octet-stream' : 'image/svg+xml') }, HEAD), body: data }); })
+        return body.then(function (data) { return fetch(url, { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'Content-Type': isPic ? (f.type || 'application/octet-stream') : isPdf ? 'application/pdf' : (isModel ? 'application/octet-stream' : 'image/svg+xml') }, HEAD), body: data }); })
           .then(function (r) {
             if (r.status === 401) { location.href = '/login'; throw new Error('Signed out'); }
             return r.json().catch(function () { return { ok: false, message: 'The headset sent an unexpected answer.' }; });
@@ -539,12 +559,48 @@ const JS := r"""
             row.className = 'up ' + (j.ok ? 'ok' : 'err');
             row.firstChild.outerHTML = icon(j.ok ? 'check' : 'x');
             $('.msg', row).textContent = j.message || (j.ok ? 'Done' : 'Failed');
-            if (j.ok && !j.held) { ok++; if (isPdf || isModel) pdfs++; }
+            if (j.ok && !j.held) { ok++; if (isPdf || isModel) pdfs++; if (isPic && !j.old) pics++; }
           })
           .catch(function (e) { row.className = 'up err'; row.firstChild.outerHTML = icon('x'); $('.msg', row).textContent = e.message; });
       });
     });
-    chain.then(function () { if (ok) { toast(ok + (ok === 1 ? ' file' : ' files') + ' added: ' + (pdfs ? 'it is in front of you in the headset' : 'they are in front of you in the headset')); refresh(); } });
+    chain.then(function () { if (ok) { toast(ok + (ok === 1 ? ' file' : ' files') + ' added: ' + (pics === ok ? 'in the headset, point at a canvas and tap to drop it' : (pdfs ? 'it is in front of you in the headset' : 'they are in front of you in the headset'))); refresh(); } });
+  }
+  // a picture dropped on a canvas's picture goes straight onto that canvas, where it was dropped (fx, fy: 0..1 over what the picture shows)
+  function dropOnCanvas(thumb, e) {
+    var f = Array.prototype.filter.call(e.dataTransfer.files, function (x) { return PICTURE.test(x.name); })[0];
+    var card = thumb.closest('.card'), img = $('img', thumb);
+    if (!f || !card) return false;
+    var fx = 0.5, fy = 0.5;
+    if (img && img.naturalWidth && img.naturalHeight) {
+      var r = img.getBoundingClientRect(), k = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+      var dw = img.naturalWidth * k, dh = img.naturalHeight * k;
+      fx = Math.max(0, Math.min(1, (e.clientX - (r.left + (r.width - dw) / 2)) / dw));
+      fy = Math.max(0, Math.min(1, (e.clientY - (r.top + (r.height - dh) / 2)) / dh));
+    }
+    var url = '/api/image?name=' + encodeURIComponent(f.name) + '&canvas=' + encodeURIComponent(card.getAttribute('data-id')) + '&fx=' + fx.toFixed(4) + '&fy=' + fy.toFixed(4);
+    toast('Sending "' + f.name + '" to the headset...');
+    fetch(url, { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'Content-Type': f.type || 'application/octet-stream' }, HEAD), body: f })
+      .then(function (r) {
+        if (r.status === 401) { location.href = '/login'; throw new Error('Signed out'); }
+        return r.json().catch(function () { return { ok: false, message: 'The headset sent an unexpected answer.' }; });
+      })
+      .then(function (j) { if (j.rev) rev = j.rev; toast(j.message || (j.ok ? 'Dropped' : 'Failed'), !j.ok); if (j.ok) refresh(); })
+      .catch(function (err) { toast(err.message, true); });
+    return true;
+  }
+  if ($('#library')) {
+    document.addEventListener('dragover', function (e) {
+      var t = e.target.closest && e.target.closest('.card .thumb');
+      $$('.thumb.over').forEach(function (x) { if (x !== t) x.classList.remove('over'); });
+      if (t) t.classList.add('over');
+    });
+    document.addEventListener('dragleave', function (e) { var t = e.target.closest && e.target.closest('.card .thumb'); if (t && !t.contains(e.relatedTarget)) t.classList.remove('over'); });
+    document.addEventListener('drop', function (e) {
+      var t = e.target.closest && e.target.closest('.card .thumb');
+      $$('.thumb.over').forEach(function (x) { x.classList.remove('over'); });
+      if (t && e.dataTransfer && dropOnCanvas(t, e)) { e.preventDefault(); e.stopPropagation(); }
+    });
   }
   if (drop && input) {
     drop.onclick = function (e) { if (e.target !== input) input.click(); };

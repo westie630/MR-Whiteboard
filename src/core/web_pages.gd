@@ -70,22 +70,24 @@ static func message(title: String, text: String, signed_in: bool = true) -> Stri
 
 # ------------------------------------------------------------------------------------------------ dashboard
 
-static func dashboard(snap: Dictionary, files: Array, pdfs: Array = [], models: Array = []) -> String:
+static func dashboard(snap: Dictionary, files: Array, pdfs: Array = [], models: Array = [], images: Array = []) -> String:
 	var groups: Array = snap.groups
 	var b := "<section class=head><div><p class=eyebrow>Document</p><h1>%s</h1>" % h(snap.doc)
 	b += stats(snap)
 	b += "</div><div class=actions>"
-	b += "<button class='btn btn-primary' onclick=\"document.getElementById('file').click()\">%s Upload PDF, SVG or 3D model</button>" % ic("upload")
+	b += "<button class='btn btn-primary' onclick=\"document.getElementById('file').click()\">%s Upload a picture, PDF, SVG or 3D model</button>" % ic("upload")
 	b += "<a class='btn btn-primary' href='/live'>%s Live view</a>" % ic("eye")
 	b += "<a class=btn href='/ai'>%s AI assistant</a>" % ic("spark")
 	b += "<a class=btn href='/keys'>%s API keys</a>" % ic("lock")
 	if int(snap.total) > 0:
 		b += "<a class=btn href='/all.zip'>%s Download all</a><a class=btn href='/all'>%s Gallery</a>" % [ic("download"), ic("image")]
 	b += "</div></section>"
-	b += "<label class=drop id=drop tabindex=0><span class=badge>%s</span><span><strong>Drop PDF, SVG or 3D model files here</strong>" % ic("upload")
+	b += "<label class=drop id=drop tabindex=0><span class=badge>%s</span><span><strong>Drop pictures, PDF, SVG or 3D model files here</strong>" % ic("upload")
 	b += "<span>or click to choose. A <b>PDF</b> is kept in the headset and put in front of you to read, page by page, and to draw on. An <b>SVG</b> becomes a new canvas of real shapes, strokes and text you can select and change. "
-	b += "A <b>3D model</b> (glTF <b>.glb</b> / <b>.gltf</b>, or <b>.obj</b>) stands in front of you, lit, to move, turn and resize: drop an .obj together with its .mtl and pictures (or a .gltf with its .bin), or all of them in one <b>.zip</b>; an .mtl sent a moment after its .obj is joined to it.</span></span>"
+	b += "A <b>3D model</b> (glTF <b>.glb</b> / <b>.gltf</b>, or <b>.obj</b>) stands in front of you, lit, to move, turn and resize: drop an .obj together with its .mtl and pictures (or a .gltf with its .bin), or all of them in one <b>.zip</b>; an .mtl sent a moment after its .obj is joined to it."
+	b += " A <b>picture</b> (<b>.png</b>, <b>.jpg</b>, <b>.webp</b>, <b>.bmp</b>) goes to the headset's hand: point at a canvas and tap to drop it there. Or drop it straight on a canvas's picture below.</span></span>"
 	b += "<input type=file id=file accept='.pdf,application/pdf,.svg,image/svg+xml,.glb,.gltf,.obj,.mtl,.bin,.zip,.png,.jpg,.jpeg,.webp,.tga,.bmp' multiple></label><div id=uploads class=uploads></div>"
+	b += image_panel(images)
 	b += model_panel(models)
 	b += pdf_panel(pdfs)
 	b += library(snap)
@@ -132,7 +134,7 @@ static func card(f: Dictionary, room_id: String) -> String:
 	var sub := "empty" if int(f.items) == 0 else plural(int(f.items), "item")
 	var b := "<article class=card data-id='%s' data-name='%s'>" % [h(f.id), nm]
 	b += "<label class=pick title=Select><input type=checkbox aria-label='Select %s'><span></span></label>" % nm
-	b += "<a class=thumb href='/view/%s'><img loading=lazy alt='%s' src='/svg/%s.svg'></a>" % [id, nm, id]
+	b += "<a class=thumb href='/view/%s' title='Drop a picture here to put it on this canvas'><img loading=lazy alt='%s' src='/svg/%s.svg'></a>" % [id, nm, id]
 	b += "<div class=card-body><div class=card-title title='%s'>%s</div><div class=card-sub>%s &middot; %.1f &times; %.1f m</div></div>" % [nm, nm, sub, float(f.w), float(f.h)]
 	b += "<div class=card-actions><a class=icon-btn href='/view/%s' title=View>%s</a>" % [id, ic("eye")]
 	b += "<a class=icon-btn href='/svg/%s.svg?dl=1' title='Download SVG'>%s</a>" % [id, ic("download")]
@@ -156,6 +158,25 @@ static func pdf_panel(pdfs: Array) -> String:
 		b += "<a class=icon-btn href='/pdf/%s.pdf?dl=1' title=Download>%s</a>" % [u(id), ic("download")]
 		b += "<button class=icon-btn data-act=pdf-rename data-id='%s' data-name='%s' title=Rename>%s</button>" % [h(id), h(str(e.name)), ic("pencil")]
 		b += "<button class='icon-btn danger' data-act=pdf-delete data-id='%s' data-name='%s' title=Delete>%s</button></td></tr>" % [h(id), h(str(e.name)), ic("trash")]
+	b += "</tbody></table></section>"
+	return b
+
+
+## The pictures kept in the headset: each can be dropped on a canvas in the headset again, opened, downloaded, renamed or removed.
+static func image_panel(images: Array) -> String:
+	if images.is_empty():
+		return "<div id=images data-swap></div>"
+	var b := "<section class=panel id=images data-swap><div class=panel-h>%s<h2>Pictures</h2><span>Kept in the headset. Drop one on a canvas there, or drag a new one onto a canvas below.</span></div>" % ic("image")
+	b += "<table><thead><tr><th>Name</th><th class='num hide'>Size</th><th class='num hide'>File</th><th></th></tr></thead><tbody>"
+	for e in images:
+		var id := str(e.id)
+		b += "<tr data-image='%s'><td><div class=file><img class=pic loading=lazy alt='' src='/image/%s'><span>%s</span><span class=ext>%s</span></div></td>" % [h(id), u(id), h(str(e.name)), h(str(e.get("ext", "png")))]
+		b += "<td class='num hide'>%d &times; %d</td><td class='num hide'>%s</td><td class=acts>" % [int(e.get("w", 0)), int(e.get("h", 0)), size_text(int(e.size))]
+		b += "<button class='btn btn-sm' data-act=img-show data-id='%s' title='Point at a canvas in the headset and tap to drop it there'>%s Drop in headset</button>" % [h(id), ic("eye")]
+		b += "<a class=icon-btn href='/image/%s' target=_blank rel=noopener title='Open it here'>%s</a>" % [u(id), ic("image")]
+		b += "<a class=icon-btn href='/image/%s?dl=1' title=Download>%s</a>" % [u(id), ic("download")]
+		b += "<button class=icon-btn data-act=img-rename data-id='%s' data-name='%s' title=Rename>%s</button>" % [h(id), h(str(e.name)), ic("pencil")]
+		b += "<button class='icon-btn danger' data-act=img-delete data-id='%s' data-name='%s' title=Delete>%s</button></td></tr>" % [h(id), h(str(e.name)), ic("trash")]
 	b += "</tbody></table></section>"
 	return b
 

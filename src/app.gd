@@ -66,6 +66,7 @@ const DEFAULTS := {
 	"model_tier": "",                # how much a 3D model may ask of this device: "" (by the headset: a Quest 2 is "low") | low | high
 	"model_light": "studio",         # the light on 3D models: soft | studio | bright (ModelLighting)
 	"model_shadow": true,            # a soft shadow on the surface under each 3D model
+	"image_tier": "",                # how big a picture's texture may be on this device: "" (by the headset: a Quest 2 is "low") | low | high
 	"share_on": false,               # the web page on the Wi-Fi (ExportServer) was switched on: it is switched on again at the next start (a new access code)
 	"tg_on": true,                   # the Telegram connection runs while a bot token is set (TelegramBridge)
 	"tg_token": "",                  # the Telegram bot's token from @BotFather (typed on the web page or in Home > Share; kept only here)
@@ -80,6 +81,7 @@ var settings_path := SETTINGS_PATH
 var docs_dir := DOCS_DIR              # dev runs and tests point this at a scratch folder
 var pdf_dir := "user://pdfs"          # the PDF library (PdfLibrary); tests point it at a scratch folder too
 var model_dir := "user://models"      # the 3D model library (ModelLibrary); tests point it at a scratch folder too
+var image_dir := "user://images"      # the picture library (ImageLibrary); tests point it at a scratch folder too
 var panel_places_path := "user://panel_places.json"   # where the headset's panels were left (PanelPlaces; tests point it elsewhere)
 var _s: Dictionary = {}
 var _cfg := ConfigFile.new()

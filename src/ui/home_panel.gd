@@ -21,6 +21,7 @@ var _confirm := ""
 var _lists_sig := ""
 var _docs_list: VBoxContainer
 var _pdf_list: VBoxContainer
+var _image_list: VBoxContainer
 var _model_list: VBoxContainer
 var _canvas_list: VBoxContainer
 var _canvas_style: VBoxContainer
@@ -170,6 +171,8 @@ func refresh() -> void:
 	var sig := "%s|%s|%s|%s|%s|%d|%d|%s" % [tab, b.doc.id, b.doc.name, b.current_room, b.active_frame, b.doc.frames.size(), b.doc.rooms.size(), _confirm]
 	for e in b.pdfs.list():
 		sig += "|" + str(e.id) + str(e.name)
+	for e in b.images.list():
+		sig += "|" + str(e.id) + str(e.name)
 	for e in b.models.list():
 		sig += "|" + str(e.id) + str(e.name) + str(e.get("triangles", 0))
 	for f in b.doc.frames.values():
@@ -182,6 +185,7 @@ func refresh() -> void:
 		match tab:
 			"docs":
 				_refresh_docs()
+				_refresh_images()
 				_refresh_pdfs()
 				_refresh_models()
 			"canvas":
@@ -236,6 +240,8 @@ func _build_docs(p: VBoxContainer) -> void:
 	tr.add_child(UiKit.button("doc", "File .mrw", func(): _send_telegram("mrw"), 52.0))
 	UiKit.header(p, "All documents")
 	_docs_list = UiKit.vcol(p, 6)
+	UiKit.header(p, "Pictures")
+	_image_list = UiKit.vcol(p, 6)
 	UiKit.header(p, "PDF documents")
 	_pdf_list = UiKit.vcol(p, 6)
 	UiKit.header(p, "3D models")
@@ -271,6 +277,38 @@ func _refresh_models() -> void:
 		row.add_child(info)
 		row.add_child(_bin("model" + mid, "Press again to delete \"%s\" from the headset." % e.name, func():
 			b.models.remove(mid)
+			b.toast.emit("Deleted \"%s\"" % e.name)))
+
+
+## The pictures on the headset: tap one to drop it on a canvas (its ghost follows the pointer), the bin (pressed twice) removes it.
+func _refresh_images() -> void:
+	var b: Board = shell.board
+	UiKit.clear(_image_list)
+	var list := b.images.list()
+	if list.is_empty():
+		UiKit.note(_image_list, "No pictures yet. Drop a PNG, JPEG or WebP on the web page (Share), or send a photo to your Telegram bot: point at a canvas and tap to drop it there.")
+		return
+	for e in list:
+		var iid: String = e.id
+		var row := UiKit.hrow(_image_list, 6)
+		var btn := Btn.new("canvas", str(e.name))
+		btn.align = HORIZONTAL_ALIGNMENT_LEFT
+		btn.small = true
+		btn.custom_minimum_size = Vector2(0, 58)
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.hint = "Drop it on a canvas"
+		btn.pressed.connect(func():
+			var res := b.begin_place_image(iid)
+			if not bool(res.ok):
+				b.toast.emit(str(res.message)))
+		row.add_child(btn)
+		var info := UiKit.label("%d x %d
+%s" % [int(e.get("w", 0)), int(e.get("h", 0)), WebPages.size_text(int(e.size))], true, UITheme.FONT_TINY)
+		info.custom_minimum_size = Vector2(110, 0)
+		info.size_flags_horizontal = Control.SIZE_SHRINK_END
+		row.add_child(info)
+		row.add_child(_bin("image" + iid, "Press again to delete \"%s\" from the headset." % e.name, func():
+			b.images.remove(iid)
 			b.toast.emit("Deleted \"%s\"" % e.name)))
 
 

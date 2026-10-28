@@ -25,6 +25,11 @@ extends Node
 ##                            (little-endian)
 ##   POST /api/model/show     {id}                  put a model of the library in front of the viewer   /api/model/delete {ids}   /api/model/rename {id, name}
 ##   POST /api/files/delete   {names: [...]}        delete saved files
+##   POST /api/image?name=    the raw .png / .jpg / .webp / .bmp   take a picture into the headset's library and start dropping it there (the
+##                            headset shows its ghost: point at a canvas, tap); with &canvas=<id>&fx=&fy= it is put straight on that canvas, at that
+##                            spot of what the page shows of it (0..1 from the top left)
+##   GET  /image/<id>         a picture of the headset's library (?dl=1 downloads it)
+##   POST /api/image/show     {id}                  start dropping a picture of the library in the headset   /api/image/delete {ids}   /api/image/rename {id, name}
 ##   GET  /ai                 the AI assistant: API keys, models and thinking levels, asking about a canvas, its suggestions
 ##   GET  /api/ai/state       what the AI page shows (keys only as their last four characters)
 ##   POST /api/ai/<command>   key | select | refresh | ask | accept | discard | show | forget  (see AiController.api)
@@ -68,6 +73,9 @@ var pdf_library: PdfLibrary               # the PDFs of the headset (null: no PD
 var show_pdf := Callable()                # (pdf id) -> {ok, message, id, name}: puts one in front of the viewer
 var model_library: ModelLibrary           # the 3D models of the headset (null: no model section)
 var show_model := Callable()              # (model id) -> {ok, message, id, name}: puts one in front of the viewer
+var image_library: ImageLibrary           # the pictures of the headset (null: no picture section)
+var show_image := Callable()              # (picture id) -> {ok, message, id, name}: the headset starts dropping it (its ghost follows the pointer)
+var drop_image := Callable()              # (picture id, canvas id, fx, fy) -> {ok, message, id}: puts it straight on a canvas
 var require_pin := true
 var files_dir := ""                       # where saved exports are listed from ("" = the app's export folder)
 var pin := ""                             # the access code while running
@@ -210,9 +218,11 @@ func _serve(c: Dictionary, delta: float) -> bool:
 					peer.disconnect_from_host()
 					return false
 				return true
-			var length := _content_length(inbuf.slice(0, int(c.hdr)).get_string_from_utf8())
-			if length > MAX_BODY:
-				c.outbuf = _wire(_json(413, {"ok": false, "message": "That file is too big (the limit is %d MB)." % (MAX_BODY / 1048576)}), false)
+			var head_text := inbuf.slice(0, int(c.hdr)).get_string_from_utf8()
+			var length := _content_length(head_text)
+			var limit := _body_limit(head_text)
+			if length > limit:
+				c.outbuf = _wire(_json(413, {"ok": false, "message": "That file is too big (the limit is %d MB)." % (limit / 1048576)}), false)
 				c.replied = true
 			else:
 				c.need = int(c.hdr) + 4 + length
@@ -244,6 +254,8 @@ func _body_limit(head: String) -> int:
 		return maxi(pdf_library.budget.max_file_mb * 1048576, MAX_BODY)
 	if model_library != null and head.begins_with("POST /api/model"):
 		return maxi(model_library.budget.max_file_mb * 1048576 + 65536, MAX_BODY)
+	if image_library != null and head.begins_with("POST /api/image"):
+		return maxi(image_library.max_file_mb() * 1048576, MAX_BODY)
 	return MAX_BODY
 
 
@@ -294,7 +306,7 @@ func _wire(res: Dictionary, head_only: bool) -> PackedByteArray:
 	if type.begins_with("text/html"):
 		lines.append("Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'none'")
 	elif type.begins_with("image/svg"):
-		lines.append("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox")
+		lines.append("Content-Security-Policy: default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox")
 	if res.has("download"):
 		lines.append("Content-Disposition: attachment; filename=\"%s\"" % res.download)
 	for extra in res.get("headers", []):
@@ -419,9 +431,9 @@ func route(target: String) -> Dictionary:
 	var bg := str(query.get("bg", "white"))
 	if not BACKGROUNDS.has(bg):
 		bg = "white"
-	var opts := {"background": bg, "grid": query.get("grid", "") == "1"}
+	var opts := {"background": bg, "grid": query.get("grid", "") == "1", "images": image_library}
 	if path == "/":
-		return _html(200, WebPages.dashboard(_snapshot(doc), _export_files(), _pdf_list(), _model_list()))
+		return _html(200, WebPages.dashboard(_snapshot(doc), _export_files(), _pdf_list(), _model_list(), _image_list()))
 	if path == "/api/rev":
 		return _json(200, {"ok": true})
 	if path == "/live":
@@ -482,6 +494,8 @@ func route(target: String) -> Dictionary:
 		return _pdf_file(path.substr(5).trim_suffix(".pdf"), query.get("dl", "") == "1")
 	if path.begins_with("/model/"):
 		return _model_file(path.substr(7).get_basename())
+	if path.begins_with("/image/"):
+		return _image_file(path.substr(7).get_basename(), query.get("dl", "") == "1")
 	return _html(404, WebPages.message("Not found", "There is nothing at this address."))
 
 
@@ -592,6 +606,8 @@ func _rev(doc: Document) -> String:
 	for e in _pdf_list():
 		pdf_stamp += int(e.added) + int(e.pages)
 	for e in _model_list():
+		pdf_stamp += int(e.added) + str(e.name).length()
+	for e in _image_list():
 		pdf_stamp += int(e.added) + str(e.name).length()
 	return "%d.%d.%d.%d.%d.%d" % [doc.modified, doc.frames.size(), doc.items.size(), files.size(), newest, pdf_stamp]
 
@@ -921,6 +937,40 @@ func _add_model(files: Dictionary, name: String, show: bool, doc: Document) -> D
 	return _json(200, added, doc)
 
 
+# ------------------------------------------------------------------------------------------------ pictures
+
+func _image_list() -> Array:
+	return image_library.list() if image_library != null else []
+
+
+func _image_file(id: String, download: bool) -> Dictionary:
+	if image_library == null or not image_library.has(id):
+		return _html(404, WebPages.message("Not found", "That picture is not on the headset any more."))
+	var ext := str(image_library.entry(id).get("ext", "png"))
+	var res := {"status": 200, "type": ImageLibrary.mime_of(ext), "body": image_library.file_bytes(id), "cache": "private, max-age=3600"}
+	if download:
+		res["download"] = image_library.file_name(id)
+	return res
+
+
+## A picture from the page: into the library, then straight onto a canvas (dropped on its picture) or into the headset's hand to drop.
+func _add_image(body: PackedByteArray, q: Dictionary, doc: Document) -> Dictionary:
+	var added := image_library.add(body, str(q.get("name", "picture.png")).get_file().left(120))
+	if not bool(added.ok):
+		return _json(422, added, doc)
+	var canvas := str(q.get("canvas", ""))
+	var res: Dictionary
+	if canvas != "" and _is_canvas(doc, canvas) and drop_image.is_valid():
+		res = drop_image.call(str(added.id), canvas, float(q.get("fx", "0.5")), float(q.get("fy", "0.5")))
+	elif show_image.is_valid():
+		res = show_image.call(str(added.id))
+	else:
+		res = {"ok": true, "message": str(added.message)}
+	added["placed"] = bool(res.get("ok", false))
+	added["message"] = str(res.get("message", "")) if bool(res.get("ok", false)) else "%s (%s)" % [added.message, str(res.get("message", ""))]
+	return _json(200, added, doc)
+
+
 # ------------------------------------------------------------------------------------------------ changes (POST)
 
 func _api(path: String, qs: String, body: PackedByteArray) -> Dictionary:
@@ -1036,6 +1086,35 @@ func _api(path: String, qs: String, body: PackedByteArray) -> Dictionary:
 				return _json(400, {"ok": false, "message": "That model cannot be renamed."}, doc)
 			model_library.rename(str(mr.id), str(mr.name))
 			return _json(200, {"ok": true, "name": str(model_library.entry(str(mr.id)).name)}, doc)
+		"/api/image":
+			if image_library == null:
+				return _json(501, {"ok": false, "message": "Pictures are not available."})
+			if body.is_empty():
+				return _json(400, {"ok": false, "message": "The file is empty."})
+			var iq := _query(qs)
+			if model_library != null and str(iq.get("canvas", "")) == "" and model_library.wants_part(str(iq.get("name", ""))):
+				return _add_model({str(iq.name): body}, "", false, doc)      # (a picture of a model sent a moment ago, not one for a canvas)
+			return _add_image(body, iq, doc)
+		"/api/image/show":
+			if image_library == null or not show_image.is_valid():
+				return _json(501, {"ok": false, "message": "Pictures are not available."})
+			var ish: Dictionary = show_image.call(str(_json_body(body).get("id", "")))
+			return _json(200 if bool(ish.get("ok", false)) else 422, ish, doc)
+		"/api/image/delete":
+			var idd := _json_body(body)
+			var gone_images := 0
+			for iid in (idd.get("ids", []) as Array).slice(0, 200):
+				if image_library != null and image_library.remove(str(iid)):
+					gone_images += 1
+			if gone_images == 0:
+				return _json(404, {"ok": false, "message": "Those pictures are already gone."}, doc)
+			return _json(200, {"ok": true, "message": "Deleted %s" % WebPages.plural(gone_images, "picture")}, doc)
+		"/api/image/rename":
+			var ir := _json_body(body)
+			if image_library == null or not image_library.has(str(ir.get("id", ""))) or str(ir.get("name", "")).strip_edges() == "":
+				return _json(400, {"ok": false, "message": "That picture cannot be renamed."}, doc)
+			image_library.rename(str(ir.id), str(ir.name))
+			return _json(200, {"ok": true, "name": str(image_library.entry(str(ir.id)).name)}, doc)
 		"/api/files/delete":
 			var data3 := _json_body(body)
 			var gone := 0

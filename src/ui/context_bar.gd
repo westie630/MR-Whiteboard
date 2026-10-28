@@ -71,6 +71,8 @@ func reset() -> void:
 func _kind_of(item: Item) -> String:
 	if item.kind == Item.TEXT:
 		return "text"
+	if item.kind == Item.IMAGE:
+		return "image"
 	if item.kind == Item.STROKE:
 		return "stroke"
 	if item.kind == Item.SHAPE and not item.is_line():
@@ -86,20 +88,22 @@ func _rebuild(items: Array, kinds: Dictionary, one: Item) -> void:
 	var b: Board = shell.board
 	if items.is_empty():
 		return
-	# recolour
-	var col := (items[0] as Item).color
-	var sw := Btn.new("", "", true)
-	sw.variant = "tool"
-	sw.swatch = Color(col.r, col.g, col.b, 1.0)
-	sw.hint = "Colour"
-	sw.custom_minimum_size = Vector2(46, 46)
-	sw.on = _palette_open
-	sw.toggled.connect(func(v: bool):
-		_palette_open = v
-		refresh())
-	_row.add_child(sw)
-	UiKit.divider(_row)
 	var only := kinds.keys()
+	# recolour (pictures have no colour of their own: only for a selection with something else in it)
+	var col := (items[0] as Item).color
+	var pictures_only: bool = only.size() == 1 and only[0] == "image"
+	if not pictures_only:
+		var sw := Btn.new("", "", true)
+		sw.variant = "tool"
+		sw.swatch = Color(col.r, col.g, col.b, 1.0)
+		sw.hint = "Colour"
+		sw.custom_minimum_size = Vector2(46, 46)
+		sw.on = _palette_open
+		sw.toggled.connect(func(v: bool):
+			_palette_open = v
+			refresh())
+		_row.add_child(sw)
+		UiKit.divider(_row)
 	if only.size() == 1 and only[0] == "text":
 		_text_tools(items, one)
 		UiKit.divider(_row)
@@ -117,7 +121,7 @@ func _rebuild(items: Array, kinds: Dictionary, one: Item) -> void:
 	_row.add_child(_tool("copy", "Duplicate", func(): b.duplicate_selection()))
 	_row.add_child(_tool("front", "To the front", func(): b.bring_to_front()))
 	_row.add_child(_tool("back", "To the back", func(): b.send_to_back()))
-	if _palette_open:
+	if _palette_open and not pictures_only:
 		var pal := HBoxContainer.new()
 		pal.add_theme_constant_override("separation", 2)
 		pal.alignment = BoxContainer.ALIGNMENT_CENTER

@@ -11,6 +11,7 @@ const AI_COLOR :=Color(0.72, 0.62, 1.0, 0.95)
 var data: FrameData
 var doc: Document
 var pdfs: PdfLibrary                       # where the PDF of a PDF canvas comes from (the Board sets it before setup)
+var images: ImageLibrary                   # where the pictures on this canvas come from (the Board sets it before setup)
 var pdf_state := ""                        # "" not a PDF | loading | ready | missing (not on this headset) | failed
 var pdf_note := ""                         # what the canvas says in place of a page that is not there
 var views: Dictionary = {}                 # item id -> ItemView
@@ -728,6 +729,20 @@ func show_ghost(it: Item, center: Vector2) -> void:
 		add_child(_ghost)
 		_ghost.setup(it, false)
 	_ghost.set_preview(Transform3D(Basis.IDENTITY, Vector3(center.x, center.y, 0.0012)))
+
+
+## A picture arrived (or could not be made): the views that show it are built again, the ghost being placed too.
+func refresh_image(image_id: String) -> void:
+	for v in views.values():
+		var iv := v as ItemView
+		if iv.item.kind == Item.IMAGE and iv.item.image == image_id:
+			iv.rebuild()
+	if _ghost != null and _ghost.item.kind == Item.IMAGE and _ghost.item.image == image_id:
+		_ghost.rebuild()
+	for c in _ai.get_children():
+		var av := c as ItemView
+		if av != null and av.item.kind == Item.IMAGE and av.item.image == image_id:
+			av.rebuild()
 
 
 func ai_shown() -> bool:

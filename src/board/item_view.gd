@@ -1,10 +1,13 @@
 class_name ItemView
 extends Node3D
 ## The 3D representation of one Item inside a frame: ink meshes (ribbons on canvases, tubes in 3D sketches), shape outlines, fills,
-## arrowheads and text labels. Rebuilt from the item whenever it changes. `set_preview` moves it while it is being dragged,
+## arrowheads, text labels and pictures (a textured quad; a faint box saying why while the picture is not there yet). Rebuilt from the item whenever it changes. `set_preview` moves it while it is being dragged,
 ## before the move is committed to the item's own data.
 
 const TEXT_CURVE_STEP := 3.0              # how finely the outlines of the letters are followed on a curved desk (in pixels of a 64 px em)
+const IMAGE_SHADER := "res://shaders/image_canvas.gdshader"
+
+static var _image_shader: Shader
 
 var item: Item
 var volume := false
@@ -37,6 +40,8 @@ func rebuild() -> void:
 			_build_shape()
 		Item.TEXT:
 			_build_text(item.text, item.center, item.rot, item.font_size, item.color, Brushes.priority("pen", item.z) + 1, item.weight, item.italic)
+		Item.IMAGE:
+			_build_image()
 
 
 ## Move the view while it is dragged. `t` is a transform of the canvas (a move, a turn, a resize); on a curved desk the view follows it as a
@@ -54,10 +59,15 @@ func set_preview(t: Transform3D) -> void:
 
 ## The curved desk of the frame this view is in.
 func _find_bend() -> DeskBend:
+	var fn := _frame_node()
+	return fn.bend if fn != null else null
+
+
+func _frame_node() -> FrameNode:
 	var n: Node = get_parent()
 	while n != null:
 		if n is FrameNode:
-			return (n as FrameNode).bend
+			return n as FrameNode
 		n = n.get_parent()
 	return null
 
@@ -211,6 +221,59 @@ func _build_text_mesh(txt: String, center: Vector2, rot: float, em: float, col: 
 	arrays[Mesh.ARRAY_COLOR] = cols
 	arrays[Mesh.ARRAY_INDEX] = idx
 	_add_mesh(arrays, Brushes.canvas_material("pen", clampi(prio, -128, 126)), true)
+
+
+# ------------------------------------------------------------------------------------------------ pictures
+
+## A picture: one quad with its texture, under the ink (the fill band of the drawing order), so drawings on it stay on top. While the texture
+## is being made, or the picture is not on this headset, a faint box of its size says so; the view is built again when it arrives.
+func _build_image() -> void:
+	var fn := _frame_node()
+	var lib: ImageLibrary = fn.images if fn != null else null
+	var corners := item.text_corners()                     # top left, top right, bottom right, bottom left
+	var tex: Texture2D = lib.texture(item.image) if lib != null and item.image != "" else null
+	if tex == null:
+		_build_image_box(corners, lib.state_text(item.image) if lib != null else "Picture")
+		return
+	var verts := PackedVector3Array()
+	for c in corners:
+		verts.append(Vector3(c.x, c.y, 0.0))
+	var cols := PackedColorArray()
+	cols.resize(4)
+	cols.fill(Color.WHITE)
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_TEX_UV] = PackedVector2Array([Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)])
+	arrays[Mesh.ARRAY_COLOR] = cols
+	arrays[Mesh.ARRAY_INDEX] = PackedInt32Array([0, 1, 2, 0, 2, 3])
+	if _image_shader == null:
+		_image_shader = load(IMAGE_SHADER)
+	var m := ShaderMaterial.new()
+	m.shader = _image_shader
+	m.set_shader_parameter("tex", tex)
+	m.set_shader_parameter("opacity", item.color.a)
+	m.render_priority = clampi(Brushes.priority("pen", item.z, "fill"), -128, 127)
+	_add_mesh(arrays, m, true)
+
+
+func _build_image_box(corners: PackedVector2Array, why: String) -> void:
+	var prio := Brushes.priority("pen", item.z, "fill")
+	_add_mesh(StrokeMesher.fill_arrays(corners, Color(0.55, 0.6, 0.68, 0.16 * item.color.a)), Brushes.canvas_material("pen", prio), true)
+	var w := clampf(minf(item.size.x, item.size.y) * 0.012, 0.0015, 0.004)
+	var p3 := PackedVector3Array()
+	var ws := PackedFloat32Array()
+	for c in corners:
+		p3.append(Vector3(c.x, c.y, 0.0))
+		ws.append(w)
+	if _bend != null:
+		var sub := DeskBend.subdivide(p3, ws, true, _bend.cut_pitch())
+		p3 = sub[0]
+		ws = sub[1]
+	_add_mesh(StrokeMesher.ribbon_arrays(p3, ws, Color(0.7, 0.75, 0.82, 0.5 * item.color.a), true, false), Brushes.canvas_material("pen", prio))
+	var em := clampf(item.size.y * 0.09, 0.012, 0.03)
+	if item.size.x > em * 6.0:
+		_build_text(why, item.center, item.rot, em, Color(0.82, 0.86, 0.92, 0.8 * item.color.a), prio + 1)
 
 
 # ------------------------------------------------------------------------------------------------ helpers

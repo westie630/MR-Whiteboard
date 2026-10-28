@@ -58,7 +58,7 @@ var sel_frame := ""
 var bar_ghost: Dictionary = {}
 var stencil := "rect"
 var placing: Dictionary = {}               # canvas placement in progress: {kind, ghost, size}
-var placing_text: Dictionary = {}          # text placement in progress: {text, wrap, frame, item (the ghost), center}; see begin_place_text()
+var placing_text: Dictionary = {}          # text (or picture: + image) placement in progress: {text, wrap, frame, item (the ghost), center}; see begin_place_text()
 var grabs: Dictionary = {}                 # frame id -> {xf: Transform3D (world), scale: float} while a hand holds it
 var remote_grabs: Dictionary = {}          # frame id -> {xf: Transform3D (in its room), scale} while somebody else of the session carries it (LivePreview)
 var pen_ctl: PenController
@@ -72,6 +72,7 @@ var share: ExportServer                   # the web server that lets a PC browse
 var telegram: TelegramBridge               # files to and from the user's Telegram through their own bot (runs while a bot token is set)
 var pdfs: PdfLibrary                      # the PDFs on this device, and the pages made from them (canvases that show a PDF ask it)
 var models: ModelLibrary                  # the 3D models on this device (glTF, OBJ), loaded for the model frames that show them
+var images: ImageLibrary                  # the pictures on this device (PNG, JPEG, WebP), for the picture items on canvases
 var model_ctl: ModelController             # what the pointers do to 3D models: select, carry, the gizmo's handles
 var lighting: ModelLighting                # the light the 3D models are seen in
 var session: Session                       # a session: this headset hosting one (the owner) or in one (a guest); see Session
@@ -125,6 +126,14 @@ func _init() -> void:
 	models.replaced.connect(_on_model_replaced)
 	models.progress_changed.connect(func(_id): _on_models_changed())
 	add_child(models)
+	images = ImageLibrary.new()
+	images.dir = App.image_dir
+	images.tier = ModelBudget.detect_tier(str(App.val("image_tier")))
+	images.image_ready.connect(_on_image_ready)
+	images.image_failed.connect(func(id: String, _m: String): _on_image_ready(id))
+	images.progress_changed.connect(_on_image_ready)
+	images.changed.connect(func(): changed.emit())
+	add_child(images)
 	model_ctl = ModelController.new(self)
 	add_child(model_ctl.gizmo)
 	lighting = ModelLighting.new()
@@ -142,6 +151,9 @@ func _init() -> void:
 	share.show_pdf = place_pdf
 	share.model_library = models
 	share.show_model = place_model
+	share.image_library = images
+	share.show_image = begin_place_image
+	share.drop_image = drop_image_on
 	share.ai_api = func(cmd: String, data: Dictionary) -> Dictionary: return ai.api(cmd, data)
 	share.keys_api = func(cmd: String, data: Dictionary) -> Dictionary: return ApiKeys.new(ai, telegram, share.require_pin).api(cmd, data)
 	share.state_changed.connect(func(): changed.emit())
@@ -293,6 +305,7 @@ func _notification(what: int) -> void:
 func _make_frame_node(f: FrameData) -> FrameNode:
 	var fn := FrameNode.new()
 	fn.pdfs = pdfs
+	fn.images = images
 	add_child(fn)
 	fn.setup(f, doc)
 	fn.visible = false
@@ -2067,6 +2080,83 @@ func begin_place_text(text: String, wrap: int = TextController.AI_WRAP) -> void:
 	changed.emit()
 
 
+## The same tool for a picture of the library: its ghost follows the pointer over the canvases, a tap or pinch drops it there.
+## {ok, message, id, name}
+func begin_place_image(image_id: String) -> Dictionary:
+	if doc == null:
+		return {"ok": false, "message": "No document is open in the headset."}
+	if not images.has(image_id):
+		return {"ok": false, "message": "That picture is not on the headset."}
+	cancel_place()
+	cancel_place_text()
+	surface.cancel()
+	var nm := str(images.entry(image_id).get("name", "Picture"))
+	placing_text = {"text": nm, "image": image_id, "wrap": 0, "frame": "", "item": null, "center": Vector2.ZERO}
+	toast.emit("Point at a canvas and tap with the stylus or pinch to drop the picture there. Back cancels.")
+	changed.emit()
+	return {"ok": true, "message": "In the headset: point at a canvas and tap to drop \"%s\" there." % nm, "id": image_id, "name": nm}
+
+
+## Takes a picture file in (the web page, Telegram) and starts dropping it in the headset. {ok, message, id, name}
+func add_image(bytes: PackedByteArray, file_name: String) -> Dictionary:
+	var added := images.add(bytes, file_name)
+	if not bool(added.ok):
+		return added
+	var res := begin_place_image(str(added.id))
+	res["dup"] = added.get("dup", false)
+	return res
+
+
+## The size a picture is put down at on a canvas: its own shape, its longest side 40 cm (less on a small canvas), in the canvas's units.
+func image_size_for(image_id: String, frame_id: String) -> Vector2:
+	var fd: FrameData = doc.frames.get(frame_id) if doc != null else null
+	var longest := 0.4
+	var k := 1.0
+	if fd != null:
+		longest = clampf(minf(fd.size.x, fd.size.y) * 0.8, 0.12, 0.4)
+		k = 1.0 / maxf(fd.scale, 0.01)
+	var a := images.aspect(image_id)
+	return (Vector2(longest, longest / a) if a >= 1.0 else Vector2(longest * a, longest)) * k
+
+
+## Puts a picture on a canvas, its middle at `center` (one undo step, selected so it can be moved and resized). A guest's own picture goes to
+## the session's owner, who gives it to the others.
+func place_image_at(image_id: String, frame_id: String, center: Vector2, size_m: Vector2 = Vector2.ZERO) -> Item:
+	var fd: FrameData = doc.frames.get(frame_id) if doc != null else null
+	if fd == null or fd.kind != FrameData.CANVAS or fd.locked or fd.hidden or not images.has(image_id):
+		return null
+	var it := Item.make_image(frame_id, image_id, size_m if size_m != Vector2.ZERO else image_size_for(image_id, frame_id))
+	it.center = center
+	history.do(History.op_add([it]))
+	if not doc.items.has(it.id):
+		return null
+	select_items([it.id], frame_id)
+	if session.is_client():
+		session.image_share.client_offer(image_id)
+	return it
+
+
+## A picture dropped on a canvas's picture on the web page: `fx`, `fy` (0..1 from its top left) say where on what the page shows of it.
+func drop_image_on(image_id: String, frame_id: String, fx: float, fy: float) -> Dictionary:
+	if doc == null or not doc.frames.has(frame_id):
+		return {"ok": false, "message": "That canvas is not there any more."}
+	if not canvas_edit_ok(false) and session.is_client():
+		return {"ok": false, "message": "This session does not let guests add things."}
+	var r := SvgExport.view_rect(doc, frame_id)
+	var c := Vector2(r.position.x + clampf(fx, 0.0, 1.0) * r.size.x, r.end.y - clampf(fy, 0.0, 1.0) * r.size.y)
+	var it := place_image_at(image_id, frame_id, c)
+	if it == null:
+		return {"ok": false, "message": "That canvas cannot take the picture (it is locked or hidden)."}
+	var fname := (doc.frames[frame_id] as FrameData).name
+	toast.emit("A picture was dropped on \"%s\" from the web page (undo takes it back)." % fname)
+	return {"ok": true, "message": "Dropped on \"%s\"." % fname, "id": it.id}
+
+
+func _on_image_ready(image_id: String) -> void:
+	for fn in frame_nodes.values():
+		(fn as FrameNode).refresh_image(image_id)
+
+
 func cancel_place_text() -> void:
 	if placing_text.is_empty():
 		return
@@ -2082,6 +2172,15 @@ func confirm_place_text() -> Item:
 	if str(placing_text.frame) == "":
 		toast.emit("Point at a canvas first.")
 		return null
+	if placing_text.has("image"):
+		var ghost: Item = placing_text.item
+		var pic := place_image_at(str(placing_text.image), str(placing_text.frame), placing_text.center, ghost.size if ghost != null else Vector2.ZERO)
+		if pic == null:
+			toast.emit("That canvas cannot take the picture (it is locked).")
+			return null
+		cancel_place_text()
+		toast.emit("Picture dropped (undo takes it back).")
+		return pic
 	var t: Item = texts.place_at(str(placing_text.text), str(placing_text.frame), placing_text.center, int(placing_text.wrap))
 	if t == null:
 		toast.emit("That canvas cannot take the text (it is locked).")
@@ -2101,6 +2200,10 @@ func place_text_here() -> Item:
 	if spot.is_empty():
 		toast.emit("Place a canvas first, then put the text on it.")
 		return null
+	if placing_text.has("image"):
+		var pid := str(placing_text.image)
+		cancel_place_text()
+		return place_image_at(pid, str(spot.frame), spot.center)
 	cancel_place_text()
 	return texts.place_at(text, str(spot.frame), spot.center, wrap, true)
 
@@ -2156,11 +2259,15 @@ func _update_placing_text(pen: PenState, hands: Array) -> void:
 			changed.emit()                                  # the card names the canvas pointed at
 		if fid != "":
 			if placing_text.item == null:
-				var g := texts.make(str(placing_text.text), fid, int(placing_text.wrap))
+				var g: Item
+				if placing_text.has("image"):
+					g = Item.make_image(fid, str(placing_text.image), image_size_for(str(placing_text.image), fid))
+				else:
+					g = texts.make(str(placing_text.text), fid, int(placing_text.wrap))
 				g.color = Color(g.color.r, g.color.g, g.color.b, 0.65)
 				g.center = Vector2.ZERO
 				placing_text.item = g
-			placing_text.center = _text_centre(hit.local, (placing_text.item as Item).size, hit.fn)
+			placing_text.center = hit.local if placing_text.has("image") else _text_centre(hit.local, (placing_text.item as Item).size, hit.fn)
 			(hit.fn as FrameNode).show_ghost(placing_text.item, placing_text.center)
 	var confirm := false
 	if pen.tracked and pen.down and not _was_down:
@@ -2324,6 +2431,8 @@ func apply_style_to_selection() -> void:
 	var after: Array = []
 	for it in items:
 		var item: Item = it
+		if item.kind == Item.IMAGE:
+			continue                                         # a picture has no pen colour, width or brush
 		before.append(item.duplicate_item(false))
 		var c := item.duplicate_item(false)
 		var col: Color = App.val("color")
@@ -2337,7 +2446,8 @@ func apply_style_to_selection() -> void:
 			c.width = float(App.val("width"))
 			c.brush = str(App.val("brush"))
 		after.append(c)
-	history.do(History.op_modify(before, after))
+	if not before.is_empty():
+		history.do(History.op_modify(before, after))
 
 
 ## Give the selected items another colour (only the colour: widths, brushes and fill strength stay). One undo step.
@@ -2349,13 +2459,16 @@ func recolor_selection(col: Color) -> void:
 	var after: Array = []
 	for it in items:
 		var item: Item = it
+		if item.kind == Item.IMAGE:
+			continue
 		before.append(item.duplicate_item(false))
 		var c := item.duplicate_item(false)
 		c.color = Color(col.r, col.g, col.b, c.color.a if c.kind != Item.TEXT else 1.0)
 		if c.kind == Item.SHAPE and c.fill.a > 0.0:
 			c.fill = Color(col.r, col.g, col.b, c.fill.a)
 		after.append(c)
-	history.do(History.op_modify(before, after))
+	if not before.is_empty():
+		history.do(History.op_modify(before, after))
 
 
 ## Fill the selected closed shapes with their colour, or take the fill away when they are all filled. One undo step.

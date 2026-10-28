@@ -1,10 +1,12 @@
 class_name PlaceCard
 extends FloatPanel
-## The placement tool for words (Board.begin_place_text): the card that stands on the dock while a text waits for its place. It shows
-## the start of the text, which canvas the stylus (or hand) points at, and two ways out: put it on the canvas you are looking at, or
-## cancel. Pointing and tapping with the stylus tip or a pinch puts it down exactly where the ghost is.
+## The placement tool for words (Board.begin_place_text) and pictures (Board.begin_place_image): the card that stands on the dock while a
+## text or a picture waits for its place. It shows the start of the text (or the picture's name), which canvas the stylus (or hand) points
+## at, and two ways out: put it on the canvas you are looking at, or cancel. Pointing and tapping with the stylus tip or a pinch puts it down
+## exactly where the ghost is.
 
 var _sub: Label
+var _title: Label
 var _preview: Label
 var _line: Label
 
@@ -30,7 +32,8 @@ func _init() -> void:
 	head.add_child(icon)
 	var titles := UiKit.vcol(head, 0)
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	titles.add_child(UiKit.label("Place the text", false, UITheme.FONT, 600))
+	_title = UiKit.label("Place the text", false, UITheme.FONT, 600)
+	titles.add_child(_title)
 	_sub = UiKit.label("", true, UITheme.FONT_TINY)
 	titles.add_child(_sub)
 	var well := PanelContainer.new()
@@ -58,8 +61,10 @@ func refresh() -> void:
 	if b.placing_text.is_empty():
 		return
 	var text := str(b.placing_text.text)
+	var picture: bool = b.placing_text.has("image")
+	_title.text = "Drop the picture" if picture else "Place the text"
 	_preview.text = text if text.length() <= 160 else text.left(160).strip_edges() + "..."
 	var fid := str(b.placing_text.frame)
 	var fd: FrameData = b.doc.frames.get(fid) if b.doc != null and fid != "" else null
 	_sub.text = "Pointing at nothing yet" if fd == null else "Pointing at %s" % fd.name
-	_line.text = "Point at a canvas: the text follows. Tap with the stylus tip or pinch to put it down there; the back button cancels. Undo takes it back."
+	_line.text = "Point at a canvas: the %s follows. Tap with the stylus tip or pinch to put it down there; the back button cancels. Undo takes it back. Resize it afterwards by its corners." % ("picture" if picture else "text") 		if picture else "Point at a canvas: the text follows. Tap with the stylus tip or pinch to put it down there; the back button cancels. Undo takes it back."

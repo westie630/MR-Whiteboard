@@ -9,7 +9,8 @@ const POLL_S := 25                         # how long one getUpdates waits on Te
 const MAX_DOWNLOAD := 20 * 1048576         # the biggest file a bot may fetch from Telegram (getFile)
 const MAX_UPLOAD := 50 * 1048576           # the biggest file a bot may send (sendDocument)
 const MAX_TEXT := 4000                     # a message holds 4096 characters; longer text is cut
-const KINDS := {"pdf": "pdf", "svg": "svg", "glb": "model", "gltf": "model", "obj": "model", "zip": "model", "mtl": "model", "bin": "model", "mrw": "mrw"}
+const KINDS := {"pdf": "pdf", "svg": "svg", "glb": "model", "gltf": "model", "obj": "model", "zip": "model", "mtl": "model", "bin": "model", "mrw": "mrw",
+	"png": "image", "jpg": "image", "jpeg": "image", "webp": "image", "bmp": "image"}
 ## The commands the chat's "/" menu offers (setMyCommands).
 const COMMANDS := [
 	["svg", "The canvases of the open document as SVG"],
@@ -74,7 +75,7 @@ static func _result_text(result: int) -> String:
 
 
 ## One update of getUpdates as what the bridge needs: {update_id, chat, chat_type, who, text, file?, photo}. `file` is {id, name, size}
-## for a document; `photo` is true for a picture sent as a photo (compressed, no file name).
+## for a document, and for a photo its biggest size (Telegram sends a photo in several; it has no file name, so it is called "Photo ....jpg").
 static func read_update(u: Dictionary) -> Dictionary:
 	var out := {"update_id": int(u.get("update_id", 0)), "chat": "", "chat_type": "", "who": "", "text": "", "photo": false}
 	var m: Variant = u.get("message")
@@ -92,6 +93,13 @@ static func read_update(u: Dictionary) -> Dictionary:
 		var doc: Dictionary = m.document
 		out["file"] = {"id": str(doc.get("file_id", "")), "name": str(doc.get("file_name", "file")).get_file(), "size": int(doc.get("file_size", 0))}
 	out["photo"] = m.get("photo") is Array
+	if bool(out.photo) and not out.has("file") and not (m.photo as Array).is_empty():
+		var best: Dictionary = {}
+		for p in m.photo:
+			if p is Dictionary and int(p.get("width", 0)) * int(p.get("height", 0)) >= int(best.get("width", 0)) * int(best.get("height", 0)):
+				best = p
+		if not best.is_empty():
+			out["file"] = {"id": str(best.get("file_id", "")), "name": "Photo %d.jpg" % int(m.get("message_id", 0)), "size": int(best.get("file_size", 0))}
 	return out
 
 

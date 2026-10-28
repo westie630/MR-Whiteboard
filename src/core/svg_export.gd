@@ -2,28 +2,35 @@ class_name SvgExport
 extends RefCounted
 ## Export of a canvas as SVG (scalable vector graphics): the editable, universal format for diagrams. Opens in Inkscape,
 ## Illustrator, Figma, PowerPoint and every browser. Units are millimetres (1 canvas metre = 1000 user units), y flipped to SVG's
-## downward axis. Freehand strokes keep their pressure as variable-width outlines; shapes stay real vector paths; text stays text.
+## downward axis. Freehand strokes keep their pressure as variable-width outlines; shapes stay real vector paths; text stays text;
+## pictures are embedded as they were sent (an <image> with a data: address), so the file stands on its own.
 ##
-## Options: background ("none" | "white" | "dark"), grid (bool), margin (metres around the content).
+## Options: background ("none" | "white" | "dark"), grid (bool), margin (metres around the content), images (the ImageLibrary the
+## pictures come from; without it the app's own picture folder is read).
 
 const MM := 1000.0
 const FONT := "'Open Sans', 'Segoe UI', Arial, Helvetica, sans-serif"
 
 
-static func canvas(doc: Document, frame_id: String, opts: Dictionary = {}) -> String:
+## The part of a canvas an export shows, in the canvas's metres (y up): what is on it and a margin, or the canvas itself while it is empty.
+static func view_rect(doc: Document, frame_id: String, margin: float = 0.04) -> Rect2:
 	var frame: FrameData = doc.frames.get(frame_id)
-	var list := doc.items_of(frame_id)
-	var margin := float(opts.get("margin", 0.04))
 	var bb := Rect2()
 	var first := true
-	for it in list:
+	for it in doc.items_of(frame_id):
 		var r: Rect2 = (it as Item).bounds()
 		bb = r if first else bb.merge(r)
 		first = false
 	if first:
 		var sz: Vector2 = frame.size if frame != null else Vector2(1.2, 0.8)
 		bb = Rect2(-sz * 0.5, sz)
-	bb = bb.grow(margin)
+	return bb.grow(margin)
+
+
+static func canvas(doc: Document, frame_id: String, opts: Dictionary = {}) -> String:
+	var frame: FrameData = doc.frames.get(frame_id)
+	var list := doc.items_of(frame_id)
+	var bb := view_rect(doc, frame_id, float(opts.get("margin", 0.04)))
 	var w := bb.size.x * MM
 	var h := bb.size.y * MM
 	var out := PackedStringArray()
@@ -49,6 +56,8 @@ static func canvas(doc: Document, frame_id: String, opts: Dictionary = {}) -> St
 				out.append(_shape(item, tx))
 			Item.TEXT:
 				out.append(_text(item.text, item.center, item.rot, item.font_size, item.color, tx, item.weight, item.italic))
+			Item.IMAGE:
+				out.append(_image(item, tx, opts.get("images")))
 	out.append('</svg>')
 	return "\n".join(out)
 
@@ -91,6 +100,29 @@ static func file_names(frames: Array) -> Dictionary:
 
 
 # ------------------------------------------------------------------------------------------------ elements
+
+## A picture: its file as it is, in a data: address, placed and turned like the item (a picture not on this device is a grey box).
+static func _image(it: Item, tx: Callable, lib: Variant) -> String:
+	var bytes := PackedByteArray()
+	var ext := ""
+	if lib is ImageLibrary:
+		bytes = (lib as ImageLibrary).file_bytes(it.image)
+		ext = str((lib as ImageLibrary).entry(it.image).get("ext", ""))
+	else:
+		var e: Variant = JSON.parse_string(FileAccess.get_file_as_string(App.image_dir + "/" + ImageLibrary.INDEX_NAME)) if FileAccess.file_exists(App.image_dir + "/" + ImageLibrary.INDEX_NAME) else null
+		if e is Dictionary and (e as Dictionary).has(it.image):
+			ext = str(e[it.image].get("ext", ""))
+			bytes = FileAccess.get_file_as_bytes("%s/%s.%s" % [App.image_dir, it.image, ext])
+	var c: Vector2 = tx.call(it.center)
+	var w := it.size.x * MM
+	var h := it.size.y * MM
+	var place := 'transform="translate(%s %s) rotate(%s)"' % [_n(c.x), _n(c.y), _n(-rad_to_deg(it.rot), 3)]
+	if bytes.is_empty():
+		return '<rect x="%s" y="%s" width="%s" height="%s" %s fill="#8c99ad" fill-opacity="0.25" stroke="#8c99ad" stroke-width="0.5"/>' % [_n(-w * 0.5), _n(-h * 0.5), _n(w), _n(h), place]
+	var op := '' if it.color.a >= 0.999 else ' opacity="%s"' % _n(it.color.a, 3)
+	return '<image x="%s" y="%s" width="%s" height="%s" preserveAspectRatio="none" %s%s href="data:%s;base64,%s"/>' % [_n(-w * 0.5), _n(-h * 0.5), _n(w), _n(h), place, op,
+		ImageLibrary.mime_of(ext), Marshalls.raw_to_base64(bytes)]
+
 
 static func _stroke(it: Item, tx: Callable) -> String:
 	var b := Brushes.get_def(it.brush)

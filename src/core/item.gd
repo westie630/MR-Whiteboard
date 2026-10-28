@@ -1,12 +1,13 @@
 class_name Item
 extends RefCounted
-## One thing on a frame: a freehand stroke, a parametric shape (box, line, arrow, ...) or a piece of text.
+## One thing on a frame: a freehand stroke, a parametric shape (box, line, arrow, ...), a piece of text or a picture.
 ## Canvas items live in the frame's xy plane (x right, y up, metres); strokes in a 3D volume also use z.
 ## Everything an item is lives in plain fields so it can be copied, saved and diffed for undo.
 
 const STROKE := "stroke"
 const SHAPE := "shape"
 const TEXT := "text"
+const IMAGE := "image"                    # a picture: `image` names the file (ImageLibrary), `center` / `size` / `rot` place it, colour alpha = opacity
 
 var id := ""
 var kind := STROKE
@@ -46,6 +47,8 @@ var weight := TextLayout.REGULAR          # Open Sans weight, 300 Light .. 800 E
 var italic := false
 var alternatives: PackedStringArray = []  # other readings of the handwriting, for correcting a text item
 var ink: Array = []                       # the handwriting strokes (item dictionaries) this text was converted from: "back to ink"
+# picture
+var image := ""                           # the picture's content id in the ImageLibrary
 
 
 static func make_stroke(frame_id: String, points: PackedFloat32Array, col: Color, w: float, brush_id: String) -> Item:
@@ -83,6 +86,19 @@ static func make_text(frame_id: String, txt: String, col: Color, em: float, weig
 	it.font_size = em
 	it.weight = weight_
 	it.refit_text()
+	return it
+
+
+## A picture `size` metres big (its own aspect ratio), centred at the origin.
+static func make_image(frame_id: String, image_id: String, size_m: Vector2) -> Item:
+	var it := Item.new()
+	it.id = U.uid("i")
+	it.kind = IMAGE
+	it.frame = frame_id
+	it.image = image_id
+	it.size = size_m
+	it.color = Color.WHITE
+	it.width = 0.0
 	return it
 
 
@@ -130,12 +146,12 @@ func bounds() -> Rect2:
 			if all.is_empty():
 				return Rect2(center - size * 0.5, size)
 			return Geom2D.bbox(all).grow(width * 0.5)
-		TEXT:
+		TEXT, IMAGE:
 			return Geom2D.bbox(text_corners())
 	return Rect2()
 
 
-## Corners of the (rotated) text box in the frame.
+## Corners of the (rotated) box of a text or a picture in the frame.
 func text_corners() -> PackedVector2Array:
 	var h := size * 0.5
 	var out := PackedVector2Array()
@@ -164,7 +180,7 @@ func hit(p: Vector2, tol: float) -> bool:
 					return true
 				return Geom2D.dist_to_polyline(p, poly, true) <= tol + width * 0.5
 			return Shapes.hit(self, p, tol)
-		TEXT:
+		TEXT, IMAGE:
 			var local := Geom2D.rot(p - center, -rot)
 			return absf(local.x) <= size.x * 0.5 + tol and absf(local.y) <= size.y * 0.5 + tol
 	return false
@@ -202,6 +218,10 @@ func apply_xform(t: Transform2D) -> void:
 			rot += ang
 			font_size *= s
 			refit_text()
+		IMAGE:
+			center = t * center
+			rot += ang
+			size *= s
 
 
 ## Move / rotate / scale a stroke inside a 3D volume.
@@ -267,6 +287,11 @@ func to_dict() -> Dictionary:
 				d["alt"] = Array(alternatives)
 			if not ink.is_empty():
 				d["ink"] = ink
+		IMAGE:
+			d["image"] = image
+			d["center"] = U.v2_to_array(center)
+			d["size"] = U.v2_to_array(size)
+			d["rot"] = snappedf(rot, 1e-5)
 	return d
 
 
@@ -314,6 +339,11 @@ static func from_dict(d: Dictionary) -> Item:
 			it.alternatives = PackedStringArray(d.get("alt", []))
 			it.ink = (d.get("ink", []) as Array).duplicate(true)
 			it.refit_text()
+		IMAGE:
+			it.image = str(d.get("image", ""))
+			it.center = U.v2_from(d.get("center"))
+			it.size = U.v2_from(d.get("size"), Vector2(0.3, 0.2))
+			it.rot = float(d.get("rot", 0.0))
 	return it
 
 

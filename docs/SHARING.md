@@ -228,13 +228,24 @@ of 1024 or more, and takes the address from the packet, not from what it says. O
 one is told no and the typed address is the way in. Guest Wi-Fi and some routers block broadcast or isolate clients: then only the typed address
 works, and if that does not either, the network is blocking it.
 
+### Pictures: files, both ways
+
+A picture is an item (`Item.IMAGE`) that says *which* picture (`image`, the content id: the first 32 hex digits of the SHA-256 of the file as it was
+sent) and where (`center`, `size`, `rot`); DocSync carries it like any item. Its file goes on the **file channel** (`ImageShare`): a guest whose canvas
+shows a picture it does not have asks `img? {id}`; the owner answers only for a picture an item of the shared room shows (else `img_no`), with `img {id, n,
+size, name, ext}` then `imgc` pieces of 96 KB at 6 MB/s, one transfer per guest at a time (the rest wait their turn); a guest refuses a file over its own
+limit first (`img_stop`) and checks the content id. Unlike PDFs and models, a picture can come from a **guest**: the guest's headset offers it
+(`img_offer {id, size, n, name, ext}`), the owner answers `img_have` when it has it, `img_take` when it wants it (only from a guest who may edit, only
+what fits its own limit), and the guest sends `imgp` pieces. Guests that asked before the file arrived are given it then. Each headset makes its own
+texture within its own budget (a Quest 2 at most 2048 px, a Quest 3 3072). Protocol 4.
+
 ### Files from outside: the web page and Telegram
 
 The web page's uploads and the Telegram bot (`TelegramBridge`) bring files into the headset that runs them. On the **owner's** headset that is all it
 takes: the PDF or model goes into the library, a canvas or model frame names it, and the guests are given the file as above. A **guest's** headset
 cannot give a file to the owner (files only travel owner to guest), so a PDF or model a guest's bot receives is kept in that guest's library and not
 put up as a canvas the others could not load; the bot says so. An SVG becomes ordinary canvases and items, which DocSync carries both ways, so a guest's
-SVG reaches everybody when *Guests can add and move canvases* is on. Text sent to a bot is put down with the placement tool and replicates like typed text.
+SVG reaches everybody when *Guests can add and move canvases* is on. A picture a guest drops (from its own web page or bot, or Home > Docs) goes to the owner first, as above, and from there to everybody. Text sent to a bot is put down with the placement tool and replicates like typed text.
 
 ## 8. Devices
 

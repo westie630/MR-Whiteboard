@@ -724,7 +724,7 @@ func _mostly_inside(item: Item, poly: PackedVector2Array) -> bool:
 					samples.append(pts[i])
 			if item.shape == "poly":
 				samples.append_array(item.poly)
-		Item.TEXT:
+		Item.TEXT, Item.IMAGE:
 			samples = item.text_corners()
 			samples.append(item.center)
 	if samples.is_empty():
