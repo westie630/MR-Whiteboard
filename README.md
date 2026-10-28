@@ -267,7 +267,7 @@ the file has none, sharp across creases).
 **Getting a model in.** On a PC on the same Wi-Fi open the web page (**Home > Share**) and drop the model on it: a `.glb` alone, an `.obj` together with
 its `.mtl` and pictures (or a `.gltf` with its `.bin`), or all of them in one `.zip`. The page sends files dropped together as one, the headset keeps
 them as one model (named by its content, so it is the same model on every headset) and puts it in front of you, selected. A model that is
-compressed (Draco, meshopt), or needs a file that was not sent, is refused with the reason; a missing `.mtl` or picture is only noted. is only noted. The files
+compressed (Draco, meshopt), or needs a file that was not sent, is refused with the reason; a missing `.mtl` or picture is only noted. The files
 may also come one after another (picked one at a time, or sent to the Telegram bot): an `.mtl`, `.bin` or picture that a model sent in the last
 10 minutes lacks is joined to it, and where it stands it is shown with them (on the guests' headsets too); one sent first waits 10 minutes for its
 model. Pictures alone that no model names are pictures for the canvases. A model the headset has already: **Add (+) > 3D model**, or **Home > Docs > 3D models**. On the PC: `--model=FILE[,MTL,PICTURE...]`.
